@@ -106,9 +106,27 @@ And the `Open RPE Recorder` is a subproject of this project, you can find it [he
 
 ## Building
 
+**Note**: This library requires **C++20 or later**.
+
+### Library
+
 Just include the [`easy_phi.hpp`](./src/easy_phi.hpp) header file in your project and you're ready to go!
 
-**Note**: This library requires **C++20 or later**.
+### Tests
+
+Tests only supports Windows, and you need to install [python](https://www.python.org/downloads/) and  [mingw-w64](https://mingw-w64.org/doku.php/download) that supports C++20 or later to build the test programs.
+
+You can run the main test program by the following command:
+
+```bash
+python ./build_test.py --run --debug
+```
+
+If you want release version, you can run it without `--debug` flag.
+
+If you want to build other test programs, you can add `--source [name]` to the command, e.g. `--source open_rpe_recorder.cpp`.
+
+If you want to bring args to the test program, you can add `--with-args arg1 arg2 ...` to the command (e.g. `--with-args --extend-scale`).
 
 ## License
 
