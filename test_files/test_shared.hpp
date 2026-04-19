@@ -35,6 +35,7 @@
 #include <skia/core/SkM44.h>
 #include <skia/core/SkMaskFilter.h>
 #include <skia/core/SkBlurTypes.h>
+#include <stb/stb_vorbis.c>
 extern "C" {
     #include <libavcodec/avcodec.h>
     #include <libavformat/avformat.h>
@@ -48,18 +49,76 @@ extern "C" {
 #include <mutex>
 #include <thread>
 
+#define WAV_HEADER_SIZE 44
+
+uint8_t* pcm16ToWav(int16_t* pcm, uint64_t pcm_size, int16_t chn, int32_t rate) {
+    uint64_t wav_size = pcm_size + WAV_HEADER_SIZE;
+    auto* wav = (uint8_t*)malloc(wav_size);
+
+    *(char*)&wav[0] = 'R';
+    *(char*)&wav[1] = 'I';
+    *(char*)&wav[2] = 'F';
+    *(char*)&wav[3] = 'F';
+    *(int32_t*)&wav[4] = wav_size - 8;
+    *(char*)&wav[8] = 'W';
+    *(char*)&wav[9] = 'A';
+    *(char*)&wav[10] = 'V';
+    *(char*)&wav[11] = 'E';
+    
+    *(char*)&wav[12] = 'f';
+    *(char*)&wav[13] = 'm';
+    *(char*)&wav[14] = 't';
+    *(char*)&wav[15] = ' ';
+    *(int32_t*)&wav[16] = 0x10;
+    *(int16_t*)&wav[20] = 1; // PCM
+    *(int16_t*)&wav[22] = chn;
+    *(int32_t*)&wav[24] = rate;
+    *(int32_t*)&wav[28] = rate * chn * sizeof(int16_t);
+    *(int16_t*)&wav[32] = chn * sizeof(int16_t);
+    *(int16_t*)&wav[34] = 2 * 8;
+
+    *(char*)&wav[36] = 'd';
+    *(char*)&wav[37] = 'a';
+    *(char*)&wav[38] = 't';
+    *(char*)&wav[39] = 'a';
+    *(int32_t*)&wav[40] = pcm_size;
+    std::memcpy((void*)((uint8_t*)wav + WAV_HEADER_SIZE), pcm, pcm_size);
+
+    return wav;
+}
+
+bool oggToWav(easy_phi::Data& data) {
+    int chn, rate;
+    int16_t* pcm;
+    uint64_t frames = stb_vorbis_decode_memory(data.data.data(), data.data.size(), &chn, &rate, &pcm);
+    if (frames <= 0) return false;
+
+    uint32_t pcm_size = frames * chn * sizeof(int16_t);
+    auto* wav = pcm16ToWav(pcm, pcm_size, chn, rate);
+    free(pcm);
+    data.data = std::vector<uint8_t>(wav, wav + pcm_size + WAV_HEADER_SIZE);
+    return true;
+}
+
+bool dataIsStartsWith(const easy_phi::Data& data, const std::string& prefix) {
+    return data.data.size() >= prefix.size() && std::memcmp(data.data.data(), prefix.data(), prefix.size()) == 0;
+}
+
 struct sound_ex {
     ma_sound sound;
     ma_decoder decoder;
     uint64_t encoded_size;
 };
 
-ma_sound* loadMaSoundFromMemory(ma_engine* engine, void* data, uint64_t size) {
-    auto* ex = (sound_ex*)malloc(sizeof(sound_ex) + size);
-    ex->encoded_size = size;
-    memcpy(ex + 1, data, size);
-    data = (void*)(ex + 1);
-    if (ma_decoder_init_memory(data, size, NULL, &ex->decoder) != MA_SUCCESS) {
+ma_sound* loadMaSoundFromMemory(ma_engine* engine, easy_phi::Data& data) {
+    if (dataIsStartsWith(data, "OggS")) {
+        if (!oggToWav(data)) return nullptr;
+    }
+
+    auto* ex = (sound_ex*)malloc(sizeof(sound_ex) + data.data.size());
+    ex->encoded_size = data.data.size();
+    memcpy(ex + 1, data.data.data(), data.data.size());
+    if (ma_decoder_init_memory((void*)(ex + 1), data.data.size(), NULL, &ex->decoder) != MA_SUCCESS) {
         free(ex);
         return nullptr;
     }
@@ -287,7 +346,7 @@ NoteHitsoundsType loadNoteHitsounds(ma_engine& eng) {
     }) {
         auto data = StaticResource::get(std::string("/") + name + ".wav");
         for (int i = 0; i < hitsoundsBufferSize; i++) {
-            noteHitsounds[type].push_back(loadMaSoundFromMemory(&eng, data.data.data(), data.data.size()));
+            noteHitsounds[type].push_back(loadMaSoundFromMemory(&eng, data));
         }
     }
 
@@ -793,7 +852,7 @@ struct Window {
     void loadMainSound(const std::string& path) {
         easy_phi::Data data;
         easy_phi::Data::FromFile(&data, path);
-        mainSound = loadMaSoundFromMemory(&maeng, data.data.data(), data.data.size());
+        mainSound = loadMaSoundFromMemory(&maeng, data);
         calculateFrameConfig.songLength = getMaSoundDuration(mainSound);
     }
 

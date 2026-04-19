@@ -11,6 +11,41 @@ os.makedirs("build", exist_ok=True)
 
 debug = "--debug" in sys.argv
 source = "test.cpp" if "--source" not in sys.argv else sys.argv[sys.argv.index("--source") + 1]
+libraries = {
+    "miniaudio": [
+        "-I./test_files/externals/miniaudio/include",
+        "./test_files/externals/miniaudio/lib/miniaudio.o",
+    ],
+    
+    "skia": [
+        "-I./test_files/externals/skia/include",
+        "-L./test_files/externals/skia/lib",
+        "-lskia",
+    ],
+    
+    "glfw3": [
+        "-I./test_files/externals/glfw3/include",
+        "-L./test_files/externals/glfw3/lib",
+        "-lglfw3",
+    ],
+    
+    "glad": [
+        "-I./test_files/externals/glad/include",
+        "-L./test_files/externals/glad/lib",
+        "-lglad",
+    ],
+    
+    "ffmpeg": [
+        "-I./test_files/externals/ffmpeg/include",
+        "-L./test_files/externals/ffmpeg/lib",
+        "-lavformat", "-lavcodec", "-lavutil",
+        "-lx264", "-lfdk-aac", "-lmfx",
+    ],
+    
+    "stb": [
+        "-I./test_files/externals/stb/include",
+    ]
+}
 
 build_cmds = [
     "g++", "-std=c++20",
@@ -22,29 +57,7 @@ build_cmds = [
     f"./test_files/{source}",
     "-I./src",
     
-    "-I./test_files/externals/miniaudio/include",
-    "./test_files/externals/miniaudio/lib/miniaudio.o",
-    
-    "-I./test_files/externals/skia/include",
-    "-L./test_files/externals/skia/lib",
-    "-lskia",
-    
-    "-I./test_files/externals/glfw3/include",
-    "-L./test_files/externals/glfw3/lib",
-    "-lglfw3",
-    
-    "-I./test_files/externals/glad/include",
-    "-L./test_files/externals/glad/lib",
-    "-lglad",
-    
-    "-I./test_files/externals/ffmpeg/include",
-    "-L./test_files/externals/ffmpeg/lib",
-    "-lavformat", "-lavcodec", "-lavutil",
-    "-lx264", "-lfdk-aac", "-lmfx",
-    
-    "-I./test_files/externals/ogg/include",
-    "-L./test_files/externals/ogg/lib",
-    "-logg",
+    *sum(libraries.values(), []),
     
     "-lgdi32", "-lpthread", "-lopengl32", "-lole32",
     "-lshell32", "-luuid", "-lbcrypt",
