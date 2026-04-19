@@ -181,7 +181,10 @@ int main() {
 
     if (showYesNoMsg(window, L"是否预览 (不进行视频渲染) ?")) {
         pd.close();
+
         window.setHidden(false);
+        window.vsync = true;
+        window.resetSurface();
         window.startMainSound();
 
         while (ma_sound_is_playing(window.mainSound)) {
