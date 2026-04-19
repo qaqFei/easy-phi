@@ -3302,6 +3302,12 @@ std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
     return infos;
 }
 
+struct PhiLineAttachUIData {
+    Vec2 position, scale = { 1.0, 1.0 };
+    ep_f64 rotation;
+    Color color = { 1.0, 1.0, 1.0, 1.0 };
+};
+
 struct CalculateFrameConfig {
     struct NoteTextureInfo {
         struct Item {
@@ -3401,6 +3407,18 @@ struct CalculatedFrame {
             .color = color
         });
     }
+
+    struct Cache {
+        std::unordered_map<EnumPhiLineAttachUI, PhiLineAttachUIData> attachUIDatas;
+        std::unordered_map<EnumPhiNoteType, std::vector<CalculatedObject>> noteObjects;
+
+        void clear() {
+            attachUIDatas.clear();
+            for (auto& [_, objects] : noteObjects) objects.clear();
+        }
+    };
+
+    Cache cache;
 };
 
 void calculateFrame(
@@ -3410,6 +3428,7 @@ void calculateFrame(
 ) {
     frame.objects.clear();
     frame.hitsounds.clear();
+    frame.cache.clear();
 
     auto calcCoveredOrContainRect = [](const Rect& dst, const Vec2& size, bool isCovered) {
         ep_f64 dst_ratio = dst.w / dst.h;
@@ -3454,15 +3473,8 @@ void calculateFrame(
 
     frame.objectsClipRect = safeArea;
 
-    struct PhiLineAttachUIData {
-        Vec2 position, scale = { 1.0, 1.0 };
-        ep_f64 rotation;
-        Color color = { 1.0, 1.0, 1.0, 1.0 };
-    };
-
-    std::unordered_map<EnumPhiLineAttachUI, PhiLineAttachUIData> attachUIs;
     auto processAttachUIText = [&](CalculatedFrame::CalculatedText rawText, EnumPhiLineAttachUI attachUIType) {
-        auto& data = attachUIs[attachUIType];
+        auto& data = frame.cache.attachUIDatas[attachUIType];
         rawText.position += data.position;
         rawText.scale *= data.scale;
         rawText.rotation += data.rotation;
@@ -3547,7 +3559,7 @@ void calculateFrame(
         };
 
         if (line.attachUI.has_value()) {
-            attachUIs[line.attachUI.value()] = {
+            frame.cache.attachUIDatas[line.attachUI.value()] = {
                 .position = linePositionRelOrigin,
                 .scale = lineScale,
                 .rotation = lineRotation,
@@ -3640,7 +3652,7 @@ void calculateFrame(
 
                 if (noteInsideScreen) {
                     if (frameInfo.isVisible) {
-                        frame.objects.push_back(CalculatedFrame::CalculatedNote {
+                        frame.cache.noteObjects[note.type].push_back(CalculatedFrame::CalculatedNote {
                             .position = noteScreenHeadPosition,
                             .rotation = frameInfo.textureRotation,
                             .width = sizeInfo.width,
@@ -3668,6 +3680,16 @@ void calculateFrame(
                 }
             }
         }
+    }
+
+    for (const auto type : {
+        EnumPhiNoteType::Hold,
+        EnumPhiNoteType::Drag,
+        EnumPhiNoteType::Tap,
+        EnumPhiNoteType::Flick
+    }) {
+        auto& noteObjects = frame.cache.noteObjects[type];
+        frame.objects.insert(frame.objects.end(), noteObjects.begin(), noteObjects.end());
     }
 
     const ep_f64 hitEffectDuration = 0.5;
@@ -3731,7 +3753,7 @@ void calculateFrame(
     ep_f64 progressBarWidth = safeAreaSize.x * songPorgress;
     ep_f64 progressBarPointWidth = safeAreaSize.x * 0.00175;
 
-    auto& progressBarAttachUIData = attachUIs[EnumPhiLineAttachUI::Bar];
+    auto& progressBarAttachUIData = frame.cache.attachUIDatas[EnumPhiLineAttachUI::Bar];
 
     frame.addUIRect(
         { 0.0, 0.0 },
@@ -3760,7 +3782,7 @@ void calculateFrame(
     auto pauseButtonSize = Vec2 { safeAreaSize.x * 32 / 1920, safeAreaSize.x * 37.48 / 1920 };
     ep_f64 pauseButtonItemWidth = pauseButtonSize.x * 0.323;
 
-    auto& pauseButtonAttachUIData = attachUIs[EnumPhiLineAttachUI::Pause];
+    auto& pauseButtonAttachUIData = frame.cache.attachUIDatas[EnumPhiLineAttachUI::Pause];
 
     frame.addUIRect(
         { 0.0, 0.0 },
