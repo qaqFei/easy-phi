@@ -1182,6 +1182,7 @@ struct PhiLine {
     std::optional<ep_u64> fatherLineIndex;
     ep_f64 zOrder;
     ep_bool enableCover;
+    Vec2 anchor = { 0.5, 0.5 };
 
     std::optional<std::string> textureName;
     std::optional<ep_u64> texture;
@@ -2827,6 +2828,16 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
             if (!judgeLineNode["zOrder"].isNumber()) CHART_LOAD_FAILED("rpe", "zOrder is not a number");
             line.zOrder = judgeLineNode["zOrder"].getNumber();
         }
+
+        if (judgeLineNode.hasKey("anchor")) {
+            if (!judgeLineNode["anchor"].isArray()) CHART_LOAD_FAILED("rpe", "anchor is not an array");
+
+            auto& anchorArr = judgeLineNode["anchor"].getArray();
+            if (anchorArr.size() < 2) CHART_LOAD_FAILED("rpe", "anchor array size is less than 2");
+
+            if (!anchorArr[0].isNumber() || !anchorArr[1].isNumber()) CHART_LOAD_FAILED("rpe", "anchor array element is not a number");
+            line.anchor = { anchorArr[0].getNumber(), anchorArr[1].getNumber() };
+        }
     }
 
     return PhiChartLoadResult {
@@ -3393,7 +3404,7 @@ struct CalculatedFrame {
     std::vector<CalculatedObject> objects;
     std::vector<std::pair<EnumPhiNoteType, ep_f64>> hitsounds;
 
-    void addUIRect(
+    void addPoly(
         const Vec2& point,
         const Vec2& size,
         const Color& color,
@@ -3590,18 +3601,20 @@ void calculateFrame(
                                 .position = lineScreenPosition,
                                 .size = Vec2 { textureWidth, textureHeight },
                                 .scale = lineScale,
-                                .anchor = { 0.5, 0.5 },
+                                .anchor = line.anchor,
                                 .rotation = lineRotation,
                                 .color = lineColor.applyAlpha(lineAlpha)
                             });
                         }
                     } else {
-                        frame.objects.push_back(CalculatedFrame::CalculatedLine {
-                            .p1 = lineScreenPosition.rotateDegress(lineRotation, lineWidth / 2 * lineScale.x),
-                            .p2 = lineScreenPosition.rotateDegress(lineRotation + 180, lineWidth / 2 * lineScale.x),
-                            .thickness = lineHeight * lineScale.y,
-                            .color = lineColor.applyAlpha(lineAlpha)
-                        });
+                        frame.addPoly(
+                            Vec2 { -lineWidth, -lineHeight } * line.anchor * lineScale,
+                            Vec2 { lineWidth, lineHeight } * lineScale,
+                            lineColor.applyAlpha(lineAlpha),
+                            Transform2D()
+                                .translate(lineScreenPosition)
+                                .rotateDegress(lineRotation)
+                        );
                     }
                 }
             }
@@ -3755,7 +3768,7 @@ void calculateFrame(
 
     auto& progressBarAttachUIData = frame.cache.attachUIDatas[EnumPhiLineAttachUI::Bar];
 
-    frame.addUIRect(
+    frame.addPoly(
         { 0.0, 0.0 },
         { progressBarWidth, progressBarHeight },
         Color { (ep_f64)145 / 255, (ep_f64)145 / 255, (ep_f64)145 / 255, 0.85 } * progressBarAttachUIData.color,
@@ -3766,7 +3779,7 @@ void calculateFrame(
             .rotateDegress(progressBarAttachUIData.rotation)
     );
 
-    frame.addUIRect(
+    frame.addPoly(
         { 0.0, 0.0 },
         { progressBarPointWidth, progressBarHeight },
         Color { 1.0, 1.0, 1.0, 0.9 } * progressBarAttachUIData.color,
@@ -3784,7 +3797,7 @@ void calculateFrame(
 
     auto& pauseButtonAttachUIData = frame.cache.attachUIDatas[EnumPhiLineAttachUI::Pause];
 
-    frame.addUIRect(
+    frame.addPoly(
         { 0.0, 0.0 },
         { pauseButtonItemWidth, pauseButtonSize.y },
         pauseButtonAttachUIData.color,
@@ -3796,7 +3809,7 @@ void calculateFrame(
             .rotateDegress(pauseButtonAttachUIData.rotation)
     );
 
-    frame.addUIRect(
+    frame.addPoly(
         { pauseButtonSize.x - pauseButtonItemWidth, 0.0 },
         { pauseButtonItemWidth, pauseButtonSize.y },
         pauseButtonAttachUIData.color,
