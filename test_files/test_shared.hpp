@@ -1202,6 +1202,7 @@ struct Window {
         return std::nullopt;
     }
 };
+
 template<typename T>
 class ThreadSafeQueue {
 public:
