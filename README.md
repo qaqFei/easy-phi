@@ -116,6 +116,6 @@ This project is licensed under the [MIT License](./LICENSE).
 
 ## Other
 
-The charts in `test_files` are **not owned** by this project.
+The charts in `test_files` are **not owned** by this project, please contact for removal if there is any copyright infringement.
 
-Please contact for removal if there is any copyright infringement.
+**We do not guarantee that the api is stable between versions.**

@@ -1010,19 +1010,7 @@ struct Window {
         }
 
         for (auto& obj : calculatedFrame.objects) {
-            if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedLine>(obj)) {
-                auto& line = std::get<easy_phi::CalculatedFrame::CalculatedLine>(obj);
-
-                static SkPaint pt;
-                pt.setColor(cvtColor(line.color));
-                pt.setStyle(SkPaint::kStroke_Style);
-                pt.setStrokeWidth(line.thickness);
-                pt.setAntiAlias(true);
-                skCanvas->drawLine(
-                    cvtVec2(line.p1), cvtVec2(line.p2),
-                    pt
-                );
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedNote>(obj)) {
+            if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedNote>(obj)) {
                 auto& note = std::get<easy_phi::CalculatedFrame::CalculatedNote>(obj);
                 
                 auto& img = note.isSimul ? noteImages[note.type].second : noteImages[note.type].first;

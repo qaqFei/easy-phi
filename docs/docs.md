@@ -137,14 +137,7 @@ frame.objectsClipRect; // the rect of the objects clip area, all the objects sho
 frame.objects; // the objects to render, it is a vector of variants
 
 for (const auto& obj : frame.objects) {
-    if (std::holds_alternative<CalculatedFrame::CalculatedLine>(obj)) {
-        auto& line = std::get<CalculatedFrame::CalculatedLine>(obj);
-
-        line.p1; // the start point of the line
-        line.p2; // the end point of the line
-        line.thickness; // the thickness of the line
-        line.color; // the color of the line
-    } else if (std::holds_alternative<CalculatedFrame::CalculatedNote>(obj)) {
+    if (std::holds_alternative<CalculatedFrame::CalculatedNote>(obj)) {
         auto& note = std::get<CalculatedFrame::CalculatedNote>(obj);
 
         note.position; // the position of the note, it is the connection point of the head and body

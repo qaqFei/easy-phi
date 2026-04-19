@@ -3339,12 +3339,6 @@ struct CalculateFrameConfig {
 };
 
 struct CalculatedFrame {
-    struct CalculatedLine {
-        Vec2 p1, p2;
-        ep_f64 thickness;
-        Color color;
-    };
-
     struct CalculatedNote {
         Vec2 position;
         ep_f64 rotation;
@@ -3388,7 +3382,6 @@ struct CalculatedFrame {
     };
 
     using CalculatedObject = std::variant<
-        CalculatedLine,
         CalculatedNote,
         CalculatedText,
         CalculatedStoryboardTexture,
