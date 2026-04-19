@@ -849,6 +849,12 @@ struct Window {
         globalScale = 1.0;
     }
 
+    void setHidden(bool newValue) {
+        hidden = newValue;
+        if (hidden) glfwHideWindow(window);
+        else glfwShowWindow(window);
+    }
+
     void loadMainSound(const std::string& path) {
         easy_phi::Data data;
         easy_phi::Data::FromFile(&data, path);
