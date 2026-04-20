@@ -1407,6 +1407,39 @@ struct PhiChart {
         }
     };
 
+    struct UserOptions {
+        Vec2 noteScaling = { 1.0, 1.0 };
+
+        ep_f64 unsafeBackgroundDim = 0.8;
+        ep_f64 backgroundDim = 0.6;
+        ep_f64 backgroundTextureBlurRadius = (ep_f64)1 / 50;
+
+        Color lineDefaultColor = { (ep_f64)0xff / 0xff, (ep_f64)0xec / 0xff, (ep_f64)0x9f / 0xff, 1.0 };
+
+        std::pair<Color, Color> progressBarDefaultColor = {
+            { (ep_f64)145 / 255, (ep_f64)145 / 255, (ep_f64)145 / 255, 0.85 },
+            { 1.0, 1.0, 1.0, 0.9 }
+        };
+
+        Vec2 storyboardTextBaseSize = { 0.028125, 0.0 };
+
+        enum class EnumStoryboardTextureSclaingBehavior {
+            AboutWidth,
+            AboutHeight,
+            Stretch
+        };
+        EnumStoryboardTextureSclaingBehavior storyboardTextureSclaingBehavior = EnumStoryboardTextureSclaingBehavior::AboutWidth;
+        Vec2 storyboardTextureScaling = { 1.0, 1.0 };
+
+        ep_f64 hitEffectDuration = 0.5;
+        ep_f64 hitEffectAlpha = (ep_f64)0xe1 / 0xff;
+        ep_f64 hitEffectTextureScaling = 1.54;
+        ep_f64 hitEffectParticleSize = 1.0;
+        ep_f64 hitEffectParticleDistance = 1.0;
+
+        ep_bool enableNoteOffScreenBreakOptimization = true;
+    };
+
     PhiMeta meta;
     std::vector<PhiLine> lines;
     PhiAnimator animator;
@@ -1415,6 +1448,8 @@ struct PhiChart {
     std::vector<PhiHitEffectItem> hitEffects;
     std::vector<ep_f64> comboTimes;
     std::vector<ep_u64> zOrderSortedLines;
+
+    UserOptions options;
 
     State state;
 
@@ -1493,7 +1528,7 @@ struct PhiChart {
         auto noteColorIndex = animator.get(note, time, EnumPhiEventType::Color);
         auto noteColor = storyboardAssets.getColor(noteColorIndex, { 1.0, 1.0, 1.0, 1.0 });
         auto noteAlpha = animator.get_arrived_or(note, time, EnumPhiEventType::Alpha, 1.0);
-        auto noteScale = Vec2 {
+        auto noteScaling = Vec2 {
             animator.get(note, time, EnumPhiEventType::ScaleX),
             animator.get(note, time, EnumPhiEventType::ScaleY)
         };
@@ -1528,7 +1563,7 @@ struct PhiChart {
         info.lineRotation = lineRotation;
         info.textureRotation = lineRotation + noteRotation + noteAxisRotation;
         info.color = noteColor.applyAlpha(noteAlpha);
-        info.scale = noteScale;
+        info.scale = noteScaling;
         info.speedCoefficient = noteSpeedCoefficient;
 
         return info;
@@ -3463,16 +3498,16 @@ void calculateFrame(
     auto safeAreaSize = safeArea.size();
     auto toScreen = [&](Vec2 pos) { return pos + safeAreaPosition; };
 
-    frame.backgroundImageBlurRadius = config.backgroundTextureSize.sum() / 50;
+    frame.backgroundImageBlurRadius = config.backgroundTextureSize.sum() * chart.options.backgroundTextureBlurRadius;
 
     frame.unsafeBackgroundRect = calcCoveredOrContainRect(
         { 0.0, 0.0, config.screenSize.x, config.screenSize.y },
         config.backgroundTextureSize, true
     );
-    frame.unsafeAreaDim = 0.8;
+    frame.unsafeAreaDim = chart.options.unsafeBackgroundDim;
 
     frame.backgroundRect = calcCoveredOrContainRect(safeArea, config.backgroundTextureSize, true);
-    frame.backgroundDim = 0.6;
+    frame.backgroundDim = chart.options.backgroundDim;
 
     frame.objectsClipRect = safeArea;
 
@@ -3514,8 +3549,10 @@ void calculateFrame(
             : config.noteTextureInfos.at(type).single
         );
 
-        auto width = standardNoteWidth * texInfo.scaling.x;
-        auto totalHeight = width / texInfo.textureSize.x * texInfo.textureSize.y * texInfo.scaling.y;
+        auto scaling = texInfo.scaling * chart.options.noteScaling;
+
+        auto width = standardNoteWidth * scaling.x;
+        auto totalHeight = width / texInfo.textureSize.x * texInfo.textureSize.y * scaling.y;
         auto cutPadding = texInfo.cutPadding / texInfo.textureSize.y;
         auto head = hideHead ? 0.0 : cutPadding.x * totalHeight;
         auto tail = cutPadding.y * totalHeight;
@@ -3554,7 +3591,7 @@ void calculateFrame(
             lineColorIndex,
             (line.attachUI.has_value() || lineText.has_value() || line.textureName.has_value())
                 ? Color::White()
-                : Color { (ep_f64)0xff / 0xff, (ep_f64)0xec / 0xff, (ep_f64)0x9f / 0xff, 1.0 }
+                : chart.options.lineDefaultColor
         );
         auto lineScale = Vec2 {
             chart.animator.get(line, time, EnumPhiEventType::ScaleX),
@@ -3577,7 +3614,7 @@ void calculateFrame(
                         .scale = lineScale,
                         .align = EnumTextAlign::Center,
                         .baseline = EnumTextBaseline::Middle,
-                        .fontSize = safeAreaSize.x * 0.028125,
+                        .fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum(),
                         .rotation = lineRotation,
                         .color = lineColor.applyAlpha(lineAlpha)
                     });
@@ -3585,8 +3622,21 @@ void calculateFrame(
                     if (line.textureName.has_value()) {
                         if (line.texture.has_value()) {
                             auto texture = chart.storyboardAssets.getTexture(line.texture.value());
-                            auto textureWidth = texture.second.x / std::abs(chart.meta.worldViewport.x) * safeAreaSize.x;
-                            auto textureHeight = textureWidth / texture.second.x * texture.second.y;
+                            ep_f64 textureWidth, textureHeight;
+
+                            if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::AboutWidth) {
+                                textureWidth = texture.second.x / std::abs(chart.meta.worldViewport.x) * safeAreaSize.x;
+                                textureHeight = textureWidth / texture.second.x * texture.second.y;
+                            } else if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::AboutHeight) {
+                                textureHeight = texture.second.y / std::abs(chart.meta.worldViewport.y) * safeAreaSize.y;
+                                textureWidth = textureHeight / texture.second.y * texture.second.x;
+                            } else if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::Stretch) {
+                                textureWidth = texture.second.x / std::abs(chart.meta.worldViewport.x) * safeAreaSize.x;
+                                textureHeight = texture.second.y / std::abs(chart.meta.worldViewport.y) * safeAreaSize.y;
+                            } else textureWidth = textureHeight = 0;
+
+                            textureWidth *= chart.options.storyboardTextureScaling.x;
+                            textureHeight *= chart.options.storyboardTextureScaling.y;
 
                             frame.objects.push_back(CalculatedFrame::CalculatedStoryboardTexture {
                                 .texture = texture.first,
@@ -3670,7 +3720,7 @@ void calculateFrame(
                         });
                     }
                 } else {
-                    if (noteGroup.breakable) {
+                    if (chart.options.enableNoteOffScreenBreakOptimization && noteGroup.breakable) {
                         if (frameInfo.speedCoefficient == 0) break;
 
                         auto speedVectorRotation = frameInfo.textureRotation;
@@ -3697,7 +3747,7 @@ void calculateFrame(
         frame.objects.insert(frame.objects.end(), noteObjects.begin(), noteObjects.end());
     }
 
-    const ep_f64 hitEffectDuration = 0.5;
+    const ep_f64 hitEffectTextureSize = standardNoteWidth * chart.options.hitEffectTextureScaling;
 
     for (ep_u64 i = chart.state.firstHitEffectIndex; i < chart.hitEffects.size(); i++) {
         auto& hitEffect = chart.hitEffects[i];
@@ -3707,7 +3757,7 @@ void calculateFrame(
         auto& note = line.notes[hitEffect.noteIndex];
 
         auto info = chart.getNoteFrameInfo(line, note, hitEffect.time, safeAreaSize);
-        auto endTime = hitEffect.time + std::max(hitEffectDuration, hitEffect.particles.size() ? (hitEffect.particles.back().dt + hitEffectDuration) : 0.0);
+        auto endTime = hitEffect.time + std::max(chart.options.hitEffectDuration, hitEffect.particles.size() ? (hitEffect.particles.back().dt + chart.options.hitEffectDuration) : 0.0);
 
         if (endTime < time) {
             chart.state.passedHitEffectIndex(i);
@@ -3715,36 +3765,35 @@ void calculateFrame(
         }
 
         auto effectScreenPosition = toScreen(info.headPosition);
-        auto progress = (time - hitEffect.time) / hitEffectDuration;
+        auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
 
         if (progress <= 1.0) {
-            auto size = standardNoteWidth * 1.375 * 1.12;
             frame.objects.push_back(CalculatedFrame::CalculatedHitEffectTexture {
                 .position = effectScreenPosition,
-                .size = { size, size },
+                .size = { hitEffectTextureSize, hitEffectTextureSize },
                 .progress = progress,
                 .rotation = 0.0,
-                .color = { (ep_f64)0xff / 0xff, (ep_f64)0xec / 0xff, (ep_f64)0x9f / 0xff, (ep_f64)0xe1 / 0xff }
+                .color = chart.options.lineDefaultColor.applyAlpha(chart.options.hitEffectAlpha)
             });
         }
 
         for (auto& particle : hitEffect.particles) {
             auto particleTime = hitEffect.time + particle.dt;
             if (particleTime > time) break;
-            if (particleTime + hitEffectDuration < time) continue;
+            if (particleTime + chart.options.hitEffectDuration < time) continue;
 
             auto info = chart.getNoteFrameInfo(line, note, particleTime, safeAreaSize);
             auto effectScreenHeadPosition = toScreen(info.headPosition);
-            auto progress = std::clamp((time - particleTime) / hitEffectDuration, 0.0, 1.0);
-            auto size = standardNoteWidth / 5.3 * (((0.20783014 * progress - 1.65243926) * progress + 1.6398785) * progress + 0.49884492);
-            auto distance = standardNoteWidth / 180 * particle.size * (((850.3997391752 * progress + 6236.3848902154) * progress + 80.3542231806) * progress / ((6570.5817658876 * progress + 495.7977913926) * progress + 1.0));
+            auto progress = std::clamp((time - particleTime) / chart.options.hitEffectDuration, 0.0, 1.0);
+            auto size = standardNoteWidth / 5.3 * chart.options.hitEffectParticleSize * (((0.20783014 * progress - 1.65243926) * progress + 1.6398785) * progress + 0.49884492);
+            auto distance = standardNoteWidth / 180 * chart.options.hitEffectParticleDistance * particle.size * (((850.3997391752 * progress + 6236.3848902154) * progress + 80.3542231806) * progress / ((6570.5817658876 * progress + 495.7977913926) * progress + 1.0));
 
             auto particlePosition = toScreen(info.headPosition.rotateDegress(particle.rotation, distance));
             frame.objects.push_back(CalculatedFrame::CalculatedHitEffectParticle {
                 .position = particlePosition,
                 .size = { size, size },
                 .rotation = 0.0,
-                .color = { (ep_f64)0xff / 0xff, (ep_f64)0xec / 0xff, (ep_f64)0x9f / 0xff, (ep_f64)0xe1 / 0xff * (1.0 - progress) }
+                .color = chart.options.lineDefaultColor.applyAlpha(chart.options.hitEffectAlpha * (1.0 - progress))
             });
         }
     }
@@ -3763,7 +3812,7 @@ void calculateFrame(
     frame.addPoly(
         { 0.0, 0.0 },
         { progressBarWidth, progressBarHeight },
-        Color { (ep_f64)145 / 255, (ep_f64)145 / 255, (ep_f64)145 / 255, 0.85 } * progressBarAttachUIData.color,
+        chart.options.progressBarDefaultColor.first * progressBarAttachUIData.color,
         Transform2D()
             .translate(safeAreaPosition)
             .translate(progressBarAttachUIData.position)
@@ -3774,7 +3823,7 @@ void calculateFrame(
     frame.addPoly(
         { 0.0, 0.0 },
         { progressBarPointWidth, progressBarHeight },
-        Color { 1.0, 1.0, 1.0, 0.9 } * progressBarAttachUIData.color,
+        chart.options.progressBarDefaultColor.second * progressBarAttachUIData.color,
         Transform2D()
             .translate(safeAreaPosition)
             .translate(progressBarWidth - progressBarPointWidth, 0.0)
