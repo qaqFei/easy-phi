@@ -1161,6 +1161,8 @@ struct Window {
 
         skCanvas->restore();
 
+        std::cout << "frame took (without glfw operation) " << ((globalTimer() - frame_st) * 1000) << " ms" << std::endl;
+
         if (!isRenderingVideo) {
             skGrCtx->flushAndSubmit();
 
