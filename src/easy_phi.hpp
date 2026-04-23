@@ -188,6 +188,7 @@ struct Vec2 {
 
 static const ep_f64 INF_TIME = 99999.0;
 static const Vec2 INF_TZ = { -INF_TIME, INF_TIME };
+static const ep_f64 INF_EV = 1e9;
 
 struct Rect {
     ep_f64 x, y, w, h;
@@ -503,6 +504,40 @@ bool isLeavingScreen(const Vec2& point, ep_f64 deg, const Vec2& screenSize) {
     ) > 0;
 }
 
+bool rayIsIntersectLine(const Vec2& rayPoint, ep_f64 rayDeg, const Vec2 line[2]) {
+    ep_f64 angle = rayDeg / 180.0 * std::numbers::pi;
+    Vec2 dir = { std::cos(angle), std::sin(angle) };
+    
+    Vec2 s = line[1] - line[0];
+    Vec2 q = line[0] - rayPoint;
+    
+    ep_f64 rxs = dir.x * s.y - dir.y * s.x;
+    ep_f64 qxs = q.x * s.y - q.y * s.x;
+    
+    constexpr ep_f64 eps = 1e-9;
+    
+    if (std::abs(rxs) < eps) {
+        if (std::abs(qxs) >= eps) return false;
+        
+        ep_f64 dot0 = (line[0].x - rayPoint.x) * dir.x + (line[0].y - rayPoint.y) * dir.y;
+        ep_f64 dot1 = (line[1].x - rayPoint.x) * dir.x + (line[1].y - rayPoint.y) * dir.y;
+        
+        return dot0 >= -eps || dot1 >= -eps;
+    }
+    
+    ep_f64 t = qxs / rxs;
+    ep_f64 u = (q.x * dir.y - q.y * dir.x) / rxs;
+    
+    return t >= -eps && u >= -eps && u <= 1.0 + eps;
+}
+
+bool rayIsIntersectRect(const Vec2& rayPoint, ep_f64 rayDeg, const Rect& r) {
+    return rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x, r.y }, Vec2 { r.x + r.w, r.y } }) ||
+           rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y }, Vec2 { r.x + r.w, r.y + r.h } }) ||
+           rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y + r.h }, Vec2 { r.x, r.y + r.h } }) ||
+           rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x, r.y + r.h }, Vec2 { r.x, r.y } });
+}
+
 template <typename T1, typename T2>
 struct SKVCache {
     T1 key;
@@ -653,7 +688,8 @@ struct EaseSet {
 enum class EnumPhiEventType : ep_u64 {
     PositionX, PositionY,
     SelfRotation, AxisRotation,
-    Alpha, Color,
+    MultiplyAlpha, AdditiveAlpha,
+    Color,
     ScaleX, ScaleY,
     Speed, SpeedCoefficient,
     Text,
@@ -717,6 +753,15 @@ struct PhiLineAttachUIHelper {
         return EnumPhiLineAttachUI::None;
     }
 };
+
+bool isMultiplyEventType(EnumPhiEventType type) {
+    return (
+        type == EnumPhiEventType::MultiplyAlpha ||
+        type == EnumPhiEventType::ScaleX ||
+        type == EnumPhiEventType::ScaleY ||
+        type == EnumPhiEventType::SpeedCoefficient
+    );
+}
 
 struct PhiMeta {
     ep_f64 offset;
@@ -798,11 +843,7 @@ struct PhiEvent {
     }
 
     static ep_f64 GetDefaultValue(EnumPhiEventType type) {
-        if (type == EnumPhiEventType::ScaleX || type == EnumPhiEventType::ScaleY) {
-            return 1.0;
-        } else {
-            return 0.0;
-        }
+        return isMultiplyEventType(type) ? 1.0 : 0.0;
     }
 };
 
@@ -864,12 +905,8 @@ struct PhiAnimLayer {
     }
 
     ep_f64 get(EnumPhiEventType type) {
-        return events[(ep_u64)type].size() ? currentValues[(ep_u64)type] : PhiEvent::GetDefaultValue(type);
-    }
-
-    bool arrived(EnumPhiEventType type) {
-        auto& typed_events = getEvents(type);
-        return !typed_events.empty() && typed_events[0].timeZone.x <= lastUpdatedTimes[(ep_u64)type];
+        if (events[(ep_u64)type].empty()) return PhiEvent::GetDefaultValue(type);
+        return currentValues[(ep_u64)type];
     }
 
     std::optional<ep_f64> getAlwaysValue(EnumPhiEventType type) {
@@ -949,7 +986,7 @@ struct PhiAnimGroup {
     ep_f64 get(EnumPhiEventType type) {
         ep_f64 value = PhiEvent::GetDefaultValue(type);
 
-        if (type == EnumPhiEventType::ScaleX || type == EnumPhiEventType::ScaleY) {
+        if (isMultiplyEventType(type)) {
             for (auto& layer : layers) value *= layer.get(type);
         } else {
             for (auto& layer : layers) value += layer.get(type);
@@ -958,12 +995,15 @@ struct PhiAnimGroup {
         return value;
     }
 
-    bool arrived(EnumPhiEventType type) {
+    ep_f64 get_based(EnumPhiEventType type, ep_f64 baseValue) {
+        ep_f64 value = baseValue;
+
         for (auto& layer : layers) {
-            if (layer.arrived(type)) return true;
+            if (isMultiplyEventType(type)) value *= layer.get(type);
+            else value += layer.get(type);
         }
 
-        return false;
+        return value;
     }
 
     std::optional<ep_f64> getAlwaysHashValue(EnumPhiEventType type) {
@@ -972,7 +1012,7 @@ struct PhiAnimGroup {
         for (auto& layer : layers) {
             auto v = layer.getAlwaysValue(type);
             if (!v.has_value()) return std::nullopt;
-            if (type == EnumPhiEventType::ScaleX || type == EnumPhiEventType::ScaleY) result *= v.value();
+            if (isMultiplyEventType(type)) result *= v.value();
             else result += v.value();
         }
 
@@ -1017,27 +1057,18 @@ struct PhiAnimator {
         return get(obj.indexer.get(), t, type);
     }
 
-    bool arrived(ep_u64 index, ep_f64 t, EnumPhiEventType type) {
+    ep_f64 get_based(ep_u64 index, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
         auto group_it = groups.find(index);
-        if (group_it == groups.end()) return false;
+        if (group_it == groups.end()) return PhiEvent::GetDefaultValue(type);
 
         auto& group = group_it->second;
         group.updateType(type, t);
-        return group.arrived(type);
+        return group.get_based(type, baseValue);
     }
 
     template <typename T>
-    bool arrived(T& obj, ep_f64 t, EnumPhiEventType type) {
-        return arrived(obj.indexer.get(), t, type);
-    }
-
-    ep_f64 get_arrived_or(ep_u64 index, ep_f64 t, EnumPhiEventType type, ep_f64 defaultValue) {
-        return arrived(index, t, type) ? get(index, t, type) : defaultValue;
-    }
-
-    template <typename T>
-    ep_f64 get_arrived_or(T& obj, ep_f64 t, EnumPhiEventType type, ep_f64 defaultValue) {
-        return get_arrived_or(obj.indexer.get(), t, type, defaultValue);
+    ep_f64 get_based(T& obj, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
+        return get_based(obj.indexer.get(), t, type, baseValue);
     }
 
     ep_f64 get_floor_position_at(ep_u64 index, ep_f64 time) {
@@ -1068,7 +1099,7 @@ struct PhiAnimator {
 
         auto& group = group_it->second;
 
-        for (const auto &type : {
+        for (const auto type : {
             EnumPhiEventType::PositionY,
             EnumPhiEventType::SelfRotation,
             EnumPhiEventType::AxisRotation,
@@ -1082,6 +1113,15 @@ struct PhiAnimator {
         }
 
         return hash.getHash();
+    }
+
+    ep_f64 get_alpha(ep_u64 index, ep_f64 t, ep_f64 additionalDefault) {
+        return get(index, t, EnumPhiEventType::MultiplyAlpha) * get_based(index, t, EnumPhiEventType::AdditiveAlpha, additionalDefault);
+    }
+
+    template <typename T>
+    ep_f64 get_alpha(T& obj, ep_f64 t, ep_f64 additionalDefault) {
+        return get_alpha(obj.indexer.get(), t, additionalDefault);
     }
 };
 
@@ -1126,6 +1166,7 @@ struct PhiNote {
     Vec2 floorPosition;
     std::optional<ep_f64> fixedHoldSpeed;
     ep_bool isSimul;
+    ep_bool isReversedCover;
 
     State state;
 
@@ -1143,6 +1184,10 @@ struct PhiNote {
 
     ep_bool isHold() {
         return holdTime > 0.0 || type == EnumPhiNoteType::Hold;
+    }
+
+    void reverseCover() {
+        isReversedCover = !isReversedCover;
     }
 };
 
@@ -1507,7 +1552,7 @@ struct PhiChart {
         Vec2 headPosition, tailPosition;
         ep_bool isArrived = false;
         ep_bool isVisible = true;
-        ep_f64 lineRotation, textureRotation;
+        ep_f64 lineRotation, textureRotation, speedVectorRotation;
         Color color;
         Vec2 scale;
         ep_f64 speedCoefficient;
@@ -1521,13 +1566,13 @@ struct PhiChart {
 
         auto linePosition = getLinePosition(time, line, screenSize);
         auto lineRotation = animator.get(line, time, EnumPhiEventType::SelfRotation);
-        auto lineSpeedCoefficient = animator.get_arrived_or(line, time, EnumPhiEventType::SpeedCoefficient, 1.0);
-        auto lineAlpha = animator.get(line, time, EnumPhiEventType::Alpha);
+        auto lineSpeedCoefficient = animator.get(line, time, EnumPhiEventType::SpeedCoefficient);
+        auto lineAlpha = animator.get_alpha(line, time, 0.0);
         auto noteRotation = animator.get(note, time, EnumPhiEventType::SelfRotation);
         auto noteAxisRotation = animator.get(note, time, EnumPhiEventType::AxisRotation);
         auto noteColorIndex = animator.get(note, time, EnumPhiEventType::Color);
         auto noteColor = storyboardAssets.getColor(noteColorIndex, { 1.0, 1.0, 1.0, 1.0 });
-        auto noteAlpha = animator.get_arrived_or(note, time, EnumPhiEventType::Alpha, 1.0);
+        auto noteAlpha = animator.get_alpha(note, time, 1.0);
         auto noteScaling = Vec2 {
             animator.get(note, time, EnumPhiEventType::ScaleX),
             animator.get(note, time, EnumPhiEventType::ScaleY)
@@ -1542,7 +1587,7 @@ struct PhiChart {
 
         info.isArrived = time >= note.time;
         auto noteTotalFloorPosition = note.getFloorPositionAt(time, animator);
-        auto noteSpeedCoefficient = lineSpeedCoefficient * animator.get_arrived_or(note, time, EnumPhiEventType::SpeedCoefficient, 1.0);
+        auto noteSpeedCoefficient = lineSpeedCoefficient * animator.get(note, time, EnumPhiEventType::SpeedCoefficient);
         auto noteFloorPosition = (note.floorPosition - noteTotalFloorPosition) * noteSpeedCoefficient;
         Vec2 noteBasePosition = { animator.get(note, time, EnumPhiEventType::PositionX), animator.get(note, time, EnumPhiEventType::PositionY) };
 
@@ -1550,8 +1595,8 @@ struct PhiChart {
              noteRelPositionTail = noteBasePosition + Vec2 { 0.0, noteFloorPosition.y };
         
         if (line.enableCover && !info.isArrived) {
-            if (meta.isHoldCoverAtHead && noteRelPositionHead.y < -meta.coverEllipsis) info.isVisible = false;
-            if (!meta.isHoldCoverAtHead && noteRelPositionTail.y < -meta.coverEllipsis) info.isVisible = false;
+            if (meta.isHoldCoverAtHead && noteRelPositionHead.y * (note.isReversedCover ? -1.0 : 1.0) < -meta.coverEllipsis) info.isVisible = false;
+            if (!meta.isHoldCoverAtHead && noteRelPositionTail.y * (note.isReversedCover ? -1.0 : 1.0) < -meta.coverEllipsis) info.isVisible = false;
         }
 
         if (note.isHold() && meta.isZeroLengthHoldHidden && note.floorPosition.xyDiff() == 0) info.isVisible = false;
@@ -1562,6 +1607,8 @@ struct PhiChart {
         info.tailPosition = lineTransform.transformPoint(noteRelPositionTail);
         info.lineRotation = lineRotation;
         info.textureRotation = lineRotation + noteRotation + noteAxisRotation;
+        info.speedVectorRotation = lineRotation + noteAxisRotation;
+        if (noteSpeedCoefficient < 0) info.speedVectorRotation += 180.0;
         info.color = noteColor.applyAlpha(noteAlpha);
         info.scale = noteScaling;
         info.speedCoefficient = noteSpeedCoefficient;
@@ -2361,10 +2408,19 @@ PhiChartLoadResult loadChartFromOfficialJson(const Data& data) {
                     if (!isAbove) {
                         chart.animator.addEvent(note, PhiEvent {
                             .timeZone = INF_TZ,
-                            .valueZone = { 180.0, 180.0 },
-                            .type = EnumPhiEventType::AxisRotation,
-                            .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS
+                            .valueZone = { -1.0, -1.0 },
+                            .type = EnumPhiEventType::SpeedCoefficient,
+                            .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS_2
                         });
+
+                        chart.animator.addEvent(note, PhiEvent {
+                            .timeZone = INF_TZ,
+                            .valueZone = { 180.0, 180.0 },
+                            .type = EnumPhiEventType::SelfRotation,
+                            .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS_2
+                        });
+
+                        note.reverseCover();
                     }
                 }
             }
@@ -2392,7 +2448,7 @@ PhiChartLoadResult loadChartFromOfficialJson(const Data& data) {
                     { &judgeLineMoveEventsNode, "start", "end", "", EnumPhiEventType::PositionX, [](ep_f64 v) { return std::floor(v / 1000.0) / 880.0; } },
                     { &judgeLineMoveEventsNode, "start", "end", "", EnumPhiEventType::PositionY, [](ep_f64 v) { return std::fmod(v, 1000.0) / 520.0; } },
                     { &judgeLineRotateEventsNode, "start", "end", "", EnumPhiEventType::SelfRotation, [](ep_f64 v) { return -v; } },
-                    { &judgeLineDisappearEventsNode, "start", "end", "", EnumPhiEventType::Alpha, [](ep_f64 v) { return v; } }
+                    { &judgeLineDisappearEventsNode, "start", "end", "", EnumPhiEventType::AdditiveAlpha, [](ep_f64 v) { return v; } }
                 };
             } else if (formatVersion == 3) {
                 eventGroups = {
@@ -2400,7 +2456,7 @@ PhiChartLoadResult loadChartFromOfficialJson(const Data& data) {
                     { &judgeLineMoveEventsNode, "start", "end", "", EnumPhiEventType::PositionX, [](ep_f64 v) { return v; } },
                     { &judgeLineMoveEventsNode, "start2", "end2", "", EnumPhiEventType::PositionY, [](ep_f64 v) { return v; } },
                     { &judgeLineRotateEventsNode, "start", "end", "", EnumPhiEventType::SelfRotation, [](ep_f64 v) { return -v; } },
-                    { &judgeLineDisappearEventsNode, "start", "end", "", EnumPhiEventType::Alpha, [](ep_f64 v) { return v; } }
+                    { &judgeLineDisappearEventsNode, "start", "end", "", EnumPhiEventType::AdditiveAlpha, [](ep_f64 v) { return v; } }
                 };
             }
 
@@ -2663,7 +2719,7 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
 
             std::vector<EventGroupType> groups;
 
-            if (eventLayerNode.hasKey("alphaEvents")) groups.push_back({ &eventLayerNode["alphaEvents"], true, EnumPhiEventType::Alpha, [](ep_f64 v) { return v / 255; } });
+            if (eventLayerNode.hasKey("alphaEvents")) groups.push_back({ &eventLayerNode["alphaEvents"], true, EnumPhiEventType::AdditiveAlpha, [](ep_f64 v) { return v / 255; } });
             if (eventLayerNode.hasKey("moveXEvents")) groups.push_back({ &eventLayerNode["moveXEvents"], true, EnumPhiEventType::PositionX, [](ep_f64 v) { return v; } });
             if (eventLayerNode.hasKey("moveYEvents")) groups.push_back({ &eventLayerNode["moveYEvents"], true, EnumPhiEventType::PositionY, [](ep_f64 v) { return v; } });
             if (eventLayerNode.hasKey("rotateEvents")) groups.push_back({ &eventLayerNode["rotateEvents"], true, EnumPhiEventType::SelfRotation, [](ep_f64 v) { return v; } });
@@ -2742,7 +2798,8 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                 
                 if (noteNode.hasKey("yOffset")) {
                     if (!noteNode["yOffset"].isNumber()) CHART_LOAD_FAILED("rpe", "yOffset is not a number");
-                    auto yOffset = noteNode["yOffset"].getNumber() / 900;
+                    auto yOffset = noteNode["yOffset"].getNumber() / 900 * speed;
+                    if (!isAbove) yOffset *= -1;
                     
                     if (yOffset != 0.0) {
                         chart.animator.addEvent(note, PhiEvent {
@@ -2762,7 +2819,14 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                         chart.animator.addEvent(note, PhiEvent {
                             .timeZone = { -INF_TIME, startTime - visibleTime },
                             .valueZone = { 0.0, 0.0 },
-                            .type = EnumPhiEventType::Alpha,
+                            .type = EnumPhiEventType::MultiplyAlpha,
+                            .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS
+                        });
+
+                        chart.animator.addEvent(note, PhiEvent {
+                            .timeZone = { startTime - visibleTime, INF_TIME },
+                            .valueZone = { 1.0, 1.0 },
+                            .type = EnumPhiEventType::MultiplyAlpha,
                             .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS
                         });
                     }
@@ -2790,7 +2854,7 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                         chart.animator.addEvent(note, PhiEvent {
                             .timeZone = INF_TZ,
                             .valueZone = { alpha, alpha },
-                            .type = EnumPhiEventType::Alpha,
+                            .type = EnumPhiEventType::MultiplyAlpha,
                             .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS_2
                         });
                     }
@@ -2820,10 +2884,19 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                 if (!isAbove) {
                     chart.animator.addEvent(note, PhiEvent {
                         .timeZone = INF_TZ,
-                        .valueZone = { 180.0, 180.0 },
-                        .type = EnumPhiEventType::AxisRotation,
-                        .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS
+                        .valueZone = { -1.0, -1.0 },
+                        .type = EnumPhiEventType::SpeedCoefficient,
+                        .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS_2
                     });
+
+                    chart.animator.addEvent(note, PhiEvent {
+                        .timeZone = INF_TZ,
+                        .valueZone = { 180.0, 180.0 },
+                        .type = EnumPhiEventType::SelfRotation,
+                        .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS_2
+                    });
+
+                    note.reverseCover();
                 }
             }
         }
@@ -3025,7 +3098,7 @@ PhiChartLoadResult loadChartFromPec(const Data& data) {
             ep_f64 a;
             if (!readNumber(&a)) CHART_LOAD_FAILED("pec", "failed to read a (ca)");
 
-            eventCommands[lineIndex][EnumPhiEventType::Alpha].push_back(Commands::Event {
+            eventCommands[lineIndex][EnumPhiEventType::AdditiveAlpha].push_back(Commands::Event {
                 .timeZone = { time, time }, .value = a
             });
         } else if (token == "cv") {
@@ -3094,7 +3167,7 @@ PhiChartLoadResult loadChartFromPec(const Data& data) {
             ep_f64 a;
             if (!readNumber(&a)) CHART_LOAD_FAILED("pec", "failed to read a (cf)");
 
-            eventCommands[lineIndex][EnumPhiEventType::Alpha].push_back(Commands::Event {
+            eventCommands[lineIndex][EnumPhiEventType::AdditiveAlpha].push_back(Commands::Event {
                 .timeZone = { startTime, endTime }, .value = a,
                 .useFront = true
             });
@@ -3137,10 +3210,19 @@ PhiChartLoadResult loadChartFromPec(const Data& data) {
         if (!cmd.isAbove) {
             chart.animator.addEvent(note, PhiEvent {
                 .timeZone = INF_TZ,
-                .valueZone = { 180.0, 180.0 },
-                .type = EnumPhiEventType::AxisRotation,
-                .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS
+                .valueZone = { -1.0, -1.0 },
+                .type = EnumPhiEventType::SpeedCoefficient,
+                .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS_2
             });
+
+            chart.animator.addEvent(note, PhiEvent {
+                .timeZone = INF_TZ,
+                .valueZone = { 180.0, 180.0 },
+                .type = EnumPhiEventType::SelfRotation,
+                .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS_2
+            });
+
+            note.reverseCover();
         }
 
         if (cmd.positionX != 0.0) {
@@ -3188,7 +3270,7 @@ PhiChartLoadResult loadChartFromPec(const Data& data) {
                 if (type == EnumPhiEventType::PositionX) cmd.value = (cmd.value / 2048.0 - 0.5) * 1350.0;
                 else if (type == EnumPhiEventType::PositionY) cmd.value = (cmd.value / 1400.0 - 0.5) * 900.0;
                 else if (type == EnumPhiEventType::Speed) cmd.value = cmd.value / 1400.0 * 900.0 * 120.0 / 900.0;
-                else if (type == EnumPhiEventType::Alpha) cmd.value /= 255.0;
+                else if (type == EnumPhiEventType::AdditiveAlpha) cmd.value /= 255.0;
             }
 
             for (ep_u64 i = 0; i < typedEvents.size(); i++) {
@@ -3583,7 +3665,7 @@ void calculateFrame(
         auto lineScreenPosition = toScreen(linePosition);
         auto linePositionRelOrigin = chart.getLinePositionRelOrigin(time, line, safeAreaSize);
         auto lineRotation = chart.animator.get(line, time, EnumPhiEventType::SelfRotation);
-        auto lineAlpha = chart.animator.get(line, time, EnumPhiEventType::Alpha);
+        auto lineAlpha = chart.animator.get_alpha(line, time, 0.0);
         auto lineTextIndex = chart.animator.get(line, time, EnumPhiEventType::Text);
         auto lineText = chart.storyboardAssets.getText(lineTextIndex);
         auto lineColorIndex = chart.animator.get(line, time, EnumPhiEventType::Color);
@@ -3703,7 +3785,8 @@ void calculateFrame(
                 };
 
                 // 只 hide 不用考虑 maxHalfNoteHeadDiagonal, 但是这里 break 优化也要用
-                ep_bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, safeArea.extend(maxHalfNoteHeadDiagonal));
+                auto extendedSafeArea = safeArea.extend(maxHalfNoteHeadDiagonal);
+                ep_bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, extendedSafeArea);
 
                 if (noteInsideScreen) {
                     if (frameInfo.isVisible) {
@@ -3721,15 +3804,14 @@ void calculateFrame(
                     }
                 } else {
                     if (chart.options.enableNoteOffScreenBreakOptimization && noteGroup.breakable) {
-                        if (frameInfo.speedCoefficient == 0) break;
-
-                        auto speedVectorRotation = frameInfo.textureRotation;
-                        if (frameInfo.speedCoefficient < 0) speedVectorRotation += 180.0;
-
                         if (isLeavingScreen(
                             noteScreenHeadPosition,
-                            speedVectorRotation,
+                            frameInfo.speedVectorRotation,
                             config.screenSize
+                        ) && !rayIsIntersectRect(
+                            noteScreenHeadPosition,
+                            frameInfo.speedVectorRotation,
+                            extendedSafeArea
                         )) break;
                     }
                 }
