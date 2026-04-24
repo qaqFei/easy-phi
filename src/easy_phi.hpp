@@ -2698,13 +2698,15 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                         e.easingFunc = [](void* ctx, ep_f64 p) { return EaseSet::Phigros::RePhiEdit::easing((ep_u64)ctx, p); };
                     }
 
-                    if (!eventNode.hasKey("easingLeft")) return { false, "missing easingLeft field" };
-                    if (!eventNode["easingLeft"].isNumber()) return { false, "easingLeft is not a number" };
-                    e.easingZone.x = eventNode["easingLeft"].getNumber();
+                    if (eventNode.hasKey("easingLeft")) {
+                        if (!eventNode["easingLeft"].isNumber()) return { false, "easingLeft is not a number" };
+                        e.easingZone.x = eventNode["easingLeft"].getNumber();
+                    }
 
-                    if (!eventNode.hasKey("easingRight")) return { false, "missing easingRight field" };
-                    if (!eventNode["easingRight"].isNumber()) return { false, "easingRight is not a number" };
-                    e.easingZone.y = eventNode["easingRight"].getNumber();
+                    if (eventNode.hasKey("easingRight")) {
+                        if (!eventNode["easingRight"].isNumber()) return { false, "easingRight is not a number" };
+                        e.easingZone.y = eventNode["easingRight"].getNumber();
+                    }
                 }
 
                 chart.animator.addEvent(line, e);
