@@ -209,6 +209,10 @@ struct Rect {
             .h = h + padding * 2
         };
     }
+
+    Vec2 center() const {
+        return { x + w / 2, y + h / 2 };
+    }
 };
 
 struct HashBucket {
@@ -495,13 +499,44 @@ bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
            pointStrictlyInConvexQuad(Vec2 {r.x, r.y + r.h}, quad);
 }
 
-// 别乱改, 一改就错, 别相信你自己
-bool isLeavingScreen(const Vec2& point, ep_f64 deg, const Vec2& screenSize) {
+bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) {
+    ep_f64 angle = lineDeg / 180.0 * std::numbers::pi;
+    Vec2 dir = { std::cos(angle), std::sin(angle) };
+    
+    Vec2 s = seg[1] - seg[0];
+    Vec2 q = seg[0] - linePoint;
+    
+    ep_f64 rxs = dir.x * s.y - dir.y * s.x;
+    ep_f64 qxs = q.x * s.y - q.y * s.x;
+    
+    constexpr ep_f64 eps = 1e-9;
+    
+    if (std::abs(rxs) < eps) {
+        if (std::abs(qxs) >= eps) return false;
+        return true;
+    }
+    
+    ep_f64 u = (q.x * dir.y - q.y * dir.x) / rxs;
+    return u >= -eps && u <= 1.0 + eps;
+}
+
+bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
+    return lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x, r.y }, Vec2 { r.x + r.w, r.y } }) ||
+           lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y }, Vec2 { r.x + r.w, r.y + r.h } }) ||
+           lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y + r.h }, Vec2 { r.x, r.y + r.h } }) ||
+           lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x, r.y + r.h }, Vec2 { r.x, r.y } });
+}
+
+bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
     ep_f64 eps = 1.0;
     return (
-        (point.rotateDegress(deg + 90, -eps) - screenSize / 2).lengthSquared() -
-        (point - screenSize / 2).lengthSquared()
+        (point.rotateDegress(deg + 90, -eps) - targetPoint).lengthSquared() -
+        (point - targetPoint).lengthSquared()
     ) > 0;
+}
+
+bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) {
+    return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg, screenArea.center());
 }
 
 template <typename T1, typename T2>
@@ -3722,7 +3757,8 @@ void calculateFrame(
                 };
 
                 // 只 hide 不用考虑 maxHalfNoteHeadDiagonal, 但是这里 break 优化也要用
-                ep_bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, safeArea.extend(maxHalfNoteHeadDiagonal));
+                auto extendedSafeArea = safeArea.extend(maxHalfNoteHeadDiagonal);
+                ep_bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, extendedSafeArea);
 
                 if (noteInsideScreen) {
                     if (frameInfo.isVisible) {
@@ -3740,14 +3776,14 @@ void calculateFrame(
                     }
                 } else {
                     if (chart.options.enableNoteOffScreenBreakOptimization && noteGroup.breakable) {
-                        if (isLeavingScreen(
+                        if (lineIsLeavingScreen(
                             noteScreenHeadPosition,
                             frameInfo.speedVectorRotation,
-                            config.screenSize
-                        ) && isLeavingScreen(
+                            extendedSafeArea
+                        ) && lineIsLeavingScreen(
                             noteScreenHeadPosition,
                             frameInfo.textureRotation,
-                            config.screenSize
+                            extendedSafeArea
                         )) break;
                     }
                 }
