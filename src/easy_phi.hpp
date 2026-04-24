@@ -504,40 +504,6 @@ bool isLeavingScreen(const Vec2& point, ep_f64 deg, const Vec2& screenSize) {
     ) > 0;
 }
 
-bool rayIsIntersectLine(const Vec2& rayPoint, ep_f64 rayDeg, const Vec2 line[2]) {
-    ep_f64 angle = rayDeg / 180.0 * std::numbers::pi;
-    Vec2 dir = { std::cos(angle), std::sin(angle) };
-    
-    Vec2 s = line[1] - line[0];
-    Vec2 q = line[0] - rayPoint;
-    
-    ep_f64 rxs = dir.x * s.y - dir.y * s.x;
-    ep_f64 qxs = q.x * s.y - q.y * s.x;
-    
-    constexpr ep_f64 eps = 1e-9;
-    
-    if (std::abs(rxs) < eps) {
-        if (std::abs(qxs) >= eps) return false;
-        
-        ep_f64 dot0 = (line[0].x - rayPoint.x) * dir.x + (line[0].y - rayPoint.y) * dir.y;
-        ep_f64 dot1 = (line[1].x - rayPoint.x) * dir.x + (line[1].y - rayPoint.y) * dir.y;
-        
-        return dot0 >= -eps || dot1 >= -eps;
-    }
-    
-    ep_f64 t = qxs / rxs;
-    ep_f64 u = (q.x * dir.y - q.y * dir.x) / rxs;
-    
-    return t >= -eps && u >= -eps && u <= 1.0 + eps;
-}
-
-bool rayIsIntersectRect(const Vec2& rayPoint, ep_f64 rayDeg, const Rect& r) {
-    return rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x, r.y }, Vec2 { r.x + r.w, r.y } }) ||
-           rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y }, Vec2 { r.x + r.w, r.y + r.h } }) ||
-           rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y + r.h }, Vec2 { r.x, r.y + r.h } }) ||
-           rayIsIntersectLine(rayPoint, rayDeg, (Vec2[2]) { Vec2 { r.x, r.y + r.h }, Vec2 { r.x, r.y } });
-}
-
 template <typename T1, typename T2>
 struct SKVCache {
     T1 key;
@@ -983,18 +949,6 @@ struct PhiAnimGroup {
         }
     }
 
-    ep_f64 get(EnumPhiEventType type) {
-        ep_f64 value = PhiEvent::GetDefaultValue(type);
-
-        if (isMultiplyEventType(type)) {
-            for (auto& layer : layers) value *= layer.get(type);
-        } else {
-            for (auto& layer : layers) value += layer.get(type);
-        }
-
-        return value;
-    }
-
     ep_f64 get_based(EnumPhiEventType type, ep_f64 baseValue) {
         ep_f64 value = baseValue;
 
@@ -1043,23 +997,9 @@ struct PhiAnimator {
         }
     }
 
-    ep_f64 get(ep_u64 index, ep_f64 t, EnumPhiEventType type) {
-        auto group_it = groups.find(index);
-        if (group_it == groups.end()) return PhiEvent::GetDefaultValue(type);
-
-        auto& group = group_it->second;
-        group.updateType(type, t);
-        return group.get(type);
-    }
-
-    template <typename T>
-    ep_f64 get(T& obj, ep_f64 t, EnumPhiEventType type) {
-        return get(obj.indexer.get(), t, type);
-    }
-
     ep_f64 get_based(ep_u64 index, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
         auto group_it = groups.find(index);
-        if (group_it == groups.end()) return PhiEvent::GetDefaultValue(type);
+        if (group_it == groups.end()) return baseValue;
 
         auto& group = group_it->second;
         group.updateType(type, t);
@@ -1071,18 +1011,13 @@ struct PhiAnimator {
         return get_based(obj.indexer.get(), t, type, baseValue);
     }
 
-    ep_f64 get_floor_position_at(ep_u64 index, ep_f64 time) {
-        auto group_it = groups.find(index);
-        if (group_it == groups.end()) return 0.0;
-
-        auto& group = group_it->second;
-        group.updateType(EnumPhiEventType::Speed, time);
-        return group.get(EnumPhiEventType::Speed);
+    ep_f64 get(ep_u64 index, ep_f64 t, EnumPhiEventType type) {
+        return get_based(index, t, type, PhiEvent::GetDefaultValue(type));
     }
 
     template <typename T>
-    ep_f64 get_floor_position_at(T& obj, ep_f64 time) {
-        return get_floor_position_at(obj.indexer.get(), time);
+    ep_f64 get(T& obj, ep_f64 t, EnumPhiEventType type) {
+        return get(obj.indexer.get(), t, type);
     }
 
     // std::nullopt means it is unpredictable
@@ -1179,7 +1114,7 @@ struct PhiNote {
             return getFloorPositionAt(time, animator) + (t - time) * fixedHoldSpeed.value();
         }
 
-        return animator.get_floor_position_at(lineIndex, t) + animator.get_floor_position_at(*this, t);
+        return animator.get(lineIndex, t, EnumPhiEventType::Speed) + animator.get(*this, t, EnumPhiEventType::Speed);
     }
 
     ep_bool isHold() {
@@ -3787,8 +3722,7 @@ void calculateFrame(
                 };
 
                 // 只 hide 不用考虑 maxHalfNoteHeadDiagonal, 但是这里 break 优化也要用
-                auto extendedSafeArea = safeArea.extend(maxHalfNoteHeadDiagonal);
-                ep_bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, extendedSafeArea);
+                ep_bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, safeArea.extend(maxHalfNoteHeadDiagonal));
 
                 if (noteInsideScreen) {
                     if (frameInfo.isVisible) {
@@ -3810,10 +3744,10 @@ void calculateFrame(
                             noteScreenHeadPosition,
                             frameInfo.speedVectorRotation,
                             config.screenSize
-                        ) && !rayIsIntersectRect(
+                        ) && isLeavingScreen(
                             noteScreenHeadPosition,
-                            frameInfo.speedVectorRotation,
-                            extendedSafeArea
+                            frameInfo.textureRotation,
+                            config.screenSize
                         )) break;
                     }
                 }
