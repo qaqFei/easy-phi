@@ -829,6 +829,7 @@ struct Window {
         glfwMakeContextCurrent(window);
         gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
         skGrCtx = GrDirectContexts::MakeGL();
+        skGrCtx->setResourceCacheLimit(std::numeric_limits<size_t>::max());
         skFbi.fFBOID = 0;
         skFbi.fFormat = GL_RGBA8;
         kImSO = {SkFilterMode::kLinear, SkMipmapMode::kLinear};
@@ -888,6 +889,10 @@ struct Window {
         
         attachTextureLoader(chart, storyboardAssetsPath, loadedStoryboardTextures);
         chart.init();
+
+        for (auto& [_, img] : loadedStoryboardTextures) skCanvas->drawImage(img, 0, 0);
+        skGrCtx->flush();
+        skGrCtx->submit(GrSyncCpu::kYes);
     }
 
     void resetSurface() {
@@ -959,7 +964,7 @@ struct Window {
         {
             double st = globalTimer();
             easy_phi::calculateFrame(chart, t, calculateFrameConfig, calculatedFrame);
-            std::cout << "calculatedFrame took " << ((globalTimer() - st) * 1000) << " ms" << std::endl;
+            std::cout << "calculateFrame took " << ((globalTimer() - st) * 1000) << " ms" << std::endl;
         }
         
         if (cachedBluredImage.first != calculatedFrame.backgroundImageBlurRadius) {
@@ -1171,6 +1176,14 @@ struct Window {
         }
 
         std::cout << "frame took " << ((globalTimer() - frame_st) * 1000) << " ms" << std::endl;
+
+        {
+            size_t resourceBytes;
+            skGrCtx->getResourceCacheUsage(nullptr, &resourceBytes);
+            std::cout << "gpu resources size: " << easy_phi::formatToStdString("%.2f MB", resourceBytes / 1024.0 / 1024.0) << std::endl;
+        }
+
+        std::cout << std::string(80, '.') << std::endl;
 
         return true;
     }
