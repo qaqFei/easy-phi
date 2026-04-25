@@ -865,6 +865,9 @@ struct Window {
 
     void startMainSound() {
         ma_sound_start(mainSound);
+        while (!ma_sound_is_playing(mainSound)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
     }
 
     void loadBgImage(const std::string& path) {
