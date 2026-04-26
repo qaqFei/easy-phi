@@ -35,6 +35,7 @@
 #include <skia/core/SkM44.h>
 #include <skia/core/SkMaskFilter.h>
 #include <skia/core/SkBlurTypes.h>
+#include <skia/core/SkString.h>
 #include <stb/stb_vorbis.c>
 extern "C" {
     #include <libavcodec/avcodec.h>
@@ -48,6 +49,16 @@ extern "C" {
 #include <queue>
 #include <mutex>
 #include <thread>
+#include <set>
+#include <cctype>
+#include <sstream>
+#include <stdexcept>
+#include <unordered_set>
+#include <string_view>
+#include <utility>
+#include <regex>
+#include <map>
+#include <charconv>
 
 #define WAV_HEADER_SIZE 44
 
@@ -856,11 +867,13 @@ struct Window {
         else glfwShowWindow(window);
     }
 
-    void loadMainSound(const std::string& path) {
+    std::optional<std::string> loadMainSound(const std::string& path) {
         easy_phi::Data data;
-        easy_phi::Data::FromFile(&data, path);
+        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
         mainSound = loadMaSoundFromMemory(&maeng, data);
+        if (!mainSound) return "failed to load";
         calculateFrameConfig.songLength = getMaSoundDuration(mainSound);
+        return std::nullopt;
     }
 
     void startMainSound() {
@@ -870,17 +883,19 @@ struct Window {
         }
     }
 
-    void loadBgImage(const std::string& path) {
+    std::optional<std::string> loadBgImage(const std::string& path) {
         easy_phi::Data data;
-        easy_phi::Data::FromFile(&data, path);
+        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
         bgImage = loadImage(data);
+        if (!bgImage) return "failed to load";
         bluredImageTempSurface = skSurface->makeSurface(bgImage->width(), bgImage->height());
         calculateFrameConfig.backgroundTextureSize = { (double)bgImage->width(), (double)bgImage->height() };
+        return std::nullopt;
     }
 
-    void loadChart(const std::string& path, const std::string& storyboardAssetsPath) {
+    std::optional<std::string> loadChart(const std::string& path, const std::string& chartDir) {
         easy_phi::Data data;
-        easy_phi::Data::FromFile(&data, path);
+        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read chart file";
 
         double load_st = globalTimer();
         auto chartLoadResult = easy_phi::loadChartFromData(data);
@@ -888,14 +903,62 @@ struct Window {
         std::cout << "chartLoadResult.success: " << chartLoadResult.success << std::endl;
         std::cout << "chartLoadResult.erros: " << std::endl;
         for (const auto& e : chartLoadResult.errors) std::cout << e << std::endl;
+        if (!chartLoadResult.success) return "failed to load chart";
         chart = std::move(chartLoadResult.chart);
         
-        attachTextureLoader(chart, storyboardAssetsPath, loadedStoryboardTextures);
+        attachTextureLoader(chart, chartDir, loadedStoryboardTextures);
+
+        easy_phi::Data extraData;
+        if (easy_phi::Data::FromFile(&extraData, chartDir + "extra.json")) {
+            auto extraLoadResult = easy_phi::loadExtraFromJsonData(extraData, chart.storyboardAssets);
+            if (std::holds_alternative<easy_phi::PhiExtra>(extraLoadResult)) {
+                chart.extra = std::move(std::get<easy_phi::PhiExtra>(extraLoadResult));
+                std::cout << "loaded extra" << std::endl;
+            } else if (std::holds_alternative<std::string>(extraLoadResult)) {
+                std::cout << "failed to load extra: " << std::get<std::string>(extraLoadResult) << std::endl;
+            }
+        }
+
+        chart.storyboardAssets.shaderPreloader = [&](const std::string& name) {
+            std::cout << std::string(80, '-') << std::endl;
+            std::unordered_set<std::string> builtinShaders = {
+                "chromatic", "circleBlur", "fisheye",
+                "glitch", "grayscale", "noise",
+                "pixel", "radialBlur", "shockwave",
+                "trigrid", "vignette"
+            };
+
+            easy_phi::Data shaderText;
+            if (builtinShaders.contains(name)) {
+                shaderText = StaticResource::get(std::string("/shaders/") + name + ".glsl");
+            } else {
+                if (!easy_phi::Data::FromFile(&shaderText, std::filesystem::path(chartDir + "/" + name).lexically_normal().string())) {
+                    std::cout << "failed to read shader file: " << name << std::endl;
+                    return;
+                }
+            }
+
+            // TODO: glsl2sksl
+            std::string sksl = "";
+
+            std::cout << "preloading shader: " << name << std::endl;
+
+            auto shaderResult = SkRuntimeEffect::MakeForShader(SkString(sksl));
+            if (!shaderResult.effect) {
+                std::cout << "failed to compile shader: " << name << std::endl;
+                std::cout << shaderResult.errorText.c_str() << std::endl;
+                return;
+            }
+
+            std::cout << "shader compiled: " << shaderResult.effect.get() << std::endl;
+        };
+
         chart.init();
 
         for (auto& [_, img] : loadedStoryboardTextures) skCanvas->drawImage(img, 0, 0);
         skGrCtx->flush();
         skGrCtx->submit(GrSyncCpu::kYes);
+        return std::nullopt;
     }
 
     void resetSurface() {
@@ -1136,6 +1199,8 @@ struct Window {
                 path.close();
 
                 skCanvas->drawPath(path, pt);
+            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedShader>(obj)) {
+                auto& shader = std::get<easy_phi::CalculatedFrame::CalculatedShader>(obj);
             }
         }
 

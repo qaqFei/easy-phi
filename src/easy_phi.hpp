@@ -17,6 +17,7 @@
 #include <random>
 #include <filesystem>
 #include <ranges>
+#include <unordered_set>
 
 namespace easy_phi {
 
@@ -181,8 +182,12 @@ struct Vec2 {
         return rotate(angle / 180.0 * std::numbers::pi, length);
     }
 
-    bool isZeroZone() {
+    ep_bool isZeroZone() const {
         return x == y;
+    }
+
+    ep_bool include(ep_f64 v) const {
+        return x <= v && v <= y;
     }
 };
 
@@ -239,7 +244,7 @@ struct HashBucket {
         }
     }
     
-    void submitBool(bool b) {
+    void submitBool(ep_bool b) {
         mix(b ? 1 : 0);
     }
 
@@ -359,11 +364,11 @@ struct Color {
         return *this;
     }
 
-    bool operator==(const Color& c) const {
+    ep_bool operator==(const Color& c) const {
         return r == c.r && g == c.g && b == c.b && a == c.a;
     }
 
-    bool operator!=(const Color& c) const {
+    ep_bool operator!=(const Color& c) const {
         return !(*this == c);
     }
 };
@@ -466,7 +471,7 @@ struct Transform2D {
     }
 };
 
-bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
+ep_bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
     auto cross = [](ep_f64 ax, ep_f64 ay, ep_f64 bx, ep_f64 by) {
         return ax * by - ay * bx;
     };
@@ -483,12 +488,12 @@ bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
     return false;
 }
 
-bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
+ep_bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
     return r.x < p.x && p.x < r.x + r.w &&
            r.y < p.y && p.y < r.y + r.h;
 }
 
-bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
+ep_bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
     return pointStrictlyInRect(quad[0], r) ||
            pointStrictlyInRect(quad[1], r) ||
            pointStrictlyInRect(quad[2], r) ||
@@ -499,7 +504,7 @@ bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
            pointStrictlyInConvexQuad(Vec2 {r.x, r.y + r.h}, quad);
 }
 
-bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) {
+ep_bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) {
     ep_f64 angle = lineDeg / 180.0 * std::numbers::pi;
     Vec2 dir = { std::cos(angle), std::sin(angle) };
     
@@ -520,14 +525,14 @@ bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 se
     return u >= -eps && u <= 1.0 + eps;
 }
 
-bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
+ep_bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
     return lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x, r.y }, Vec2 { r.x + r.w, r.y } }) ||
            lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y }, Vec2 { r.x + r.w, r.y + r.h } }) ||
            lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y + r.h }, Vec2 { r.x, r.y + r.h } }) ||
            lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x, r.y + r.h }, Vec2 { r.x, r.y } });
 }
 
-bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
+ep_bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
     ep_f64 eps = 1.0;
     return (
         (point.rotateDegress(deg + 90, -eps) - targetPoint).lengthSquared() -
@@ -535,7 +540,7 @@ bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint)
     ) > 0;
 }
 
-bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) {
+ep_bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) {
     return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg, screenArea.center());
 }
 
@@ -694,7 +699,8 @@ enum class EnumPhiEventType : ep_u64 {
     ScaleX, ScaleY,
     Speed, SpeedCoefficient,
     Text,
-    MAX = Text + 1
+    ShaderUniform,
+    MAX = ShaderUniform + 1
 };
 
 enum class EnumPhiNoteType {
@@ -755,7 +761,7 @@ struct PhiLineAttachUIHelper {
     }
 };
 
-bool isMultiplyEventType(EnumPhiEventType type) {
+ep_bool isMultiplyEventType(EnumPhiEventType type) {
     return (
         type == EnumPhiEventType::MultiplyAlpha ||
         type == EnumPhiEventType::ScaleX ||
@@ -805,6 +811,7 @@ struct PhiEventLayerIndexs {
     static constexpr ep_u64 NOTE_ATTRS = UNIT * 1;
     static constexpr ep_u64 NOTE_ATTRS_2 = UNIT * 2;
     static constexpr ep_u64 LINE_DEFAULT = UNIT * 3;
+    static constexpr ep_u64 SHADER_UNIFORM_DEFAULT = UNIT * 4;
 };
 
 struct PhiEvent {
@@ -836,7 +843,7 @@ struct PhiEvent {
             }
         }
 
-        if (type == EnumPhiEventType::Color || type == EnumPhiEventType::Text) {
+        if (type == EnumPhiEventType::Color || type == EnumPhiEventType::Text || type == EnumPhiEventType::ShaderUniform) {
             p = std::clamp(p, 0.0, 1.0);
         }
 
@@ -1182,7 +1189,7 @@ struct PhiNoteGroup {
     };
     
     std::vector<ep_u64> indexs;
-    bool breakable = true;
+    ep_bool breakable = true;
 
     State state;
 };
@@ -1199,7 +1206,6 @@ struct PhiLine {
     Vec2 anchor = { 0.5, 0.5 };
 
     std::optional<std::string> textureName;
-    std::optional<ep_u64> texture;
     std::optional<EnumPhiLineAttachUI> attachUI;
 
     std::vector<PhiNoteGroup> noteGroups;
@@ -1321,37 +1327,107 @@ struct PhiHitEffectItem {
     std::vector<Particle> particles;
 };
 
+struct PhiExtraEffectItem {
+    Vec2 timeZone;
+    std::optional<ep_u64> targetLine;
+    ep_u64 order;
+    ep_bool isGlobal;
+    std::string shaderName;
+    std::unordered_map<std::string, PhiAnimLayer> uniforms;
+};
+
+struct PhiExtra {
+    std::vector<PhiExtraEffectItem> effects;
+    std::vector<ep_u64> zOrderSortedEffects;
+
+    void init() {
+        initZOrderSortedEffects();
+    }
+
+    private:
+    void initZOrderSortedEffects() {
+        zOrderSortedEffects.clear();
+        for (ep_u64 i = 0; i < effects.size(); i++) zOrderSortedEffects.push_back(i);
+
+        std::stable_sort(zOrderSortedEffects.begin(), zOrderSortedEffects.end(), [&](ep_u64 a, ep_u64 b){
+            return effects[a].order < effects[b].order;
+        });
+    }
+};
+
+struct ShaderUniform {
+    ep_u8 used;
+    ep_f64 value[4];
+
+    ShaderUniform(ep_f64 v0, ep_f64 v1, ep_f64 v2, ep_f64 v3) : used(4), value{ v0, v1, v2, v3 } {}
+    ShaderUniform(ep_f64 v0, ep_f64 v1, ep_f64 v2) : used(3), value{ v0, v1, v2, 0.0 } {}
+    ShaderUniform(ep_f64 v0, ep_f64 v1) : used(2), value{ v0, v1, 0.0, 0.0 } {}
+    ShaderUniform(ep_f64 v0) : used(1), value{ v0, 0.0, 0.0, 0.0 } {}
+    ShaderUniform() : used(0) {}
+
+    static ShaderUniform Interpolate(const ShaderUniform& a, const ShaderUniform& b, ep_f64 t) {
+        ShaderUniform result;
+        result.used = std::max(a.used, b.used);
+        for (ep_u8 i = 0; i < 4; i++) result.value[i] = a.value[i] + (b.value[i] - a.value[i]) * t;
+        return result;
+    }
+
+    ep_bool operator==(const ShaderUniform& other) const {
+        if (used != other.used) return false;
+        for (ep_u8 i = 0; i < 4; i++) if (value[i] != other.value[i]) return false;
+        return true;
+    }
+
+    ep_bool operator!=(const ShaderUniform& other) const { return !(*this == other); }
+};
+
 struct PhiStoryboardAssets {
     // 用于区分是否到达了第一个
     static constexpr ep_f64 kTextIndexOffset = 1;
     static constexpr ep_f64 kColorIndexOffset = 1;
+    static constexpr ep_f64 kShaderUniformIndexOffset = 1;
 
     std::vector<std::string> texts;
-    std::vector<std::pair<ep_u64, Vec2>> textures; // id, size
+    std::unordered_map<std::string, std::pair<ep_u64, Vec2>> textures; // name, (id, size)
     std::vector<Color> colors;
+    std::vector<ShaderUniform> shaderUniforms;
 
     std::function<std::optional<std::pair<ep_u64, Vec2>>(std::string)> textureLoader;
     std::function<void(ep_u64)> textureDestroyer;
+    std::function<void(std::string)> shaderPreloader;
 
-    std::pair<ep_f64, ep_f64> requestTextPair(const std::string& start, const std::string& end) {
+    Vec2 requestTextPair(const std::string& start, const std::string& end) {
+        Vec2 valueZone;
         if (texts.empty() || texts[texts.size() - 1] != start) texts.push_back(start);
-        texts.push_back(end);
-        return {
-            texts.size() - 2 + kTextIndexOffset,
-            texts.size() - 1 + kTextIndexOffset
-        };
+        valueZone.x = texts.size() - 1;
+        if (texts.empty() || texts[texts.size() - 1] != end) texts.push_back(end);
+        valueZone.y = texts.size() - 1;
+        return valueZone + kTextIndexOffset;
     }
 
-    std::pair<ep_f64, ep_f64> requestColorPair(const Color& start, const Color& end) {
+    Vec2 requestColorPair(const Color& start, const Color& end) {
+        Vec2 valueZone;
         if (colors.empty() || colors[colors.size() - 1] != start) colors.push_back(start);
-        colors.push_back(end);
-        return {
-            colors.size() - 2 + kColorIndexOffset,
-            colors.size() - 1 + kColorIndexOffset
-        };
+        valueZone.x = colors.size() - 1;
+        if (colors.empty() || colors[colors.size() - 1] != end) colors.push_back(end);
+        valueZone.y = colors.size() - 1;
+        return valueZone + kColorIndexOffset;
     }
 
-    std::optional<std::string> getText(ep_f64 index) {
+    Vec2 requestShaderUniformPair(const ShaderUniform& start, const ShaderUniform& end) {
+        Vec2 valueZone;
+        if (shaderUniforms.empty() || shaderUniforms[shaderUniforms.size() - 1] != start) shaderUniforms.push_back(start);
+        valueZone.x = shaderUniforms.size() - 1;
+        if (shaderUniforms.empty() || shaderUniforms[shaderUniforms.size() - 1] != end) shaderUniforms.push_back(end);
+        valueZone.y = shaderUniforms.size() - 1;
+        return valueZone + kShaderUniformIndexOffset;
+    }
+
+    Vec2 requestShaderUniformPair(ep_f64 start, ep_f64 end) {
+        return requestShaderUniformPair(ShaderUniform(start), ShaderUniform(end));
+    }
+
+    std::optional<std::string> getText(ep_f64 index) noexcept {
         if (index < kTextIndexOffset) return std::nullopt;
         index -= kTextIndexOffset;
 
@@ -1359,7 +1435,7 @@ struct PhiStoryboardAssets {
         return texts[(ep_u64)index];
     }
 
-    Color getColor(ep_f64 index, const Color& defaultValue) {
+    Color getColor(ep_f64 index, const Color& defaultValue) noexcept {
         if (index < kColorIndexOffset) return defaultValue;
         index -= kColorIndexOffset;
 
@@ -1372,23 +1448,43 @@ struct PhiStoryboardAssets {
         return start * (1.0 - p) + end * p;
     }
 
-    std::optional<ep_u64> requestLoadTexture(const std::string& name) {
-        if (!textureLoader) return std::nullopt;
-        auto id = textureLoader(name);
-        if (id.has_value()) {
-            textures.push_back(id.value());
-            return textures.size() - 1;
-        } else {
-            return std::nullopt;
-        }
+    ShaderUniform getShaderUniform(ep_f64 index, const ShaderUniform& defaultValue) noexcept {
+        if (index < kShaderUniformIndexOffset) return defaultValue;
+        index -= kShaderUniformIndexOffset;
+
+        if (index >= shaderUniforms.size()) return defaultValue;
+
+        auto start = shaderUniforms[(ep_u64)index];
+        auto end = shaderUniforms[(ep_u64)std::ceil(index)];
+        auto p = std::fmod(index, 1.0);
+        
+        return ShaderUniform::Interpolate(start, end, p);
     }
 
-    std::pair<ep_u64, Vec2> getTexture(ep_u64 index) noexcept {
-        return textures[index];
+    ep_bool requestLoadTexture(const std::string& name) {
+        if (textures.contains(name)) return true;
+        if (!textureLoader) return false;
+
+        auto id = textureLoader(name);
+
+        if (id.has_value()) {
+            textures[name] = id.value();
+            return true;
+        }
+
+        return false;
+    }
+
+    ep_bool isTextureLoaded(const std::string& name) {
+        return textures.contains(name);
+    }
+
+    std::pair<ep_u64, Vec2>& getTexture(const std::string& name) {
+        return textures[name];
     }
 
     void clearTextures() {
-        for (auto& texture : textures) {
+        for (auto& [_, texture] : textures) {
             if (textureDestroyer) {
                 textureDestroyer(texture.first);
             }
@@ -1459,6 +1555,7 @@ struct PhiChart {
     std::vector<PhiLine> lines;
     PhiAnimator animator;
     PhiStoryboardAssets storyboardAssets;
+    PhiExtra extra;
 
     std::vector<PhiHitEffectItem> hitEffects;
     std::vector<ep_f64> comboTimes;
@@ -1473,12 +1570,29 @@ struct PhiChart {
 
         for (auto& line : lines) {
             if (line.textureName.has_value()) {
-                line.texture = storyboardAssets.requestLoadTexture(line.textureName.value());
+                storyboardAssets.requestLoadTexture(line.textureName.value());
             }
 
             line.init(animator);
         }
 
+        std::unordered_set<std::string> shaderNames;
+        for (auto& effect : extra.effects) {
+            shaderNames.insert(effect.shaderName);
+
+            for (auto& [_, layer] : effect.uniforms) {
+                layer.init();
+            }
+        }
+        
+        if (storyboardAssets.shaderPreloader) {
+            for (auto& name : shaderNames) {
+                storyboardAssets.shaderPreloader(name);
+            }
+        }
+
+        extra.init();
+        
         initSimulNote();
         initHitEffects();
         initPlayemntInfo();
@@ -2234,7 +2348,7 @@ struct TokenStringReader {
 
     TokenStringReader(const std::string& str) : str(str) {}
 
-    bool nextToken(std::string& dst) {
+    ep_bool nextToken(std::string& dst) {
         jumpToNextNonWhiteSpace();
         if (pos >= str.size()) return false;
         ep_u64 start = pos;
@@ -2246,7 +2360,7 @@ struct TokenStringReader {
     }
 
     private:
-    bool currentIsWhiteSpace() const {
+    ep_bool currentIsWhiteSpace() const {
         return str[pos] == ' ' || str[pos] == '\t' || str[pos] == '\n' || str[pos] == '\r' || str[pos] == '\f' || str[pos] == '\v';
     }
 
@@ -2575,9 +2689,9 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
 
         ep_u64 eventLayerIndex = 0;
         // events, hasEasing, type, converter
-        using EventGroupType = std::tuple<JsonNode*, bool, EnumPhiEventType, std::function<ep_f64(ep_f64)>>;
+        using EventGroupType = std::tuple<JsonNode*, ep_bool, EnumPhiEventType, std::function<ep_f64(ep_f64)>>;
 
-        auto progressEventGroup = [&](EventGroupType group) -> std::pair<bool, std::string> {
+        auto progressEventGroup = [&](EventGroupType group) -> std::pair<ep_bool, std::string> {
             auto& [eventsNode, hasEasing, type, converter] = group;
             if (!eventsNode->isArray()) return { false, "XXXEvents is not an array" };
 
@@ -2602,8 +2716,8 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                     if (!eventNode["end"].isString()) return { false, "end is not a string" };
 
                     auto valueZone = chart.storyboardAssets.requestTextPair(eventNode["start"].getString(), eventNode["end"].getString());
-                    start = valueZone.first;
-                    end = valueZone.second;
+                    start = valueZone.x;
+                    end = valueZone.y;
                 } else if (type == EnumPhiEventType::Color) {
                     if (!eventNode["start"].isArray()) return { false, "start is not an array" };
                     if (!eventNode["end"].isArray()) return { false, "end is not an array" };
@@ -2637,8 +2751,8 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                     };
 
                     auto valueZone = chart.storyboardAssets.requestColorPair(startColor, endColor);
-                    start = valueZone.first;
-                    end = valueZone.second;
+                    start = valueZone.x;
+                    end = valueZone.y;
                 } else {
                     if (!eventNode["start"].isNumber()) return { false, "start is not a number" };
                     start = eventNode["start"].getNumber();
@@ -2664,7 +2778,7 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
                     if (!eventNode["easingType"].isNumber()) return { false, "easingType is not a number" };
                     e.easingFuncContext = (void*)(ep_u64)eventNode["easingType"].getNumber();
 
-                    if (e.easingFuncContext != 0) {
+                    if ((ep_u64)e.easingFuncContext > 1) {
                         e.easingFunc = [](void* ctx, ep_f64 p) { return EaseSet::Phigros::RePhiEdit::easing((ep_u64)ctx, p); };
                     }
 
@@ -2895,7 +3009,7 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
             }
         }
 
-        bool enableCover = true;
+        ep_bool enableCover = true;
         if (judgeLineNode.hasKey("isCover")) {
             if (judgeLineNode["isCover"].isNumber()) enableCover = judgeLineNode["isCover"].getNumber() == 1;
             else if (judgeLineNode["isCover"].isBool()) enableCover = judgeLineNode["isCover"].getBool();
@@ -3266,7 +3380,7 @@ PhiChartLoadResult loadChartFromPec(const Data& data) {
                 e.type = type;
                 e.layerIndex = PhiEventLayerIndexs::LINE_DEFAULT;
 
-                if (cmd.easingType) {
+                if (cmd.easingType > 1) {
                     e.easingFuncContext = (void*)cmd.easingType;
                     e.easingFunc = [](void* ctx, ep_f64 p) { return EaseSet::Phigros::RePhiEdit::easing((ep_u64)ctx, p); };
                 }
@@ -3302,6 +3416,207 @@ PhiChartLoadResult loadChartFromData(const Data& data) {
     #undef TRY_LOAD_FUNC
 }
 
+std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
+    JsonNode jsonRoot;
+    auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
+    if (!jsonParseSuccess) return std::string("failed to parse json: ") + err;
+
+    if (!jsonRoot.isObject()) return "root is not an object";
+
+    PhiExtra extra {};
+    
+    auto parseTimeTuple = [](const JsonNode& node, ep_f64* dst) {
+        if (!node.isArray()) return false;
+        if (node.getArray().size() != 3) return false;
+
+        const auto& arr = node.getArray();
+        if (!arr[0].isNumber()) return false;
+        if (!arr[1].isNumber()) return false;
+        if (!arr[2].isNumber()) return false;
+
+        ep_f64 n1 = arr[0].getNumber(),
+               n2 = arr[1].getNumber(),
+               n3 = arr[2].getNumber();
+
+        *dst = n1 + n2 / n3;
+        return true;
+    };
+
+    std::vector<PhiBPMEvent> bpmEvents;
+
+    if (!jsonRoot.hasKey("bpm")) return "missing bpm field";
+    if (!jsonRoot["bpm"].isArray()) return "bpm is not an array";
+
+    auto& bpmArr = jsonRoot["bpm"].getArray();
+    for (auto& bpmEventNode : bpmArr) {
+        if (!bpmEventNode.isObject()) return "bpm item is not an object";
+
+        if (!bpmEventNode.hasKey("time")) return "missing time field";
+        ep_f64 time;
+        if (!parseTimeTuple(bpmEventNode["time"], &time)) return "time is not a valid time tuple";
+
+        if (!bpmEventNode.hasKey("bpm")) return "missing bpm field";
+        if (!bpmEventNode["bpm"].isNumber()) return "bpm is not a number";
+        ep_f64 bpm = bpmEventNode["bpm"].getNumber();
+
+        bpmEvents.push_back({
+            .time = time,
+            .bpm = bpm
+        });
+    }
+
+    PhiBPMEvent::SortBpmEvents(bpmEvents);
+
+    PhiLine tempLine {};
+    tempLine.bpms = bpmEvents;
+
+    auto parseTimeTupleToSecond = [&](const JsonNode& node, ep_f64* dst) {
+        if (!parseTimeTuple(node, dst)) return false;
+        *dst = tempLine.beat2sec(*dst);
+        return true;
+    };
+
+    auto parseVectorUniform = [&](JsonNode& node, ShaderUniform* dst) {
+        if (!node.isArray()) return false;
+        auto& arr = node.getArray();
+        for (auto& i : arr) {
+            if (!i.isNumber()) return false;
+        }
+
+        if (!(2 <= arr.size() && arr.size() <= 4)) return false;
+        dst->used = arr.size();
+        for (ep_u8 i = 0; i < arr.size(); i++) dst->value[i] = arr[i].getNumber();
+
+        return true;
+    };
+
+    if (!jsonRoot.hasKey("effects")) return "missing effects field";
+    if (!jsonRoot["effects"].isArray()) return "effects is not an array";
+    auto& effectsNode = jsonRoot["effects"].getArray();
+
+    for (auto& effectNode : effectsNode) {
+        if (!effectNode.isObject()) return "effects item is not an object";
+
+        if (!effectNode.hasKey("start")) return "missing start field";
+        if (!effectNode.hasKey("end")) return "missing end field";
+        
+        ep_f64 startTime, endTime;
+        if (!parseTimeTupleToSecond(effectNode["start"], &startTime)) return "start is not a valid time tuple";
+        if (!parseTimeTupleToSecond(effectNode["end"], &endTime)) return "end is not a valid time tuple";
+
+        ep_bool isGlobal = false;
+        if (effectNode.hasKey("global")) {
+            if (!effectNode["global"].isBool()) return "global is not a ep_bool";
+            isGlobal = effectNode["global"].getBool();
+        }
+
+        std::optional<ep_u64> targetLine;
+        if (effectNode.hasKey("line")) {
+            if (!effectNode["line"].isNumber()) return "line is not a number";
+            targetLine = effectNode["line"].getNumber();
+        }
+
+        ep_u64 order = 0;
+        if (effectNode.hasKey("order")) {
+            if (!effectNode["order"].isNumber()) return "order is not a number";
+            order = effectNode["order"].getNumber();
+        }
+
+        if (!effectNode.hasKey("shader")) return "missing shader field";
+        if (!effectNode["shader"].isString()) return "shader is not a string";
+        auto shaderName = effectNode["shader"].getString();
+
+        auto& item = extra.effects.emplace_back();
+        item.timeZone = { startTime, endTime };
+        item.targetLine = targetLine;
+        item.order = order;
+        item.isGlobal = isGlobal;
+        item.shaderName = shaderName;
+
+        if (effectNode.hasKey("vars")) {
+            if (!effectNode["vars"].isObject()) return "vars is not an object";
+            auto& varsNode = effectNode["vars"].getObject();
+
+            for (auto& [uniformName, eventsNode] : varsNode) {
+                auto& layer = item.uniforms[uniformName];
+
+                if (eventsNode.isArray()) {
+                    auto& eventsArr = eventsNode.getArray();
+                    if (eventsArr.empty()) return "events array is empty";
+
+                    JsonNode::EnumType eventItemNodeType = eventsArr[0].type;
+                    for (auto& node : eventsArr) {
+                        if (node.type != eventItemNodeType) return "events array contains different types of nodes";
+                    }
+
+                    if (eventItemNodeType == JsonNode::EnumType::Object) {
+                        for (auto& eventNode : eventsArr) {
+                            if (!eventNode.hasKey("startTime")) return "missing startTime field";
+                            if (!eventNode.hasKey("endTime")) return "missing endTime field";
+
+                            ep_f64 startTime, endTime;
+                            if (!parseTimeTupleToSecond(eventNode["startTime"], &startTime)) return "startTime is not a valid time tuple";
+                            if (!parseTimeTupleToSecond(eventNode["endTime"], &endTime)) return "endTime is not a valid time tuple";
+
+                            if (!eventNode.hasKey("start")) return "missing start field";
+                            if (!eventNode.hasKey("end")) return "missing end field";
+                            if (eventNode["start"].type != eventNode["end"].type) return "start and end are not the same type";
+
+                            Vec2 valueZone;
+                            
+                            if (eventNode["start"].isNumber()) {
+                                valueZone = assets.requestShaderUniformPair(eventNode["start"].getNumber(), eventNode["end"].getNumber());
+                            } else if (eventNode["start"].isArray()) {
+                                ShaderUniform startUniform, endUniform;
+                                if (!parseVectorUniform(eventNode["start"], &startUniform)) return "start is not a valid vector uniform";
+                                if (!parseVectorUniform(eventNode["end"], &endUniform)) return "end is not a valid vector uniform";
+                                valueZone = assets.requestShaderUniformPair(startUniform, endUniform);
+                            } else return "start and end are not a number or array";
+
+                            ep_u64 easingType = 1;
+                            if (eventNode.hasKey("easingType")) {
+                                if (!eventNode["easingType"].isNumber()) return "easingType is not a number";
+                                easingType = eventNode["easingType"].getNumber();
+                            }
+
+                            PhiEvent e {};
+                            e.timeZone = { startTime, endTime };
+                            e.valueZone = valueZone;
+                            e.type = EnumPhiEventType::ShaderUniform;
+                            e.layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT;
+
+                            if (easingType > 1) {
+                                e.easingFuncContext = (void*)easingType;
+                                e.easingFunc = [](void* ctx, ep_f64 p) { return EaseSet::Phigros::RePhiEdit::easing((ep_u64)ctx, p); };
+                            }
+
+                            layer.addEvent(e);
+                        }
+                    } else if (eventItemNodeType == JsonNode::EnumType::Number) {
+                        ShaderUniform uniform;
+                        if (!parseVectorUniform(eventsNode, &uniform)) return "events item is not a valid vector uniform";
+                        layer.addEvent({
+                            .timeZone = INF_TZ,
+                            .valueZone = assets.requestShaderUniformPair(uniform, uniform),
+                            .type = EnumPhiEventType::ShaderUniform,
+                            .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
+                        });
+                    } else return "events array item is not an object or number";
+                } else if (eventsNode.isNumber()) {
+                    layer.addEvent({
+                        .timeZone = INF_TZ,
+                        .valueZone = assets.requestShaderUniformPair(eventsNode.getNumber(), eventsNode.getNumber()),
+                        .type = EnumPhiEventType::ShaderUniform,
+                        .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
+                    });
+                } else return "event(s) is not an array or number";
+            }
+        }
+    }
+
+    return extra;
+}
+
 struct StoryboardHelpers {
     static void attachTextureLoader(
         PhiStoryboardAssets& assets,
@@ -3312,9 +3627,11 @@ struct StoryboardHelpers {
         assets.clearTextures();
 
         assets.textureLoader = [=](std::string name) {
-            std::filesystem::path texturePath(path);
-            texturePath /= std::filesystem::path(name).lexically_normal();
-            return loader(texturePath.string());
+            return loader(
+                std::filesystem::path(path + "/" + name)
+                .lexically_normal()
+                .string()
+            );
         };
 
         assets.textureDestroyer = destroyer;
@@ -3469,13 +3786,19 @@ struct CalculatedFrame {
         Color color;
     };
 
+    struct CalculatedShader {
+        std::string name;
+        std::unordered_map<std::string, ShaderUniform> uniforms;
+    };
+
     using CalculatedObject = std::variant<
         CalculatedNote,
         CalculatedText,
         CalculatedStoryboardTexture,
         CalculatedHitEffectTexture,
         CalculatedHitEffectParticle,
-        CalculatedPoly
+        CalculatedPoly,
+        CalculatedShader
     >;
 
     ep_f64 backgroundImageBlurRadius;
@@ -3522,7 +3845,7 @@ void calculateFrame(
     frame.hitsounds.clear();
     frame.cache.clear();
 
-    auto calcCoveredOrContainRect = [](const Rect& dst, const Vec2& size, bool isCovered) {
+    auto calcCoveredOrContainRect = [](const Rect& dst, const Vec2& size, ep_bool isCovered) {
         ep_f64 dst_ratio = dst.w / dst.h;
         ep_f64 src_ratio = size.x / size.y;
 
@@ -3596,7 +3919,7 @@ void calculateFrame(
         }
     };
 
-    auto getNoteTextureSizeInfo = [&](EnumPhiNoteType type, bool isSimul, bool hideHead) {
+    auto getNoteTextureSizeInfo = [&](EnumPhiNoteType type, ep_bool isSimul, ep_bool hideHead) {
         const auto& texInfo = (
             isSimul
             ? config.noteTextureInfos.at(type).simul
@@ -3674,8 +3997,10 @@ void calculateFrame(
                     });
                 } else {
                     if (line.textureName.has_value()) {
-                        if (line.texture.has_value()) {
-                            auto texture = chart.storyboardAssets.getTexture(line.texture.value());
+                        auto& textureName = line.textureName.value();
+
+                        if (chart.storyboardAssets.isTextureLoaded(textureName)) {
+                            auto& texture = chart.storyboardAssets.getTexture(textureName);
                             ep_f64 textureWidth, textureHeight;
 
                             if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::AboutWidth) {
@@ -3852,6 +4177,27 @@ void calculateFrame(
         }
     }
 
+    auto calculateExtra = [&](ep_bool isGlobal) {
+        for (auto& effectIndex : chart.extra.zOrderSortedEffects) {
+            auto& effect = chart.extra.effects[effectIndex];
+            if (effect.isGlobal != isGlobal) continue;
+            if (!effect.timeZone.include(time)) continue;
+
+            CalculatedFrame::CalculatedShader shader { .name = effect.shaderName };
+
+            for (auto& [uniformName, layer] : effect.uniforms) {
+                layer.updateType(EnumPhiEventType::ShaderUniform, time);
+                auto uniformIndex = layer.get(EnumPhiEventType::ShaderUniform);
+                auto uniformValue = chart.storyboardAssets.getShaderUniform(uniformIndex, ShaderUniform());
+                shader.uniforms[uniformName] = uniformValue;
+            }
+
+            frame.objects.push_back(shader);
+        }
+    };
+
+    calculateExtra(false);
+
     auto combo = chart.getCombo(time);
 
     time += chart.meta.offset;
@@ -3973,6 +4319,8 @@ void calculateFrame(
         .rotation = 0.0,
         .color = Color::White()
     }, EnumPhiLineAttachUI::Level));
+
+    calculateExtra(true);
 }
 
 #undef CHART_LOAD_FAILED
