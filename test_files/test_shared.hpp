@@ -1276,8 +1276,18 @@ struct Window {
                 auto& hitsoundPcm = noteHitsoundsPcm[note.type];
                 int64_t end = std::min<int64_t>(dst.pcm.size(), start + hitsoundPcm.pcm.size());
 
-                for (int64_t i = start; i < end; i++) {
-                    dst.pcm[i] = (int16_t)std::clamp<int32_t>((int32_t)dst.pcm[i] + (int32_t)hitsoundPcm.pcm[i - start], -32768, 32767);
+                auto info = chart.getNoteFrameInfo(line, note, note.time, calculateFrameConfig.screenSize);
+                auto xPosition = std::clamp(info.headPosition.x / calculateFrameConfig.screenSize.x, 0.0, 1.0);
+                const double gaink = 2;
+                double gains[PCM_FIXED_CHANNELS] = {
+                    std::min(((double)1 - xPosition) * gaink, (double)2),
+                    std::min(xPosition * gaink, (double)2)
+                };
+
+                for (int64_t i = start; i < end; i += PCM_FIXED_CHANNELS) {
+                    for (int64_t j = 0; j < PCM_FIXED_CHANNELS; j++) {
+                        dst.pcm[i + j] = (int16_t)std::clamp<int32_t>((int32_t)dst.pcm[i + j] + (int32_t)hitsoundPcm.pcm[i + j - start] * gains[j], -32768, 32767);
+                    }
                 }
             }
         }
