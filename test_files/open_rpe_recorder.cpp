@@ -167,17 +167,24 @@ int main() {
     auto imagePath = dirPath + info.picture;
     auto chartPath = dirPath + info.chart;
 
+    auto checkLoad = [&](std::optional<std::string> res, std::wstring msg) {
+        if (res.has_value()) {
+            showErrorMsg(window, msg.c_str());
+            TerminateProcess(GetCurrentProcess(), EXIT_FAILURE);
+        }
+    };
+
     pd.setLine(1, L"加载谱面...");
-    window.loadChart(chartPath, dirPath);
+    checkLoad(window.loadChart(chartPath, dirPath), L"无法加载谱面");
 
     window.chart.meta.title = info.name;
     window.chart.meta.difficulty = info.level;
 
     pd.setLine(1, L"加载曲绘...");
-    window.loadBgImage(imagePath);
+    checkLoad(window.loadBgImage(imagePath), L"无法加载曲绘");
 
     pd.setLine(1, L"加载音频...");
-    window.loadMainSound(audioPath);
+    checkLoad(window.loadMainSound(audioPath), L"无法加载音频");
 
     if (showYesNoMsg(window, L"是否预览 (不进行视频渲染) ?")) {
         pd.close();
