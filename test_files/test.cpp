@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     window.vsync = !hasArg("--disable-vsync");
     if (hasArg("--extend-scale")) window.globalScale = 0.25;
 
-    window.loadChart(chartPath, storyboardAssetsPath);
+    window.loadChart(chartPath, storyboardAssetsPath, nullptr);
 
     if (window.chart.meta.title.empty()) {
         window.chart.meta.title = chartTitle;

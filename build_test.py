@@ -1,6 +1,7 @@
 import subprocess
 import os
 import sys
+import time
 
 def run(cmds: list[str]):
     cmds = list(filter(bool, cmds))
@@ -8,6 +9,9 @@ def run(cmds: list[str]):
     subprocess.run(cmds, check=True)
 
 os.makedirs("build", exist_ok=True)
+
+with open("./build/dev.flag", "w"):
+    ...
 
 debug = "--debug" in sys.argv
 source = "test.cpp" if "--source" not in sys.argv else sys.argv[sys.argv.index("--source") + 1]
@@ -44,8 +48,16 @@ libraries = {
     
     "stb": [
         "-I./test_files/externals/stb/include",
+    ],
+    
+    "cpr": [
+        "-I./test_files/externals/cpr/include",
+        "-L./test_files/externals/cpr/lib",
+        "-lcpr", "-lcurl", "-lz"
     ]
 }
+
+short_commit_hash = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode("utf-8").strip()
 
 build_cmds = [
     "g++", "-std=c++20",
@@ -53,6 +65,10 @@ build_cmds = [
     
     "-O3" if not debug else "-O0",
     "" if not debug else "-ggdb",
+    
+    f"-DBUILD_SHORT_COMMIT_HASH=\"{short_commit_hash}\"",
+    f"-DBUILD_TIME={time.time()}",
+    f"-DBUILD_IS_DEBUG={1 if debug else 0}",
     
     f"./test_files/{source}",
     "-I./src",

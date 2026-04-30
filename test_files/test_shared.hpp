@@ -42,6 +42,7 @@ extern "C" {
     #include <libavformat/avformat.h>
     #include <libavutil/imgutils.h>
 }
+#include <cpr/cpr.h>
 
 #include "./resources/inlined_resources.cpp"
 
@@ -59,6 +60,7 @@ extern "C" {
 #include <regex>
 #include <map>
 #include <charconv>
+#include <intrin.h>
 
 #define WAV_HEADER_SIZE 44
 
@@ -798,6 +800,280 @@ struct VideoCap {
     }
 };
 
+struct TelemetryDeckClient {
+    using JsonNode = easy_phi::JsonNode;
+
+    static constexpr uint64_t version = 1;
+
+    static void postSignal(const std::string& type, const JsonNode& payload) {
+        auto data = JsonNode::MakeArray({ JsonNode::MakeObject({
+            { "appID", JsonNode::MakeString("60A33F1F-50E1-4F71-909A-0D200B6213A4") },
+            { "clientUser", JsonNode::MakeString("anonymous") },
+            { "type", JsonNode::MakeString(type) },
+            { "payload", payload }
+        }) });
+
+        cpr::Response resp = cpr::Post(
+            cpr::Url { "https://nom.telemetrydeck.com/v2/namespace/com.qaqfei" },
+            cpr::VerifySsl { false },
+            cpr::Header {
+                { "Content-Type", "application/json; charset=utf-8" }
+            },
+            cpr::Body { data.toString() }
+        );
+    }
+
+    struct Performance {
+        struct BaseInfo {
+            struct CpuInfo {
+                std::string vendor;
+                std::string model;
+                std::string arch;
+
+                JsonNode toJson() const {
+                    return JsonNode::MakeObject({
+                        { "vendor", JsonNode::MakeString(vendor) },
+                        { "model", JsonNode::MakeString(model) },
+                    });
+                }
+            } cpuInfo;
+
+            struct GpuInfo {
+                std::string vendor;
+                std::string model;
+
+                JsonNode toJson() const {
+                    return JsonNode::MakeObject({
+                        { "vendor", JsonNode::MakeString(vendor) },
+                        { "model", JsonNode::MakeString(model) },
+                    });
+                }
+            } gpuInfo;
+
+            struct SystemInfo {
+                std::string os;
+                std::string version;
+
+                JsonNode toJson() const {
+                    return JsonNode::MakeObject({
+                        { "os", JsonNode::MakeString(os) },
+                        { "version", JsonNode::MakeString(version) },
+                    });
+                }
+            } systemInfo;
+
+            struct BuildInfo {
+                std::string shortCommitHash;
+                double buildTime;
+                bool isDebug;
+                bool isDev;
+
+                JsonNode toJson() const {
+                    return JsonNode::MakeObject({
+                        { "shortCommitHash", JsonNode::MakeString(shortCommitHash) },
+                        { "buildTime", JsonNode::MakeNumber(buildTime) },
+                        { "isDebug", JsonNode::MakeBool(isDebug) },
+                        { "isDev", JsonNode::MakeBool(isDev) }
+                    });
+                }
+
+                void fill() {
+                    shortCommitHash = BUILD_SHORT_COMMIT_HASH;
+                    buildTime = BUILD_TIME;
+                    isDebug = BUILD_IS_DEBUG;
+                    isDev = std::filesystem::exists("dev.flag");
+                }
+            } buildInfo;
+
+            JsonNode toJson() const {
+                return JsonNode::MakeObject({
+                    { "cpuInfo", cpuInfo.toJson() },
+                    { "gpuInfo", gpuInfo.toJson() },
+                    { "systemInfo", systemInfo.toJson() },
+                    { "buildInfo", buildInfo.toJson() },
+                    { "version", JsonNode::MakeNumber(version) }
+                });
+            }
+
+            #ifdef _WIN32
+            static BaseInfo makeWindows() {
+                BaseInfo info;
+
+                {
+                    int cpuInfo[4] = {};
+                    char vendor[13] = {};
+                    __cpuid(cpuInfo, 0);
+                    *(int*)&vendor[0] = cpuInfo[1];
+                    *(int*)&vendor[4] = cpuInfo[3];
+                    *(int*)&vendor[8] = cpuInfo[2];
+                    info.cpuInfo.vendor = vendor;
+
+                    __cpuid(cpuInfo, 0x80000000);
+                    if ((unsigned)cpuInfo[0] >= 0x80000004) {
+                        char brand[49] = {};
+                        char* p = brand;
+                        for (int i = 0x80000002; i <= 0x80000004; ++i) {
+                            __cpuid(cpuInfo, i);
+                            memcpy(p, cpuInfo, 16);
+                            p += 16;
+                        }
+                        info.cpuInfo.model = brand;
+                        size_t pos = info.cpuInfo.model.find_first_not_of(' ');
+                        if (pos != std::string::npos) info.cpuInfo.model = info.cpuInfo.model.substr(pos);
+                    }
+
+                    SYSTEM_INFO si;
+                    GetNativeSystemInfo(&si);
+                    switch (si.wProcessorArchitecture) {
+                        case PROCESSOR_ARCHITECTURE_AMD64: info.cpuInfo.arch = "x86_64"; break;
+                        case PROCESSOR_ARCHITECTURE_INTEL: info.cpuInfo.arch = "x86"; break;
+                        case PROCESSOR_ARCHITECTURE_ARM64: info.cpuInfo.arch = "arm64"; break;
+                        case PROCESSOR_ARCHITECTURE_ARM: info.cpuInfo.arch = "arm"; break;
+                        default: info.cpuInfo.arch = "unknown"; break;
+                    }
+                }
+
+                {
+                    DISPLAY_DEVICEA dd = { sizeof(dd) };
+                    for (DWORD i = 0; EnumDisplayDevicesA(nullptr, i, &dd, 0); ++i) {
+                        if (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) {
+                            info.gpuInfo.model = dd.DeviceString;
+                            break;
+                        }
+                    }
+
+                    std::string lower = info.gpuInfo.model;
+                    for (auto& c : lower) c = (char)tolower(c);
+                    if (lower.find("nvidia") != std::string::npos) info.gpuInfo.vendor = "NVIDIA";
+                    else if (lower.find("amd") != std::string::npos || lower.find("radeon") != std::string::npos) info.gpuInfo.vendor = "AMD";
+                    else if (lower.find("intel") != std::string::npos) info.gpuInfo.vendor = "Intel";
+                    else info.gpuInfo.vendor = "Unknown";
+                }
+
+                {
+                    info.systemInfo.os = "Windows";
+
+                    typedef LONG (WINAPI *RtlGetVersion_t)(void*);
+                    auto rtlGetVersion = (RtlGetVersion_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlGetVersion");
+                    if (rtlGetVersion) {
+                        struct { ULONG size, major, minor, build, platform; WCHAR csd[128]; } osvi = { sizeof(osvi) };
+                        if (rtlGetVersion(&osvi) >= 0) {
+                            info.systemInfo.version = std::to_string(osvi.major) + "." + std::to_string(osvi.minor) + "." + std::to_string(osvi.build);
+                        }
+                    }
+                }
+
+                info.buildInfo.fill();
+                return info;
+            }
+            #endif
+        };
+
+        struct HardwareUsage {
+            struct GpuInfo {
+                size_t gpuResourceUsed;
+
+                JsonNode toJson() const {
+                    return JsonNode::MakeObject({
+                        { "gpuResourceUsed", JsonNode::MakeNumber(gpuResourceUsed) }
+                    });
+                }
+            } gpuInfo;
+
+            JsonNode toJson() const {
+                return JsonNode::MakeObject({
+                    { "gpuInfo", gpuInfo.toJson() }
+                });
+            }
+
+            static HardwareUsage make(GrDirectContext* skGrCtx) {
+                size_t gpuResourceUsed;
+                skGrCtx->getResourceCacheUsage(nullptr, &gpuResourceUsed);
+
+                return {
+                    .gpuInfo = {
+                        .gpuResourceUsed = gpuResourceUsed
+                    }
+                };
+            }
+        };
+
+        struct ChartPlayback {
+            struct Completed {
+                struct FrameInfo {
+                    std::pair<double, double> size;
+                    std::pair<double, double> timeZone;
+                    double calculationTook;
+                    double renderTook;
+                    HardwareUsage hardwareUsage;
+
+                    JsonNode toJson() const {
+                        return JsonNode::MakeObject({
+                            { "timeZone", JsonNode::MakeArray({ JsonNode::MakeNumber(timeZone.first), JsonNode::MakeNumber(timeZone.second) }) },
+                            { "calculationTook", JsonNode::MakeNumber(calculationTook) },
+                            { "renderTook", JsonNode::MakeNumber(renderTook) },
+                            { "hardwareUsage", hardwareUsage.toJson() }
+                        });
+                    }
+                };
+
+                BaseInfo baseInfo;
+                std::string chartHash;
+                double loadingTook;
+                std::vector<FrameInfo> frames;
+
+                JsonNode toJson() const {
+                    return JsonNode::MakeObject({
+                        { "baseInfo", baseInfo.toJson() },
+                        { "chartHash", JsonNode::MakeString(chartHash) },
+                        { "loadingTook", JsonNode::MakeNumber(loadingTook) },
+                        { "frames", [&]{
+                            std::vector<JsonNode> arr;
+                            arr.reserve(frames.size());
+                            for (const auto& f : frames) arr.push_back(f.toJson());
+                            return JsonNode::MakeArray(arr);
+                        }() },
+                    });
+                }
+            };
+
+            static void completed(const Completed& payload) {
+                postSignal("Performance.ChartPlayback.completed", payload.toJson());
+            }
+        };
+
+        struct VideoRender {
+            struct Completed {
+                BaseInfo baseInfo;
+                std::string chartHash;
+                double loadingTook;
+                std::pair<double, double> size;
+                double frameRate;
+                uint64_t frameCount;
+                double renderTotalTook;
+                std::string encoderName;
+
+                JsonNode toJson() const {
+                    return JsonNode::MakeObject({
+                        { "baseInfo", baseInfo.toJson() },
+                        { "chartHash", JsonNode::MakeString(chartHash) },
+                        { "loadingTook", JsonNode::MakeNumber(loadingTook) },
+                        { "size", JsonNode::MakeArray({ JsonNode::MakeNumber(size.first), JsonNode::MakeNumber(size.second) }) },
+                        { "frameRate", JsonNode::MakeNumber(frameRate) },
+                        { "frameCount", JsonNode::MakeNumber(frameCount) },
+                        { "renderTotalTook", JsonNode::MakeNumber(renderTotalTook) },
+                        { "encoderName", JsonNode::MakeString(encoderName) }
+                    });
+                }
+            };
+
+            static void completed(const Completed& payload) {
+                postSignal("Performance.VideoRender.completed", payload.toJson());
+            }
+        };
+    };
+};
+
 struct Window {
     GLFWwindow* window;
     sk_sp<GrDirectContext> skGrCtx;
@@ -893,12 +1169,13 @@ struct Window {
         return std::nullopt;
     }
 
-    std::optional<std::string> loadChart(const std::string& path, const std::string& chartDir) {
+    std::optional<std::string> loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
         easy_phi::Data data;
         if (!easy_phi::Data::FromFile(&data, path)) return "failed to read chart file";
 
         double load_st = globalTimer();
         auto chartLoadResult = easy_phi::loadChartFromData(data);
+        if (loadingTook) *loadingTook = globalTimer() - load_st;
         std::cout << "loadChartFromData took: " << globalTimer() - load_st << " s" << std::endl;
         std::cout << "chartLoadResult.success: " << chartLoadResult.success << std::endl;
         std::cout << "chartLoadResult.erros: " << std::endl;

@@ -2285,6 +2285,12 @@ struct JsonNode {
         Print(std::cout);
     }
 
+    std::string toString() {
+        std::stringstream ss;
+        Print(ss);
+        return ss.str();
+    }
+
     ep_bool operator==(const JsonNode& other) const {
         if (type != other.type) return false;
         if (type == EnumType::Null) return true;

@@ -174,8 +174,9 @@ int main() {
         }
     };
 
+    double loadingChartTook;
     pd.setLine(1, L"加载谱面...");
-    checkLoad(window.loadChart(chartPath, dirPath), L"无法加载谱面");
+    checkLoad(window.loadChart(chartPath, dirPath, &loadingChartTook), L"无法加载谱面");
 
     window.chart.meta.title = info.name;
     window.chart.meta.difficulty = info.level;
