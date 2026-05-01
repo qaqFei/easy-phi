@@ -234,6 +234,7 @@ int main() {
         std::cout << "telemetry deck reported" << std::endl;
     } else {
         uint64_t width = 1920, height = 1080;
+        double framerate = 60.0;
 
         window.width = width;
         window.height = height;
@@ -243,8 +244,19 @@ int main() {
         auto videoPath = selectSaveFile(window,  L"视频文件 (*.mp4)\0*.mp4\0All Files (*.*)\0*.*\0", L"保存视频文件");
         if (videoPath.empty()) return 0;
 
+        TelemetryDeckClient::Performance::VideoRender::Completed performanceInfo {
+            .baseInfo = TelemetryDeckClient::Performance::BaseInfo::make(),
+            .chartHash = window.chart.rawHash,
+            .loadingTook = loadingChartTook,
+            .screenSize = { (double)width, (double)height },
+            .frameRate = framerate,
+        };
+
+        double renderSt = globalTimer();
+
         pd.setLine(1, L"初始化视频...");
-        VideoCap cap(videoPath.c_str(), width, height, 60.0);
+        VideoCap cap(videoPath.c_str(), width, height, framerate);
+        performanceInfo.encoderName = wstringToString(cap.getCodecName());
 
         pd.setLine(1, L"解码音频...");
         auto pcm = decodePcm16FromMaSound(window.mainSound);
@@ -376,7 +388,12 @@ int main() {
         frameQueue.enqueue(nullptr);
         frameWriterThread.join();
 
+        performanceInfo.frameCount = frameCut;
+        performanceInfo.renderTotalTook = globalTimer() - renderSt;
+
         pd.setLine(1, L"释放资源...");
+        TelemetryDeckClient::Performance::VideoRender::completed(performanceInfo);
+        std::cout << "telemetry deck reported" << std::endl;
     }
 
     return 0;
