@@ -803,18 +803,20 @@ struct VideoCap {
 struct TelemetryDeckClient {
     using JsonNode = easy_phi::JsonNode;
 
-    static constexpr uint64_t version = 1;
+    static constexpr uint64_t version = 0;
 
-    static void postSignal(const std::string& type, const JsonNode& payload) {
+    static void postSignal(const std::string& type, const JsonNode& rawPayload) {
         auto data = JsonNode::MakeArray({ JsonNode::MakeObject({
-            { "appID", JsonNode::MakeString("60A33F1F-50E1-4F71-909A-0D200B6213A4") },
+            { "appID", JsonNode::MakeString("9C828357-123C-42F6-AD02-62100B3B75A7") },
             { "clientUser", JsonNode::MakeString("anonymous") },
             { "type", JsonNode::MakeString(type) },
-            { "payload", payload }
+            { "payload", JsonNode::MakeObject({
+                { "data", JsonNode::MakeString(rawPayload.toString()) }
+            }) }
         }) });
 
         cpr::Response resp = cpr::Post(
-            cpr::Url { "https://nom.telemetrydeck.com/v2/namespace/com.qaqfei" },
+            cpr::Url { "https://nom.telemetrydeck.com/v2/namespace/com.qaqfei/" },
             cpr::VerifySsl { false },
             cpr::Header {
                 { "Content-Type", "application/json; charset=utf-8" }
@@ -891,12 +893,13 @@ struct TelemetryDeckClient {
                     { "gpuInfo", gpuInfo.toJson() },
                     { "systemInfo", systemInfo.toJson() },
                     { "buildInfo", buildInfo.toJson() },
-                    { "version", JsonNode::MakeNumber(version) }
+                    { "version", JsonNode::MakeNumber(version) },
+                    { "uploadTime", JsonNode::MakeNumber(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::utc_clock::now().time_since_epoch()).count()) }
                 });
             }
 
             #ifdef _WIN32
-            static BaseInfo makeWindows() {
+            static BaseInfo make() {
                 BaseInfo info;
 
                 {
@@ -1001,15 +1004,16 @@ struct TelemetryDeckClient {
         struct ChartPlayback {
             struct Completed {
                 struct FrameInfo {
-                    std::pair<double, double> size;
-                    std::pair<double, double> timeZone;
-                    double calculationTook;
-                    double renderTook;
+                    std::pair<double, double> screenSize;
+                    std::pair<double, double> timeRange; // s
+                    double calculationTook; // ms
+                    double renderTook; // ms
                     HardwareUsage hardwareUsage;
 
                     JsonNode toJson() const {
                         return JsonNode::MakeObject({
-                            { "timeZone", JsonNode::MakeArray({ JsonNode::MakeNumber(timeZone.first), JsonNode::MakeNumber(timeZone.second) }) },
+                            { "screenSize", JsonNode::MakeArray({ JsonNode::MakeNumber(screenSize.first), JsonNode::MakeNumber(screenSize.second) }) },
+                            { "timeRange", JsonNode::MakeArray({ JsonNode::MakeNumber(timeRange.first), JsonNode::MakeNumber(timeRange.second) }) },
                             { "calculationTook", JsonNode::MakeNumber(calculationTook) },
                             { "renderTook", JsonNode::MakeNumber(renderTook) },
                             { "hardwareUsage", hardwareUsage.toJson() }
@@ -1018,14 +1022,14 @@ struct TelemetryDeckClient {
                 };
 
                 BaseInfo baseInfo;
-                std::string chartHash;
-                double loadingTook;
+                uint64_t chartHash;
+                double loadingTook; // s
                 std::vector<FrameInfo> frames;
 
                 JsonNode toJson() const {
                     return JsonNode::MakeObject({
                         { "baseInfo", baseInfo.toJson() },
-                        { "chartHash", JsonNode::MakeString(chartHash) },
+                        { "chartHash", JsonNode::MakeString(std::to_string(chartHash)) },
                         { "loadingTook", JsonNode::MakeNumber(loadingTook) },
                         { "frames", [&]{
                             std::vector<JsonNode> arr;
@@ -1045,20 +1049,20 @@ struct TelemetryDeckClient {
         struct VideoRender {
             struct Completed {
                 BaseInfo baseInfo;
-                std::string chartHash;
-                double loadingTook;
-                std::pair<double, double> size;
+                uint64_t chartHash;
+                double loadingTook; // s
+                std::pair<double, double> screenSize;
                 double frameRate;
                 uint64_t frameCount;
-                double renderTotalTook;
+                double renderTotalTook; // s
                 std::string encoderName;
 
                 JsonNode toJson() const {
                     return JsonNode::MakeObject({
                         { "baseInfo", baseInfo.toJson() },
-                        { "chartHash", JsonNode::MakeString(chartHash) },
+                        { "chartHash", JsonNode::MakeString(std::to_string(chartHash)) },
                         { "loadingTook", JsonNode::MakeNumber(loadingTook) },
-                        { "size", JsonNode::MakeArray({ JsonNode::MakeNumber(size.first), JsonNode::MakeNumber(size.second) }) },
+                        { "screenSize", JsonNode::MakeArray({ JsonNode::MakeNumber(screenSize.first), JsonNode::MakeNumber(screenSize.second) }) },
                         { "frameRate", JsonNode::MakeNumber(frameRate) },
                         { "frameCount", JsonNode::MakeNumber(frameCount) },
                         { "renderTotalTook", JsonNode::MakeNumber(renderTotalTook) },
@@ -1294,21 +1298,33 @@ struct Window {
         skCanvas->restore();
     }
 
-    bool mainloopFrame(double t, bool isRenderingVideo = false) {
-        double frame_st = globalTimer();
-        if (!isRenderingVideo && glfwWindowShouldClose(window)) return false;
+    struct MainloopConfig {
+        bool isRenderingVideo = false;
+        TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi = nullptr;
+    };
 
-        if (!isRenderingVideo) {
+    bool mainloopFrame(
+        double t,
+        const MainloopConfig& mainloopConfig
+    ) {
+        double frameSt = globalTimer();
+        if (!mainloopConfig.isRenderingVideo && glfwWindowShouldClose(window)) return false;
+
+        if (!mainloopConfig.isRenderingVideo) {
             int32_t last_w = width, last_h = height;
             glfwGetFramebufferSize(window, &width, &height);
             if (width != last_w || height != last_h) resetSurface();
         }
-        
+
         {
             double st = globalTimer();
             easy_phi::calculateFrame(chart, t, calculateFrameConfig, calculatedFrame);
-            std::cout << "calculateFrame took " << ((globalTimer() - st) * 1000) << " ms" << std::endl;
+            double took = (globalTimer() - st) * 1000;
+            if (mainloopConfig.pccfi) mainloopConfig.pccfi->calculationTook = took;
+            std::cout << "calculateFrame took " << took << " ms" << std::endl;
         }
+
+        double renderSt = globalTimer();
         
         if (cachedBluredImage.first != calculatedFrame.backgroundImageBlurRadius) {
             static SkPaint pt;
@@ -1481,7 +1497,7 @@ struct Window {
             }
         }
 
-        if (!isRenderingVideo) {
+        if (!mainloopConfig.isRenderingVideo) {
             playingHitsounds.erase(
                 std::remove_if(
                     playingHitsounds.begin(), playingHitsounds.end(),
@@ -1511,16 +1527,23 @@ struct Window {
 
         skCanvas->restore();
 
-        std::cout << "frame took (without glfw operation) " << ((globalTimer() - frame_st) * 1000) << " ms" << std::endl;
+        if (mainloopConfig.pccfi) {
+            mainloopConfig.pccfi->screenSize = { (double)width, (double)height };
+            mainloopConfig.pccfi->timeRange = calculatedFrame.frameTimeRange.toPair();
+            mainloopConfig.pccfi->renderTook = (globalTimer() - renderSt) * 1000;
+            mainloopConfig.pccfi->hardwareUsage = TelemetryDeckClient::Performance::HardwareUsage::make(skGrCtx.get());
+        }
 
-        if (!isRenderingVideo) {
+        std::cout << "frame took (without glfw operation) " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
+
+        if (!mainloopConfig.isRenderingVideo) {
             skGrCtx->flushAndSubmit();
 
             glfwSwapBuffers(window);
             glfwPollEvents();
         }
 
-        std::cout << "frame took " << ((globalTimer() - frame_st) * 1000) << " ms" << std::endl;
+        std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
 
         {
             size_t resourceBytes;

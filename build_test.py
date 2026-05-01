@@ -10,7 +10,7 @@ def run(cmds: list[str]):
 
 os.makedirs("build", exist_ok=True)
 
-with open("./build/dev.flag", "w"):
+with open("./dev.flag", "w"):
     ...
 
 debug = "--debug" in sys.argv
@@ -77,6 +77,7 @@ build_cmds = [
     
     "-lgdi32", "-lpthread", "-lopengl32", "-lole32",
     "-lshell32", "-luuid", "-lbcrypt",
+    "-lws2_32", "-lcrypt32", "-lsecur32",
     
     "-o", "./build/test"
 ]

@@ -5,6 +5,21 @@
 #include <commdlg.h>
 #include <shlobj.h>
 
+struct KeepingCWD {
+    KeepingCWD() {
+        cwd = std::filesystem::current_path();
+    }
+
+    ~KeepingCWD() {
+        try {
+            std::filesystem::current_path(cwd);
+        } catch (...) {}
+    }
+
+    private:
+    std::filesystem::path cwd;
+};
+
 std::string wstringToString(const std::wstring& wstr) {
     if (wstr.empty()) return {};
     
@@ -40,6 +55,8 @@ std::string wstringToString(const std::wstring& wstr) {
 }
 
 std::string selectOpenFile(const Window& window, const wchar_t* filter, const wchar_t* title) {
+    KeepingCWD kcwd;
+
     HMODULE comdlg32 = LoadLibraryA("comdlg32.dll");
     wchar_t buf[MAX_PATH] = {0};
     OPENFILENAMEW ofn { sizeof(ofn) };
@@ -56,6 +73,8 @@ std::string selectOpenFile(const Window& window, const wchar_t* filter, const wc
 }
 
 std::string selectSaveFile(const Window& window, const wchar_t* filter, const wchar_t* title) {
+    KeepingCWD kcwd;
+
     HMODULE comdlg32 = LoadLibraryA("comdlg32.dll");
     wchar_t buf[MAX_PATH] = {0};
     OPENFILENAMEW ofn { sizeof(ofn) };
@@ -190,6 +209,12 @@ int main() {
     if (showYesNoMsg(window, L"是否预览 (不进行视频渲染) ?")) {
         pd.close();
 
+        TelemetryDeckClient::Performance::ChartPlayback::Completed performanceInfo {
+            .baseInfo = TelemetryDeckClient::Performance::BaseInfo::make(),
+            .chartHash = window.chart.rawHash,
+            .loadingTook = loadingChartTook
+        };
+
         window.setHidden(false);
         window.vsync = true;
         window.resetSurface();
@@ -198,10 +223,15 @@ int main() {
         while (ma_sound_is_playing(window.mainSound)) {
             double t = getMaSoundPosition(window.mainSound);
 
-            if (!window.mainloopFrame(t)) {
+            if (!window.mainloopFrame(t, {
+                .pccfi = &performanceInfo.frames.emplace_back()
+            })) {
                 break;
             }
         }
+
+        TelemetryDeckClient::Performance::ChartPlayback::completed(performanceInfo);
+        std::cout << "telemetry deck reported" << std::endl;
     } else {
         uint64_t width = 1920, height = 1080;
 
@@ -306,7 +336,9 @@ int main() {
 
             window.skSurface = surfacePool[surfaceIndex];
             window.skCanvas = window.skSurface->getCanvas();
-            window.mainloopFrame(t, true);
+            window.mainloopFrame(t, {
+                .isRenderingVideo = true
+            });
             
             window.skSurface->asyncRescaleAndReadPixelsYUV420(
                 SkYUVColorSpace::kJPEG_Full_SkYUVColorSpace,

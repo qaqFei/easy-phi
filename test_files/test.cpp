@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
     while (ma_sound_is_playing(window.mainSound)) {
         double t = getMaSoundPosition(window.mainSound);
 
-        if (!window.mainloopFrame(t)) {
+        if (!window.mainloopFrame(t, {})) {
             break;
         }
     }

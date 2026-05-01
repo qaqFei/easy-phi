@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <ranges>
 #include <unordered_set>
+#include <string_view>
 
 namespace easy_phi {
 
@@ -41,6 +42,47 @@ static ep_u64 globalCounter = 1;
 ep_u64 reqGlobalCounter() {
     return globalCounter++;
 }
+
+struct HashBucket {
+    ep_u64 hash = 0xcbf29ce484222325ULL;
+    
+    static constexpr ep_u64 FNV_PRIME = 0x100000001b3ULL;
+    
+    void mix(ep_u64 value) {
+        hash ^= value;
+        hash *= FNV_PRIME;
+    }
+    
+    template <typename T>
+    void submitNumber(T v) {
+        static_assert(std::is_arithmetic_v<T>, "T must be numeric");
+        
+        if constexpr (std::is_floating_point_v<T>) {
+            if (v == 0) v = 0;
+        }
+        
+        const ep_u8* bytes = reinterpret_cast<const ep_u8*>(&v);
+        for (ep_u64 i = 0; i < sizeof(T); i++) {
+            mix(bytes[i]);
+        }
+    }
+    
+    void submitBool(ep_bool b) {
+        mix(b ? 1 : 0);
+    }
+
+    template <typename T>
+    void submitOptionalNumber(std::optional<T> v) {
+        if (v.has_value()) {
+            submitBool(true);
+            submitNumber(v.value());
+        } else submitBool(false);
+    }
+    
+    ep_u64 getHash() const {
+        return hash;
+    }
+};
 
 struct Data {
     std::vector<ep_u8> data;
@@ -67,6 +109,12 @@ struct Data {
 
     std::string toString() const {
         return std::string((char*)data.data(), data.size());
+    }
+
+    ep_u64 getHash() const {
+        HashBucket bucket;
+        for (ep_u8 byte : data) bucket.submitNumber(byte);
+        return bucket.getHash();
     }
 };
 
@@ -189,6 +237,10 @@ struct Vec2 {
     ep_bool include(ep_f64 v) const {
         return x <= v && v <= y;
     }
+    
+    std::pair<ep_f64, ep_f64> toPair() const {
+        return { x, y };
+    }
 };
 
 static const ep_f64 INF_TIME = 99999.0;
@@ -217,47 +269,6 @@ struct Rect {
 
     Vec2 center() const {
         return { x + w / 2, y + h / 2 };
-    }
-};
-
-struct HashBucket {
-    ep_u64 hash = 0xcbf29ce484222325ULL;
-    
-    static constexpr ep_u64 FNV_PRIME = 0x100000001b3ULL;
-    
-    void mix(ep_u64 value) {
-        hash ^= value;
-        hash *= FNV_PRIME;
-    }
-    
-    template <typename T>
-    void submitNumber(T v) {
-        static_assert(std::is_arithmetic_v<T>, "T must be numeric");
-        
-        if constexpr (std::is_floating_point_v<T>) {
-            if (v == 0) v = 0;
-        }
-        
-        const ep_u8* bytes = reinterpret_cast<const ep_u8*>(&v);
-        for (ep_u64 i = 0; i < sizeof(T); i++) {
-            mix(bytes[i]);
-        }
-    }
-    
-    void submitBool(ep_bool b) {
-        mix(b ? 1 : 0);
-    }
-
-    template <typename T>
-    void submitOptionalNumber(std::optional<T> v) {
-        if (v.has_value()) {
-            submitBool(true);
-            submitNumber(v.value());
-        } else submitBool(false);
-    }
-    
-    ep_u64 getHash() const {
-        return hash;
     }
 };
 
@@ -1560,6 +1571,7 @@ struct PhiChart {
     std::vector<PhiHitEffectItem> hitEffects;
     std::vector<ep_f64> comboTimes;
     std::vector<ep_u64> zOrderSortedLines;
+    ep_u64 rawHash;
 
     UserOptions options;
 
@@ -1872,6 +1884,13 @@ struct JsonNode {
         };
     }
 
+    static JsonNode MakeStringMove(std::string&& str) {
+        return JsonNode {
+            .type = EnumType::String,
+            .value = std::move(str)
+        };
+    }
+
     static JsonNode MakeNumber(ep_f64 num) {
         return JsonNode {
             .type = EnumType::Number,
@@ -1893,10 +1912,24 @@ struct JsonNode {
         };
     }
 
+    static JsonNode MakeArrayMove(std::vector<JsonNode>&& arr) {
+        return JsonNode {
+            .type = EnumType::Array,
+            .value = std::move(arr)
+        };
+    }
+
     static JsonNode MakeObject(const std::unordered_map<std::string, JsonNode>& obj) {
         return JsonNode {
             .type = EnumType::Object,
             .value = obj
+        };
+    }
+
+    static JsonNode MakeObjectMove(std::unordered_map<std::string, JsonNode>&& obj) {
+        return JsonNode {
+            .type = EnumType::Object,
+            .value = std::move(obj)
         };
     }
 
@@ -1915,19 +1948,19 @@ struct JsonNode {
     ep_bool isNull() const { return type == EnumType::Null; }
 
     std::string& getString() noexcept { return std::get<std::string>(value); }
-    std::string getString() const noexcept { return std::get<std::string>(value); }
+    const std::string& getString() const noexcept { return std::get<std::string>(value); }
     ep_f64 getNumber() const noexcept { return std::get<ep_f64>(value); }
     ep_bool getBool() const noexcept { return std::get<ep_bool>(value); }
     std::vector<JsonNode>& getArray() noexcept { return std::get<std::vector<JsonNode>>(value); }
-    std::vector<JsonNode> getArray() const noexcept { return std::get<std::vector<JsonNode>>(value); }
+    const std::vector<JsonNode>& getArray() const noexcept { return std::get<std::vector<JsonNode>>(value); }
     std::unordered_map<std::string, JsonNode>& getObject() noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
-    std::unordered_map<std::string, JsonNode> getObject() const noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
+    const std::unordered_map<std::string, JsonNode>& getObject() const noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
     
     struct StringReader {
-        std::string str;
+        std::string_view str;
         ep_u64 pos;
 
-        StringReader(const std::string& str) : str(str), pos(0) {}
+        StringReader(std::string_view str) : str(str), pos(0) {}
 
         void eatWhitespace() {
             while (pos < str.size() && (str[pos] == ' ' || str[pos] == '\n' || str[pos] == '\t' || str[pos] == '\r')) {
@@ -2013,7 +2046,7 @@ struct JsonNode {
         }
         
         std::string getNextToString(ep_u64 len) {
-            return str.substr(pos, len);
+            return std::string(str.substr(pos, len));
         }
 
         char getNextChar() {
@@ -2032,20 +2065,21 @@ struct JsonNode {
         if (reader.nextIs('"')) {
             reader.pos++;
             std::string str;
+            str.reserve(64);
             ep_bool isInBackslash = false;
 
             while (!reader.eof()) {
                 if (reader.nextIs('"') && !isInBackslash) {
                     reader.pos++;
-                    *dst = MakeString(str);
+                    str.shrink_to_fit();
+                    *dst = MakeStringMove(std::move(str));
                     return { true, "" };
                 } else if (reader.nextIs('\\') && !isInBackslash) {
                     isInBackslash = true;
                     reader.pos++;
                 } else if (isInBackslash) {
                     if (reader.nextIsAny("\"\\/")) {
-                        str += reader.getNextCharToString();
-                        reader.pos++;
+                        str += reader.getNextChar();
                     } else if (reader.nextIs('b')) {
                         str += '\b';
                         reader.pos++;
@@ -2085,7 +2119,7 @@ struct JsonNode {
 
                     isInBackslash = false;
                 } else {
-                    str += reader.getNextCharToString();
+                    str += reader.getNextChar();
                 }
             }
 
@@ -2162,12 +2196,13 @@ struct JsonNode {
         } else if (reader.nextIs('[')) {
             reader.pos++;
             std::vector<JsonNode> arr;
+            arr.reserve(8);
 
             while (!reader.eof()) {
                 reader.eatWhitespace();
 
                 if (reader.nextIs(']')) {
-                    *dst = MakeArray(arr);
+                    *dst = MakeArrayMove(std::move(arr));
                     reader.pos++;
                     return { true, "" };
                 }
@@ -2182,19 +2217,20 @@ struct JsonNode {
                 auto [success, err] = Parse(&node, reader);
                 if (!success) return { false, err };
 
-                arr.push_back(node);
+                arr.push_back(std::move(node));
             }
 
             FAILED("unexpected eof", "");
         } else if (reader.nextIs('{')) {
             reader.pos++;
             std::unordered_map<std::string, JsonNode> obj;
+            obj.reserve(8);
 
             while (!reader.eof()) {
                 reader.eatWhitespace();
 
                 if (reader.nextIs('}')) {
-                    *dst = MakeObject(obj);
+                    *dst = MakeObjectMove(std::move(obj));
                     reader.pos++;
                     return { true, "" };
                 }
@@ -2224,7 +2260,7 @@ struct JsonNode {
                     if (!success) return { false, err };
                 }
 
-                obj[key.getString()] = value;
+                obj.emplace(std::move(key.getString()), std::move(value));
             }
 
             FAILED("unexpected eof", "");
@@ -2239,12 +2275,15 @@ struct JsonNode {
     }
 
     static std::pair<ep_bool, std::string> Parse(JsonNode* dst, const Data& data) {
-        StringReader reader(std::string(data.data.begin(), data.data.end()));
+        StringReader reader(std::string_view(
+            (const char*)data.data.data(),
+            data.data.size()
+        ));
         return Parse(dst, reader);
     }
 
     template<typename T>
-    void Print(T& stream) {
+    void Print(T& stream) const {
         if (isString()) {
             stream << '"';
             for (ep_u8 c : getString()) {
@@ -2281,16 +2320,57 @@ struct JsonNode {
         } else if (isNull()) stream << "null";
     }
 
-    void Print() {
+    void Print() const {
         Print(std::cout);
     }
 
-    std::string toString() {
-        std::stringstream ss;
-        Print(ss);
-        return ss.str();
+    std::string toString() const {
+        std::string result;
+        result.reserve(256);
+        toStringImpl(result);
+        return result;
     }
 
+private:
+    void toStringImpl(std::string& out) const {
+        if (isString()) {
+            out += '"';
+            for (ep_u8 c : getString()) {
+                if (c == '"') out += "\\\"";
+                else if (c == '\\') out += "\\\\";
+                else if (c == '\n') out += "\\n";
+                else if (c == '\r') out += "\\r";
+                else if (c == '\t') out += "\\t";
+                else if (c == '\b') out += "\\b";
+                else if (c == '\f') out += "\\f";
+                else out += c;
+            }
+            out += '"';
+        } else if (isNumber()) out += formatToStdString("%.10g", getNumber());
+        else if (isBool()) out += (getBool() ? "true" : "false");
+        else if (isArray()) {
+            out += '[';
+            for (ep_u64 i = 0; i < getArray().size(); i++) {
+                if (i) out += ',';
+                getArray()[i].toStringImpl(out);
+            }
+            out += ']';
+        } else if (isObject()) {
+            out += '{';
+            ep_u64 i = 0;
+            for (auto& [key, value] : getObject()) {
+                out += '"';
+                out += key;
+                out += "\":";
+                value.toStringImpl(out);
+                if (i < getObject().size() - 1) out += ',';
+                i++;
+            }
+            out += '}';
+        } else if (isNull()) out += "null";
+    }
+
+public:
     ep_bool operator==(const JsonNode& other) const {
         if (type != other.type) return false;
         if (type == EnumType::Null) return true;
@@ -2323,7 +2403,9 @@ struct JsonNode {
     }
 
     JsonNode operator[](const std::string& key) const noexcept {
-        return getObject()[key];
+        auto it = getObject().find(key);
+        if (it != getObject().end()) return it->second;
+        return MakeNull();
     }
 
     JsonNode& operator[](ep_u64 index) noexcept {
@@ -2584,6 +2666,8 @@ PhiChartLoadResult loadChartFromOfficialJson(const Data& data) {
     } else {
         CHART_LOAD_FAILED("official", std::string("unsupported formatVersion: ") + std::to_string(formatVersion))
     }
+
+    chart.rawHash = data.getHash();
 
     return PhiChartLoadResult {
         .success = true,
@@ -3039,6 +3123,8 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
         }
     }
 
+    chart.rawHash = data.getHash();
+
     return PhiChartLoadResult {
         .success = true,
         .chart = chart
@@ -3395,6 +3481,8 @@ PhiChartLoadResult loadChartFromPec(const Data& data) {
             }
         }
     }
+
+    chart.rawHash = data.getHash();
 
     return PhiChartLoadResult {
         .success = true,
@@ -3840,6 +3928,7 @@ struct CalculatedFrame {
     };
 
     Cache cache;
+    Vec2 frameTimeRange;
 };
 
 void calculateFrame(
@@ -3850,6 +3939,8 @@ void calculateFrame(
     frame.objects.clear();
     frame.hitsounds.clear();
     frame.cache.clear();
+
+    frame.frameTimeRange = { frame.frameTimeRange.y, time };
 
     auto calcCoveredOrContainRect = [](const Rect& dst, const Vec2& size, ep_bool isCovered) {
         ep_f64 dst_ratio = dst.w / dst.h;
