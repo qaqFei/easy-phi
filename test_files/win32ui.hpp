@@ -42,6 +42,60 @@ struct Win32Utils {
         AdjustWindowRect(&rc, GetWindowLongW(hWnd, GWL_STYLE), FALSE);
         SetWindowPos(hWnd, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top, SWP_NOMOVE | SWP_NOZORDER);
     }
+
+    static std::string wstringToString(const std::wstring& ws) {
+        if (ws.empty()) return {};
+        
+        int size_needed = WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            ws.data(), 
+            static_cast<int>(ws.size()), 
+            nullptr, 0, 
+            nullptr, nullptr
+        );
+        
+        if (size_needed == 0) return {};
+        
+        std::string result(size_needed, '\0');
+        WideCharToMultiByte(
+            CP_UTF8, WC_ERR_INVALID_CHARS,
+            ws.data(), static_cast<int>(ws.size()),
+            result.data(), size_needed,
+            nullptr, nullptr
+        );
+        return result;
+    }
+
+    static std::wstring stringToWstring(const std::string& s) {
+        if (s.empty()) return {};
+        
+        int size_needed = MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            s.data(), 
+            static_cast<int>(s.size()),
+            nullptr, 0
+        );
+        
+        if (size_needed == 0) return {};
+        
+        std::wstring result(size_needed, L'\0');
+        MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS,
+            s.data(), static_cast<int>(s.size()),
+            result.data(), size_needed
+        );
+        return result;
+    }
+
+    static std::wstring getWindowText(HWND hWnd) {
+        int len = GetWindowTextLengthW(hWnd);
+        std::wstring str;
+        str.resize(len);
+        GetWindowTextW(hWnd, str.data(), len + 1);
+        return str;
+    }
 };
 
 struct Win32WindowCreateConfig {
@@ -57,6 +111,7 @@ struct Widget {
         Win32Window* parent;
         HWND hWnd;
         UINT id;
+        bool isDeaf = false;
 
         struct {
             std::wstring text;
@@ -73,6 +128,11 @@ struct Widget {
             bool checked;
             std::function<void(bool)> onChange;
         } checkBox;
+
+        struct {
+            std::wstring text;
+            std::function<void(std::wstring)> onChange;
+        } textInput;
     } store;
 
     struct CreationConfig {
@@ -88,6 +148,18 @@ struct Widget {
 
     std::function<void(Widget*, OnCommandConfig)> onCommand;
     std::function<void(Widget*)> autoSizer;
+
+    struct Deafer {
+        Widget* widget;
+
+        Deafer(Widget* widget) : widget(widget) {
+            widget->store.isDeaf = true;
+        }
+
+        ~Deafer() {
+            widget->store.isDeaf = false;
+        }
+    };
 };
 
 struct Win32Window {
@@ -125,7 +197,7 @@ struct Win32Window {
 
                 case WM_COMMAND: {
                     for (auto& widget : win->widgets) {
-                        if (widget.onCommand) {
+                        if (!widget.store.isDeaf && widget.onCommand) {
                             widget.onCommand(&widget, {
                                 .wParam = wParam,
                                 .lParam = lParam
@@ -221,6 +293,10 @@ struct Win32Window {
         Win32Utils::resizeWindow(hWnd, gridBounds);
     }
 
+    void setTitle(const std::wstring& title) {
+        SetWindowTextW(hWnd, title.c_str());
+    }
+
     void mainloop() {
         MSG msg;
 
@@ -301,6 +377,12 @@ struct WidgetStatics {
         static void click(Widget& widget) {
             bool value = SendMessage(widget.store.hWnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
             toggle(widget, !value);
+        }
+    };
+
+    struct TextInput {
+        static void setText(Widget& widget, const std::wstring& text) {
+            SendMessageW(widget.store.hWnd, WM_SETTEXT, 0, (LPARAM)text.c_str());
         }
     };
 };
@@ -450,6 +532,66 @@ struct Widgets {
             }
         };
     }
+
+    struct TextInputConfig {
+        std::wstring text = L"TEXT";
+        std::function<void(std::wstring)> onChange;
+        int size = 24;
+    };
+
+    static Widget TextInput(const TextInputConfig& config) {
+        int size = config.size;
+
+        return Widget {
+            .store = {
+                .textInput = {
+                    .text = config.text,
+                    .onChange = config.onChange
+                }
+            },
+
+            .creater = [](Widget* self, Widget::CreationConfig createrConfig) {
+                self->store.parent = createrConfig.parent;
+                self->store.id = createrConfig.parent->requestNewWidgetId();
+
+                {
+                    Widget::Deafer deafer(self);
+                    self->store.hWnd = CreateWindowW(
+                        L"EDIT", nullptr,
+                        ES_LEFT | WS_BORDER | WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                        0, 0, 0, 0,
+                        createrConfig.parent->hWnd,
+                        (HMENU)(UINT_PTR)self->store.id,
+                        createrConfig.parent->wc.hInstance,
+                        nullptr
+                    );
+                }
+
+                WidgetStatics::TextInput::setText(*self, self->store.textInput.text);
+            },
+
+            .onCommand = [](Widget* self, Widget::OnCommandConfig onCommandConfig) {
+                if (LOWORD(onCommandConfig.wParam) == self->store.id) {
+                    if (HIWORD(onCommandConfig.wParam) == EN_CHANGE) {
+                        std::wstring text = Win32Utils::getWindowText(self->store.hWnd);
+                        self->store.textInput.text = text;
+
+                        if (self->store.textInput.onChange) {
+                            self->store.textInput.onChange(text);
+                        }
+                    }
+                }
+            },
+
+            .autoSizer = [size](Widget* self) {
+                std::wstring text(size, L'X');
+                SIZE idealSize = Win32Utils::getTextSizeFromHWnd(self->store.hWnd, text.c_str());
+                idealSize.cx += 16;
+                idealSize.cy += 12;
+                SetWindowPos(self->store.hWnd, NULL, 0, 0, idealSize.cx, idealSize.cy, SWP_NOMOVE | SWP_NOZORDER);
+            }
+        };
+    }
 };
 
 #ifdef WIN32UI_MAIN
@@ -499,6 +641,14 @@ int main() {
         .onClick = [&](){
             std::cout << "4 CLICKED!, i will click checkbox 1" << std::endl;
             WidgetStatics::CheckBox::click(win->refWidget(checkbox1));
+        }
+    }));
+
+    win->registerWidget(Widgets::TextInput({
+        .text = L"TEXT INPUT 1!",
+        .onChange = [&](const std::wstring& text) {
+            std::wcout << "TEXT INPUT (W): " << text << std::endl;
+            std::cout << "TEXT INPUT: " << Win32Utils::wstringToString(text) << std::endl;
         }
     }));
 
