@@ -264,24 +264,23 @@ struct Win32Window {
             }
         }
 
-        std::vector<int> columns, rows;
-        getGridData(columns, rows);
         gridBounds = {0, 0};
-        int columnIndex = 0, rowIndex = 0;
+        int x = gridConfig.padding, y = gridConfig.padding;
+        int rowMaxHeight = 0;
 
         for (auto& item : gridInfo) {
             if (std::holds_alternative<GridInfoItem::GridWidget>(item.data)) {
-                int x = columns[columnIndex];
-                int y = rows[rowIndex];
                 auto& widget = widgets[std::get<GridInfoItem::GridWidget>(item.data).index];
                 SIZE size = Win32Utils::getWindowSize(widget.store.hWnd);
                 MoveWindow(widget.store.hWnd, x, y, size.cx, size.cy, TRUE);
+                rowMaxHeight = std::max<int>(rowMaxHeight, size.cy);
                 gridBounds.cx = std::max<int>(gridBounds.cx, x + size.cx);
-                gridBounds.cy = std::max<int>(gridBounds.cy, y + size.cy);
-                columnIndex++;
+                gridBounds.cy = std::max<int>(gridBounds.cy, y + rowMaxHeight);
+                x += size.cx + gridConfig.padding;
             } else if (std::holds_alternative<GridInfoItem::NextRow>(item.data)) {
-                rowIndex++;
-                columnIndex = 0;
+                x = gridConfig.padding;
+                y += rowMaxHeight + gridConfig.padding;
+                rowMaxHeight = 0;
             }
         }
 
@@ -295,6 +294,15 @@ struct Win32Window {
 
     void setTitle(const std::wstring& title) {
         SetWindowTextW(hWnd, title.c_str());
+    }
+
+    void setHidden(bool value) {
+        if (value) ShowWindow(hWnd, SW_HIDE);
+        else ShowWindow(hWnd, SW_SHOW);
+    }
+
+    void quit() {
+        PostQuitMessage(0);
     }
 
     void mainloop() {
@@ -331,30 +339,6 @@ struct Win32Window {
             .data = GridInfoItem::NextRow {}
         });
     }
-
-    void getGridData(std::vector<int>& columns, std::vector<int>& rows) {
-        int currentColumn = 0;
-        int current = gridConfig.padding, height = 0;
-        rows.push_back(gridConfig.padding);
-        
-        for (auto& item : gridInfo) {
-            if (std::holds_alternative<GridInfoItem::GridWidget>(item.data)) {
-                auto& widget = widgets[std::get<GridInfoItem::GridWidget>(item.data).index];
-                SIZE size = Win32Utils::getWindowSize(widget.store.hWnd);
-
-                if (columns.size() <= currentColumn) columns.push_back(current);
-                else columns[currentColumn] = std::max(columns[currentColumn], current);
-                current += size.cx + gridConfig.padding;
-                height = std::max<int>(height, size.cy);
-                currentColumn++;
-            } else if (std::holds_alternative<GridInfoItem::NextRow>(item.data)) {
-                rows.push_back(rows.back() + height + gridConfig.padding);
-                current = 0;
-                currentColumn = 0;
-                height = 0;
-            }
-        }
-    }
 };
 
 struct WidgetStatics {
@@ -382,7 +366,20 @@ struct WidgetStatics {
 
     struct TextInput {
         static void setText(Widget& widget, const std::wstring& text) {
+            DWORD selStart = 0, selEnd = 0;
+            SendMessageW(widget.store.hWnd, EM_GETSEL, (WPARAM)&selStart, (LPARAM)&selEnd);
+            int oldLen = GetWindowTextLengthW(widget.store.hWnd);
             SendMessageW(widget.store.hWnd, WM_SETTEXT, 0, (LPARAM)text.c_str());
+            int newLen = text.length();
+
+            if (selStart >= oldLen && selEnd >= oldLen) {
+                selStart = selEnd = newLen;
+            } else {
+                selStart = std::min<DWORD>(selStart, newLen);
+                selEnd = std::min<DWORD>(selEnd, newLen);
+            }
+
+            SendMessageW(widget.store.hWnd, EM_SETSEL, selStart, selEnd);
         }
     };
 };
@@ -527,7 +524,7 @@ struct Widgets {
 
             .autoSizer = [](Widget* self) {
                 SIZE textSize = Win32Utils::getTextSizeFromHWnd(self->store.hWnd, self->store.checkBox.text.c_str());
-                SIZE idealSize = {textSize.cx + 32, textSize.cy + 12};
+                SIZE idealSize = {textSize.cx + 48, textSize.cy + 12};
                 SetWindowPos(self->store.hWnd, NULL, 0, 0, idealSize.cx, idealSize.cy, SWP_NOMOVE | SWP_NOZORDER);
             }
         };

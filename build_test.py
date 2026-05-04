@@ -78,6 +78,7 @@ build_cmds = [
     "-lgdi32", "-lpthread", "-lopengl32", "-lole32",
     "-lshell32", "-luuid", "-lbcrypt",
     "-lws2_32", "-lcrypt32", "-lsecur32",
+    "-lcomctl32",
     
     "-o", "./build/test"
 ]
