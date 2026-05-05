@@ -183,16 +183,11 @@ struct Settings {
     static constexpr const wchar_t* appKey = L"Open-RPE-Recorder";
     static constexpr DWORD currentVersion = 0;
 
-    bool enablePerformanceCollection;
-    int recordWidth, recordHeight;
-    double recordFPS;
+    bool enablePerformanceCollection = false;
+    double musicVol = 1.0, sfxVol = 1.0;
 
-    Settings() {
-        enablePerformanceCollection = false;
-        recordWidth = 1920;
-        recordHeight = 1080;
-        recordFPS = 60.0;
-    }
+    int recordWidth = 1920, recordHeight = 1080;
+    double recordFPS = 60.0;
 
     void fromRegistry() {
         RegAPI api(appKey);
@@ -206,6 +201,9 @@ struct Settings {
         api.writeDword(L"version", currentVersion);
 
         api.readBool(L"enablePerformanceCollection", enablePerformanceCollection);
+        api.readDouble(L"musicVol", musicVol);
+        api.readDouble(L"sfxVol", sfxVol);
+
         api.readDword(L"recordWidth", recordWidth);
         api.readDword(L"recordHeight", recordHeight);
         api.readDouble(L"recordFPS", recordFPS);
@@ -217,12 +215,17 @@ struct Settings {
         RegAPI api(appKey);
 
         api.writeBool(L"enablePerformanceCollection", enablePerformanceCollection);
+        api.writeDouble(L"musicVol", musicVol);
+        api.writeDouble(L"sfxVol", sfxVol);
+
         api.writeDword(L"recordWidth", recordWidth);
         api.writeDword(L"recordHeight", recordHeight);
         api.writeDouble(L"recordFPS", recordFPS);
     }
 
     void clampValues() {
+        musicVol = std::clamp<double>(musicVol, 0.0, 1.0);
+        sfxVol = std::clamp<double>(sfxVol, 0.0, 1.0);
         recordWidth = std::clamp<int>(recordWidth, 1, 65536);
         recordHeight = std::clamp<int>(recordHeight, 1, 65536);
         recordFPS = std::clamp<double>(recordFPS, 0.01, 65536.0);
@@ -257,6 +260,7 @@ int main() {
 
     int chartFileInput, chartRootInput, bgFileInput, audioFileInput;
     int enablePerformanceCollectionCheckBox;
+    int musicVolInput, sfxVolInput;
     int recordWidthInput, recordHeightInput, recordFPSInput;
 
     Settings settings {};
@@ -343,18 +347,51 @@ int main() {
 
     bool isSyncingSettings = true;
 
-    auto syncSettingsToUI = [&]() {
+    auto syncSettingsToUI = [&](bool allowEmpty = false) {
         isSyncingSettings = true;
-        WidgetStatics::CheckBox::toggle(win->refWidget(enablePerformanceCollectionCheckBox), settings.enablePerformanceCollection);
-        WidgetStatics::TextInput::setText(win->refWidget(recordWidthInput), std::to_wstring(settings.recordWidth));
-        WidgetStatics::TextInput::setText(win->refWidget(recordHeightInput), std::to_wstring(settings.recordHeight));
-        WidgetStatics::TextInput::setText(win->refWidget(recordFPSInput), Win32Utils::stringToWstring(easy_phi::formatToStdString("%.10g", settings.recordFPS)));
+
+        auto checkbox = [&](int id, bool checked) {
+            WidgetStatics::CheckBox::toggle(win->refWidget(id), checked);
+        };
+
+        auto doubleInput = [&](int id, double value) {
+            auto& text = win->refWidget(id).store.textInput.text;
+
+            try {
+                if ((allowEmpty && text.empty()) || std::stold(text) == value) {
+                    return;
+                }
+            } catch (...) { }
+
+            WidgetStatics::TextInput::setText(win->refWidget(id), Win32Utils::stringToWstring(easy_phi::formatToStdString("%.10g", value)));
+        };
+
+        auto intInput = [&](int id, int value) {
+            auto& text = win->refWidget(id).store.textInput.text;
+
+            try {
+                if ((allowEmpty && text.empty()) || std::stoi(text) == value) {
+                    return;
+                }
+            } catch (...) { }
+
+            WidgetStatics::TextInput::setText(win->refWidget(id), std::to_wstring(value));
+        };
+
+        checkbox(enablePerformanceCollectionCheckBox, settings.enablePerformanceCollection);
+        doubleInput(musicVolInput, settings.musicVol);
+        doubleInput(sfxVolInput, settings.sfxVol);
+
+        intInput(recordWidthInput, settings.recordWidth);
+        intInput(recordHeightInput, settings.recordHeight);
+        doubleInput(recordFPSInput, settings.recordFPS);
+
         isSyncingSettings = false;
     };
 
     auto settingsChanged = [&]() {
         settings.onChanged();
-        syncSettingsToUI();
+        syncSettingsToUI(true);
     };
 
     win->registerWidget(Widgets::Label({ .text = L"设置 (通用)" }));
@@ -367,7 +404,27 @@ int main() {
     } }));
     win->nextRow();
 
+    win->registerWidget(Widgets::Label({ .text = L"音乐音量: " }));
+    musicVolInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
+        if (isSyncingSettings) return;
+        try { settings.musicVol = std::stold(ws); }
+        catch (...) { }
+        settingsChanged();
+    }, .onUnfocus = syncSettingsToUI }));
+    win->nextRow();
+
+    win->registerWidget(Widgets::Label({ .text = L"音效音量: " }));
+    sfxVolInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
+        if (isSyncingSettings) return;
+        try { settings.sfxVol = std::stold(ws); }
+        catch (...) { }
+        settingsChanged();
+    }, .onUnfocus = syncSettingsToUI }));
+    win->nextRow();
+
     win->registerWidget(Widgets::Label({ .text = L"设置 (录制)" }));
+    win->nextRow();
+
     win->nextRow();
 
     win->registerWidget(Widgets::Label({ .text = L"分辨率: " }));
@@ -376,23 +433,23 @@ int main() {
         try { settings.recordWidth = std::stoi(ws); }
         catch (...) { }
         settingsChanged();
-    } }));
+    }, .onUnfocus = syncSettingsToUI }));
     win->registerWidget(Widgets::Label({ .text = L"x" }));
     recordHeightInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
         if (isSyncingSettings) return;
         try { settings.recordHeight = std::stoi(ws); }
         catch (...) { }
         settingsChanged();
-    } }));
+    }, .onUnfocus = syncSettingsToUI }));
     win->nextRow();
 
     win->registerWidget(Widgets::Label({ .text = L"帧率: " }));
     recordFPSInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
         if (isSyncingSettings) return;
-        try { settings.recordFPS = std::stod(ws); }
+        try { settings.recordFPS = std::stold(ws); }
         catch (...) { }
         settingsChanged();
-    } }));
+    }, .onUnfocus = syncSettingsToUI }));
     win->nextRow();
 
     win->nextRow();
@@ -443,6 +500,13 @@ int main() {
         backendWin.vsync = true;
         backendWin.resetSurface();
         backendWin.startMainSound();
+
+        ma_sound_set_volume(backendWin.mainSound, settings.musicVol);
+        for (auto& [_, sfxs] : backendWin.noteHitsounds) {
+            for (auto& sfx : sfxs) {
+                ma_sound_set_volume(sfx, settings.sfxVol);
+            }
+        }
 
         while (ma_sound_is_playing(backendWin.mainSound)) {
             double t = getMaSoundPosition(backendWin.mainSound);
@@ -554,7 +618,10 @@ int main() {
         }
 
         pd.setLine(1, L"渲染音频...");
-        auto renderHitsoundsResult = backendWin.renderHitsounds(pcm.first);
+        auto renderHitsoundsResult = backendWin.renderHitsounds(pcm.first, {
+            .musicVol = settings.musicVol,
+            .sfxVol = settings.sfxVol,
+        });
         if (renderHitsoundsResult.has_value()) {
             std::wstring msg = L"渲染打击音效失败: ";
             msg += renderHitsoundsResult.value();

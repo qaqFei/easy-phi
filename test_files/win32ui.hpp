@@ -132,6 +132,7 @@ struct Widget {
         struct {
             std::wstring text;
             std::function<void(std::wstring)> onChange;
+            std::function<void()> onUnfocus;
         } textInput;
     } store;
 
@@ -534,6 +535,7 @@ struct Widgets {
         std::wstring text = L"TEXT";
         std::function<void(std::wstring)> onChange;
         int size = 24;
+        std::function<void()> onUnfocus;
     };
 
     static Widget TextInput(const TextInputConfig& config) {
@@ -543,7 +545,8 @@ struct Widgets {
             .store = {
                 .textInput = {
                     .text = config.text,
-                    .onChange = config.onChange
+                    .onChange = config.onChange,
+                    .onUnfocus = config.onUnfocus
                 }
             },
 
@@ -575,6 +578,10 @@ struct Widgets {
 
                         if (self->store.textInput.onChange) {
                             self->store.textInput.onChange(text);
+                        }
+                    } else if (HIWORD(onCommandConfig.wParam) == EN_KILLFOCUS) {
+                        if (self->store.textInput.onUnfocus) {
+                            self->store.textInput.onUnfocus();
                         }
                     }
                 }

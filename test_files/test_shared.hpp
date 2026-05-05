@@ -1171,6 +1171,7 @@ struct Window {
         if (!bgImage) return "failed to load";
         bluredImageTempSurface = skSurface->makeSurface(bgImage->width(), bgImage->height());
         calculateFrameConfig.backgroundTextureSize = { (double)bgImage->width(), (double)bgImage->height() };
+        cachedBluredImage = { -1, nullptr };
         return std::nullopt;
     }
 
@@ -1560,13 +1561,21 @@ struct Window {
         return true;
     }
 
-    std::optional<std::wstring> renderHitsounds(Pcm16& dst) {
+    struct RenderHitSoundsConfig {
+        double musicVol, sfxVol;
+    };
+
+    std::optional<std::wstring> renderHitsounds(Pcm16& dst, const RenderHitSoundsConfig& config) {
         std::unordered_map<easy_phi::EnumPhiNoteType, Pcm16> noteHitsoundsPcm;
 
         for (auto& [type, sound] : noteHitsounds) {
             auto pcm = decodePcm16FromMaSound(sound[0]);
             if (!pcm.second) return L"解码打击音效失败";
             noteHitsoundsPcm[type] = std::move(pcm.first);
+        }
+
+        for (auto& v : dst.pcm) {
+            v = std::clamp<int32_t>((int32_t)v * config.musicVol, -32768, 32767);
         }
 
         for (auto& line : chart.lines) {
@@ -1582,7 +1591,7 @@ struct Window {
 
                 for (int64_t i = start; i < end; i += PCM_FIXED_CHANNELS) {
                     for (int64_t j = 0; j < PCM_FIXED_CHANNELS; j++) {
-                        dst.pcm[i + j] = (int16_t)std::clamp<int32_t>((int32_t)dst.pcm[i + j] + (int32_t)hitsoundPcm.pcm[i + j - start], -32768, 32767);
+                        dst.pcm[i + j] = (int16_t)std::clamp<int32_t>((int32_t)dst.pcm[i + j] + (int32_t)hitsoundPcm.pcm[i + j - start] * config.sfxVol, -32768, 32767);
                     }
                 }
             }
