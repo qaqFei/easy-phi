@@ -427,13 +427,8 @@ struct Widgets {
             },
 
             .autoSizer = [](Widget* self) {
-                SIZE idealSize = {0, 0};
-
-                if (!Button_GetIdealSize(self->store.hWnd, &idealSize)) {
-                    SIZE textSize = Win32Utils::getTextSizeFromHWnd(self->store.hWnd, self->store.button.text.c_str());
-                    idealSize = {textSize.cx + 16, textSize.cy + 12};
-                }
-
+                SIZE textSize = Win32Utils::getTextSizeFromHWnd(self->store.hWnd, self->store.button.text.c_str());
+                SIZE idealSize = {textSize.cx + 16, textSize.cy + 12};
                 idealSize.cx += self->store.button.padding.cx * 2;
                 idealSize.cy += self->store.button.padding.cy * 2;
 

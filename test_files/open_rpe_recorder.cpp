@@ -274,6 +274,11 @@ int main() {
         .title = L"Open RPE Recorder"
     });
 
+    win->registerWidget(Widgets::Button({ .text = L"↗Github", .onClick = [&]() {
+        ShellExecute(nullptr, "open", BUILD_REPO_GITHUB, nullptr, nullptr, SW_SHOWNORMAL);
+    } }));
+    win->nextRow();
+
     win->registerWidget(Widgets::Label({ .text = L"谱面选择" }));
     win->nextRow();
 

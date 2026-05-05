@@ -58,6 +58,7 @@ libraries = {
 }
 
 short_commit_hash = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode("utf-8").strip()
+repo_github = "https://github.com/qaqFei/easy-phi"
 
 build_cmds = [
     "g++", "-std=c++20",
@@ -69,6 +70,7 @@ build_cmds = [
     f"-DBUILD_SHORT_COMMIT_HASH=\"{short_commit_hash}\"",
     f"-DBUILD_TIME={time.time()}",
     f"-DBUILD_IS_DEBUG={1 if debug else 0}",
+    f"-DBUILD_REPO_GITHUB=\"{repo_github}\"",
     
     f"./test_files/{source}",
     "-I./src",
