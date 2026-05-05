@@ -1785,11 +1785,7 @@ struct PhiChart {
         for (auto& line : lines) {
             for (auto& note : line.notes) {
                 if (note.isFake) continue;
-
-                comboTimes.push_back(note.time);
-                if (note.isHold()) {
-                    comboTimes.push_back(note.time + std::max(0.0, note.holdTime - 0.2));
-                }
+                comboTimes.push_back(note.time + std::max(0.0, note.holdTime - 0.2));
             }
         }
 
