@@ -6,6 +6,7 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shlobj.h>
+#include <thread>
 
 struct KeepingCWD {
     KeepingCWD() {
@@ -455,7 +456,9 @@ int main() {
         }
 
         if (settings.enablePerformanceCollection) {
-            TelemetryDeckClient::Performance::ChartPlayback::completed(performanceInfo);
+            std::thread([=]() {
+                TelemetryDeckClient::Performance::ChartPlayback::completed(performanceInfo);
+            }).detach();
         }
         backendWin.setHidden(true);
     } }));
@@ -623,7 +626,9 @@ int main() {
 
         pd.setLine(1, L"释放资源...");
         if (settings.enablePerformanceCollection) {
-            TelemetryDeckClient::Performance::VideoRender::completed(performanceInfo);
+            std::thread([=]() {
+                TelemetryDeckClient::Performance::VideoRender::completed(performanceInfo);
+            }).detach();
         }
         backendWin.resetSurface();
 
