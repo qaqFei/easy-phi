@@ -188,6 +188,7 @@ struct Settings {
 
     int recordWidth = 1920, recordHeight = 1080;
     double recordFPS = 60.0;
+    bool recordSfxRandshake = false;
 
     void fromRegistry() {
         RegAPI api(appKey);
@@ -207,6 +208,7 @@ struct Settings {
         api.readDword(L"recordWidth", recordWidth);
         api.readDword(L"recordHeight", recordHeight);
         api.readDouble(L"recordFPS", recordFPS);
+        api.readBool(L"recordSfxRandshake", recordSfxRandshake);
 
         clampValues();
     }
@@ -221,6 +223,7 @@ struct Settings {
         api.writeDword(L"recordWidth", recordWidth);
         api.writeDword(L"recordHeight", recordHeight);
         api.writeDouble(L"recordFPS", recordFPS);
+        api.writeBool(L"recordSfxRandshake", recordSfxRandshake);
     }
 
     void clampValues() {
@@ -262,6 +265,7 @@ int main() {
     int enablePerformanceCollectionCheckBox;
     int musicVolInput, sfxVolInput;
     int recordWidthInput, recordHeightInput, recordFPSInput;
+    int recordSfxRandshakeCheckBox;
 
     Settings settings {};
     settings.fromRegistry();
@@ -385,6 +389,7 @@ int main() {
         intInput(recordWidthInput, settings.recordWidth);
         intInput(recordHeightInput, settings.recordHeight);
         doubleInput(recordFPSInput, settings.recordFPS);
+        checkbox(recordSfxRandshakeCheckBox, settings.recordSfxRandshake);
 
         isSyncingSettings = false;
     };
@@ -422,9 +427,9 @@ int main() {
     }, .onUnfocus = syncSettingsToUI }));
     win->nextRow();
 
-    win->registerWidget(Widgets::Label({ .text = L"设置 (录制)" }));
     win->nextRow();
 
+    win->registerWidget(Widgets::Label({ .text = L"设置 (录制)" }));
     win->nextRow();
 
     win->registerWidget(Widgets::Label({ .text = L"分辨率: " }));
@@ -450,6 +455,16 @@ int main() {
         catch (...) { }
         settingsChanged();
     }, .onUnfocus = syncSettingsToUI }));
+    win->nextRow();
+
+    recordSfxRandshakeCheckBox = win->registerWidget(Widgets::CheckBox({ .text = L"打击音随机抖动", .onChange = [&](bool checked) {
+        if (isSyncingSettings) return;
+        settings.recordSfxRandshake = checked;
+        settingsChanged();
+    } }));
+    win->registerWidget(Widgets::Button({ .text = L"?", .onClick = [&]() {
+        showInfoMsg(win.get(), L"由于本家即使同时打击音符, 打击音效也并不是在同一时刻播放, 启用该选项后, 打击音效会在一定范围内随机延迟播放, 以模拟本家多押的神秘听感。");
+    } }));
     win->nextRow();
 
     win->nextRow();
@@ -621,6 +636,7 @@ int main() {
         auto renderHitsoundsResult = backendWin.renderHitsounds(pcm.first, {
             .musicVol = settings.musicVol,
             .sfxVol = settings.sfxVol,
+            .sfxRandshake = settings.recordSfxRandshake
         });
         if (renderHitsoundsResult.has_value()) {
             std::wstring msg = L"渲染打击音效失败: ";

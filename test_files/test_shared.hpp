@@ -1563,6 +1563,7 @@ struct Window {
 
     struct RenderHitSoundsConfig {
         double musicVol, sfxVol;
+        bool sfxRandshake;
     };
 
     std::optional<std::wstring> renderHitsounds(Pcm16& dst, const RenderHitSoundsConfig& config) {
@@ -1578,11 +1579,15 @@ struct Window {
             v = std::clamp<int32_t>((int32_t)v * config.musicVol, -32768, 32767);
         }
 
+        std::mt19937 rng { std::random_device {} () };
+        std::uniform_real_distribution<double> sfxRandshakeDist { 0.0, 0.02 };
+
         for (auto& line : chart.lines) {
             for (auto& note : line.notes) {
                 if (note.isFake) continue;
 
                 double t = note.time + chart.meta.offset;
+                if (config.sfxRandshake) t += sfxRandshakeDist(rng);
                 int64_t start = std::max<int64_t>(0, (int64_t)(t * PCM_FIXED_SAMPLE_RATE) * PCM_FIXED_CHANNELS);
                 if (start >= dst.pcm.size()) continue;
 
