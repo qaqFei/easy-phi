@@ -1309,7 +1309,10 @@ struct Window {
         const MainloopConfig& mainloopConfig
     ) {
         double frameSt = globalTimer();
-        if (!mainloopConfig.isRenderingVideo && glfwWindowShouldClose(window)) return false;
+        if (!mainloopConfig.isRenderingVideo && glfwWindowShouldClose(window)) {
+            glfwSetWindowShouldClose(window, GLFW_FALSE);
+            return false;
+        }
 
         if (!mainloopConfig.isRenderingVideo) {
             int32_t last_w = width, last_h = height;
