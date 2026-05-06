@@ -1530,7 +1530,7 @@ struct PhiChart {
     };
 
     struct UserOptions {
-        Vec2 noteScaling = { 1.0, 1.0 };
+        ep_f64 noteScaling = 1.0;
 
         ep_f64 unsafeBackgroundDim = 0.8;
         ep_f64 backgroundDim = 0.6;
@@ -3994,7 +3994,7 @@ void calculateFrame(
     
     auto lineWidth = (chart.meta.lineWidthUnit * safeAreaSize).sum();
     auto lineHeight = (chart.meta.lineHeightUnit * safeAreaSize).sum();
-    auto standardNoteWidth = safeAreaSize.x * 0.1234375;
+    auto standardNoteWidth = safeAreaSize.x * 0.1234375 * chart.options.noteScaling;
 
     struct NoteTextureSizeInfo {
         ep_f64 width;
@@ -4019,10 +4019,9 @@ void calculateFrame(
             : config.noteTextureInfos.at(type).single
         );
 
-        auto scaling = texInfo.scaling * chart.options.noteScaling;
-
-        auto width = standardNoteWidth * scaling.x;
-        auto totalHeight = width / texInfo.textureSize.x * texInfo.textureSize.y * scaling.y;
+        auto width = standardNoteWidth;
+        auto totalHeight = width / texInfo.textureSize.x * texInfo.textureSize.y;
+        width *= texInfo.scaling.x; totalHeight *= texInfo.scaling.y;
         auto cutPadding = texInfo.cutPadding / texInfo.textureSize.y;
         auto head = hideHead ? 0.0 : cutPadding.x * totalHeight;
         auto tail = cutPadding.y * totalHeight;

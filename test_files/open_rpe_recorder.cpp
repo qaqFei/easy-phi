@@ -185,6 +185,7 @@ struct Settings {
 
     bool enablePerformanceCollection = false;
     double musicVol = 1.0, sfxVol = 1.0;
+    double noteScaling = 1.0;
 
     int recordWidth = 1920, recordHeight = 1080;
     double recordFPS = 60.0;
@@ -204,6 +205,7 @@ struct Settings {
         api.readBool(L"enablePerformanceCollection", enablePerformanceCollection);
         api.readDouble(L"musicVol", musicVol);
         api.readDouble(L"sfxVol", sfxVol);
+        api.readDouble(L"noteScaling", noteScaling);
 
         api.readDword(L"recordWidth", recordWidth);
         api.readDword(L"recordHeight", recordHeight);
@@ -219,6 +221,7 @@ struct Settings {
         api.writeBool(L"enablePerformanceCollection", enablePerformanceCollection);
         api.writeDouble(L"musicVol", musicVol);
         api.writeDouble(L"sfxVol", sfxVol);
+        api.writeDouble(L"noteScaling", noteScaling);
 
         api.writeDword(L"recordWidth", recordWidth);
         api.writeDword(L"recordHeight", recordHeight);
@@ -229,6 +232,7 @@ struct Settings {
     void clampValues() {
         musicVol = std::clamp<double>(musicVol, 0.0, 1.0);
         sfxVol = std::clamp<double>(sfxVol, 0.0, 1.0);
+
         recordWidth = std::clamp<int>(recordWidth, 1, 65536);
         recordHeight = std::clamp<int>(recordHeight, 1, 65536);
         recordFPS = std::clamp<double>(recordFPS, 0.01, 65536.0);
@@ -264,6 +268,7 @@ int main() {
     int chartFileInput, chartRootInput, bgFileInput, audioFileInput;
     int enablePerformanceCollectionCheckBox;
     int musicVolInput, sfxVolInput;
+    int noteScalingInput;
     int recordWidthInput, recordHeightInput, recordFPSInput;
     int recordSfxRandshakeCheckBox;
 
@@ -390,6 +395,7 @@ int main() {
         checkbox(enablePerformanceCollectionCheckBox, settings.enablePerformanceCollection);
         doubleInput(musicVolInput, settings.musicVol);
         doubleInput(sfxVolInput, settings.sfxVol);
+        doubleInput(noteScalingInput, settings.noteScaling);
 
         intInput(recordWidthInput, settings.recordWidth);
         intInput(recordHeightInput, settings.recordHeight);
@@ -427,6 +433,15 @@ int main() {
     sfxVolInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
         if (isSyncingSettings) return;
         try { settings.sfxVol = std::stold(ws); }
+        catch (...) { }
+        settingsChanged();
+    }, .onUnfocus = syncSettingsToUI }));
+    win->nextRow();
+
+    win->registerWidget(Widgets::Label({ .text = L"音符缩放: " }));
+    noteScalingInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
+        if (isSyncingSettings) return;
+        try { settings.noteScaling = std::stold(ws); }
         catch (...) { }
         settingsChanged();
     }, .onUnfocus = syncSettingsToUI }));
@@ -493,6 +508,8 @@ int main() {
             backendWin.chart.meta.title = info.name;
             backendWin.chart.meta.difficulty = info.level;
         }
+
+        backendWin.chart.options.noteScaling *= settings.noteScaling;
 
         if (!check(backendWin.loadBgImage(imagePath), L"无法加载曲绘")) return false;
         if (!check(backendWin.loadMainSound(audioPath), L"无法加载音频")) return false;
