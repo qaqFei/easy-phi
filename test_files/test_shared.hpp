@@ -318,6 +318,8 @@ using NoteImagesType = std::unordered_map<easy_phi::EnumPhiNoteType, std::pair<s
 NoteImagesType loadNoteImages(easy_phi::CalculateFrameConfig& config) {
     NoteImagesType noteImages;
 
+    const double nonHoldCP = 0.499;
+
     for (const auto& [ type, name ] : std::vector<std::pair<easy_phi::EnumPhiNoteType, std::string>> {
         { easy_phi::EnumPhiNoteType::Tap, "click" },
         { easy_phi::EnumPhiNoteType::Drag, "drag" },
@@ -333,11 +335,11 @@ NoteImagesType loadNoteImages(easy_phi::CalculateFrameConfig& config) {
         config.noteTextureInfos[type] = easy_phi::CalculateFrameConfig::NoteTextureInfo {
             .single = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
                 .textureSize = easy_phi::Vec2 { (double)noteImages[type].first->width(), (double)noteImages[type].first->height() },
-                .cutPadding = name == "hold" ? easy_phi::Vec2 { 50.0, 50.0 } : easy_phi::Vec2 { (double)noteImages[type].first->height() / 2, (double)noteImages[type].first->height() / 2 }
+                .cutPadding = name == "hold" ? easy_phi::Vec2 { 50.0, 50.0 } : easy_phi::Vec2 { (double)noteImages[type].first->height() * nonHoldCP, (double)noteImages[type].first->height() * nonHoldCP }
             },
             .simul = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
                 .textureSize = easy_phi::Vec2 { (double)noteImages[type].second->width(), (double)noteImages[type].second->height() },
-                .cutPadding = name == "hold" ? easy_phi::Vec2 { 100.0, 100.0 } : easy_phi::Vec2 { (double)noteImages[type].second->height() / 2, (double)noteImages[type].second->height() / 2 },
+                .cutPadding = name == "hold" ? easy_phi::Vec2 { 100.0, 100.0 } : easy_phi::Vec2 { (double)noteImages[type].second->height() * nonHoldCP, (double)noteImages[type].second->height() * nonHoldCP },
                 .scaling = easy_phi::Vec2 { simulScale, simulScale }
             },
         };
