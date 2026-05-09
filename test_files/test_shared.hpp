@@ -1470,8 +1470,8 @@ struct Window {
                     kImSO, &pt
                 );
                 skCanvas->restore();
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedHitEffectParticle>(obj)) {
-                auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedHitEffectParticle>(obj);
+            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedRect>(obj)) {
+                auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedRect>(obj);
                 
                 static SkPaint pt;
                 pt.setStyle(SkPaint::kFill_Style);

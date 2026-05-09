@@ -18,87 +18,7 @@ easy-phi is a library written in C++ to rendering phigros chart with no dependen
 - **Cross Platform**: Works on any platform that supports C++.
 - **Zero Dependencies**: No external libraries are required.
 
-Refer to the [documentation](./docs) for more details.
-
 ## Examples
-
-### Loading a Chart
-
-```cpp
-#include <easy_phi.hpp>
-using namespace easy_phi;
-
-#include <iostream>
-
-int main() {
-    Data chartData;
-    Data::FromFile(&chartData, "./path/to/chart.json");
-
-    auto loadResult = loadChartFromData(chartData);
-
-    if (loadResult.success) {
-        auto& chart = loadResult.chart;
-        chart.init();
-
-        // Do something with the chart
-    } else {
-        std::cerr << "Failed to load chart:" << std::endl;
-
-        for (const auto& e : loadResult.errors) {
-            std::cerr << e << std::endl;
-        }
-
-        return 1;
-    }
-
-    return 0;
-}
-```
-
-### Calculating a Frame to Render
-
-```cpp
-#include <easy_phi.hpp>
-using namespace easy_phi;
-
-#include <iostream>
-
-int main() {
-    // load chart
-    Data chartData;
-    Data::FromFile(&chartData, "./path/to/chart.json");
-
-    auto chart = loadChartFromData(chartData).chart;
-    chart.init();
-
-    // configure
-    CalculateFrameConfig config {
-        .screenSize = { 1920.0, 1080.0 },
-        .backgroundTextureSize = { 1920.0, 1440.0 },
-        .songLength = 150.0
-    };
-
-    config.noteTextureInfos[EnumPhiNoteType::Tap] = CalculateFrameConfig::NoteTextureInfo {
-        .single = CalculateFrameConfig::NoteTextureInfo::Item {
-            .textureSize = Vec2 { 128.0, 32.0 },
-            .cutPadding = Vec2 { 64.0, 64.0 }
-        },
-        .simul = CalculateFrameConfig::NoteTextureInfo::Item {
-            .textureSize = Vec2 { 128.0, 32.0 },
-            .cutPadding = Vec2 { 64.0, 64.0 }
-        }
-    }; // and configure other note types...
-
-    // calculate frame
-    double time = 1.25;
-    CalculatedFrame frame {};
-    calculateFrame(chart, time, config, frame);
-
-    // render...
-
-    return 0;
-}
-```
 
 For the completed example, check out [here](./test_files/test.cpp).
 
@@ -121,12 +41,6 @@ You can run the main test program by the following command:
 ```bash
 python ./build_test.py --run --debug
 ```
-
-If you want release version, you can run it without `--debug` flag.
-
-If you want to build other test programs, you can add `--source [name]` to the command, e.g. `--source open_rpe_recorder.cpp`.
-
-If you want to bring args to the test program, you can add `--with-args arg1 arg2 ...` to the command (e.g. `--with-args --extend-scale`).
 
 ## License
 

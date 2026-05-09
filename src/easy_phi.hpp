@@ -3865,7 +3865,7 @@ struct CalculatedFrame {
         Color color;
     };
 
-    struct CalculatedHitEffectParticle {
+    struct CalculatedRect {
         Vec2 position, size;
         ep_f64 rotation;
         Color color;
@@ -3886,7 +3886,7 @@ struct CalculatedFrame {
         CalculatedText,
         CalculatedStoryboardTexture,
         CalculatedHitEffectTexture,
-        CalculatedHitEffectParticle,
+        CalculatedRect,
         CalculatedPoly,
         CalculatedShader
     >;
@@ -4260,7 +4260,7 @@ void calculateFrame(
             auto distance = standardNoteWidth / 180 * chart.options.hitEffectParticleDistance * particle.size * (((850.3997391752 * progress + 6236.3848902154) * progress + 80.3542231806) * progress / ((6570.5817658876 * progress + 495.7977913926) * progress + 1.0));
 
             auto particlePosition = toScreen(info.headPosition.rotateDegress(particle.rotation, distance));
-            frame.objects.push_back(CalculatedFrame::CalculatedHitEffectParticle {
+            frame.objects.push_back(CalculatedFrame::CalculatedRect {
                 .position = particlePosition,
                 .size = { size, size },
                 .rotation = 0.0,
