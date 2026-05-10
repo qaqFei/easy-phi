@@ -1108,6 +1108,7 @@ struct Window {
     StoryboardTexturesType loadedStoryboardTextures;
     int width, height;
     bool hidden;
+    double frameBusyWaitPercentage;
 
     void init() {
         glfwInit();
@@ -1141,6 +1142,7 @@ struct Window {
 
         cachedBluredImage = { -1, nullptr };
         globalScale = 1.0;
+        frameBusyWaitPercentage = 0.8;
     }
 
     void setHidden(bool newValue) {
@@ -1545,9 +1547,21 @@ struct Window {
 
         if (!mainloopConfig.isRenderingVideo) {
             skGrCtx->flushAndSubmit();
-
-            glfwSwapBuffers(window);
             glfwPollEvents();
+
+            if (vsync) {
+                double waitSt = globalTimer();
+                auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
+                volatile int* dummy = nullptr;
+                while ((globalTimer() - frameSt) < frameBusyWaitPercentage / vm->refreshRate) {
+                    dummy++;
+                }
+                std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+            }
+
+            double waitSt = globalTimer();
+            glfwSwapBuffers(window);
+            std::cout << "swap took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
         }
 
         std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
