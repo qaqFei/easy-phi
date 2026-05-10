@@ -19,6 +19,7 @@
 #include <ranges>
 #include <unordered_set>
 #include <string_view>
+#include <utility>
 
 namespace easy_phi {
 
@@ -4174,17 +4175,999 @@ struct GL {
     static constexpr GLenum GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001;
     static constexpr GLuint64 GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFFull;
 
-    struct GL33Context {
-        GL33CoreInterface interface;
+    static constexpr GLint GL_TRUE = 1;
+    static constexpr GLint GL_FALSE = 0;
 
-        struct FramebufferInfo { ep_u64 id; };
+    using GLProcLoader = std::function<void*(const char*)>;
+    static GL33CoreInterface MakeGL33CoreInterface(GLProcLoader loader) {
+        GL33CoreInterface interface {};
 
-        void bindFramebuffer(GLenum target, const FramebufferInfo& framebuffer) {
-            interface.glBindFramebuffer(target, framebuffer.id);
+        #define LOAD_AND_CHECK(proc) { \
+            auto ptr = loader("gl" #proc); \
+            if (!ptr) { \
+                throw std::runtime_error("failed to load gl" #proc); \
+            } \
+            using F = decltype(interface.proc); \
+            interface.proc = (F)ptr; \
         }
 
-        void bindFramebuffer(const FramebufferInfo& framebuffer) {
-            bindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        LOAD_AND_CHECK(glGetError)
+        LOAD_AND_CHECK(glGetIntegerv)
+        LOAD_AND_CHECK(glGetFloatv)
+        LOAD_AND_CHECK(glGetBooleanv)
+        LOAD_AND_CHECK(glGetString)
+        LOAD_AND_CHECK(glGetStringi)
+        LOAD_AND_CHECK(glEnable)
+        LOAD_AND_CHECK(glDisable)
+        LOAD_AND_CHECK(glIsEnabled)
+        LOAD_AND_CHECK(glViewport)
+        LOAD_AND_CHECK(glScissor)
+        LOAD_AND_CHECK(glClearColor)
+        LOAD_AND_CHECK(glClear)
+        LOAD_AND_CHECK(glPixelStorei)
+        LOAD_AND_CHECK(glFlush)
+        LOAD_AND_CHECK(glFinish)
+
+        LOAD_AND_CHECK(glGenBuffers)
+        LOAD_AND_CHECK(glDeleteBuffers)
+        LOAD_AND_CHECK(glBindBuffer)
+        LOAD_AND_CHECK(glBufferData)
+        LOAD_AND_CHECK(glBufferSubData)
+        LOAD_AND_CHECK(glMapBuffer)
+        LOAD_AND_CHECK(glMapBufferRange)
+        LOAD_AND_CHECK(glUnmapBuffer)
+        LOAD_AND_CHECK(glBindBufferRange)
+        LOAD_AND_CHECK(glBindBufferBase)
+
+        LOAD_AND_CHECK(glGenVertexArrays)
+        LOAD_AND_CHECK(glDeleteVertexArrays)
+        LOAD_AND_CHECK(glBindVertexArray)
+        LOAD_AND_CHECK(glEnableVertexAttribArray)
+        LOAD_AND_CHECK(glDisableVertexAttribArray)
+        LOAD_AND_CHECK(glVertexAttribPointer)
+        LOAD_AND_CHECK(glVertexAttribIPointer)
+        LOAD_AND_CHECK(glVertexAttribDivisor)
+
+        LOAD_AND_CHECK(glCreateShader)
+        LOAD_AND_CHECK(glShaderSource)
+        LOAD_AND_CHECK(glCompileShader)
+        LOAD_AND_CHECK(glGetShaderiv)
+        LOAD_AND_CHECK(glGetShaderInfoLog)
+        LOAD_AND_CHECK(glDeleteShader)
+        LOAD_AND_CHECK(glCreateProgram)
+        LOAD_AND_CHECK(glAttachShader)
+        LOAD_AND_CHECK(glDetachShader)
+        LOAD_AND_CHECK(glLinkProgram)
+        LOAD_AND_CHECK(glUseProgram)
+        LOAD_AND_CHECK(glGetProgramiv)
+        LOAD_AND_CHECK(glGetProgramInfoLog)
+        LOAD_AND_CHECK(glDeleteProgram)
+        LOAD_AND_CHECK(glGetActiveAttrib)
+        LOAD_AND_CHECK(glGetActiveUniform)
+        LOAD_AND_CHECK(glGetAttribLocation)
+        LOAD_AND_CHECK(glGetUniformLocation)
+
+        LOAD_AND_CHECK(glUniform1f)
+        LOAD_AND_CHECK(glUniform2f)
+        LOAD_AND_CHECK(glUniform3f)
+        LOAD_AND_CHECK(glUniform4f)
+        LOAD_AND_CHECK(glUniform1i)
+        LOAD_AND_CHECK(glUniform2i)
+        LOAD_AND_CHECK(glUniform3i)
+        LOAD_AND_CHECK(glUniform4i)
+        LOAD_AND_CHECK(glUniform1fv)
+        LOAD_AND_CHECK(glUniform2fv)
+        LOAD_AND_CHECK(glUniform3fv)
+        LOAD_AND_CHECK(glUniform4fv)
+        LOAD_AND_CHECK(glUniform1iv)
+        LOAD_AND_CHECK(glUniform2iv)
+        LOAD_AND_CHECK(glUniform3iv)
+        LOAD_AND_CHECK(glUniform4iv)
+        LOAD_AND_CHECK(glUniformMatrix2fv)
+        LOAD_AND_CHECK(glUniformMatrix3fv)
+        LOAD_AND_CHECK(glUniformMatrix4fv)
+
+        LOAD_AND_CHECK(glGenTextures)
+        LOAD_AND_CHECK(glDeleteTextures)
+        LOAD_AND_CHECK(glBindTexture)
+        LOAD_AND_CHECK(glTexImage2D)
+        LOAD_AND_CHECK(glTexSubImage2D)
+        LOAD_AND_CHECK(glTexParameteri)
+        LOAD_AND_CHECK(glTexParameterf)
+        LOAD_AND_CHECK(glGenerateMipmap)
+        LOAD_AND_CHECK(glActiveTexture)
+        LOAD_AND_CHECK(glTexStorage2D)
+
+        LOAD_AND_CHECK(glGenFramebuffers)
+        LOAD_AND_CHECK(glDeleteFramebuffers)
+        LOAD_AND_CHECK(glBindFramebuffer)
+        LOAD_AND_CHECK(glCheckFramebufferStatus)
+        LOAD_AND_CHECK(glFramebufferTexture2D)
+        LOAD_AND_CHECK(glBlitFramebuffer)
+
+        LOAD_AND_CHECK(glGenRenderbuffers)
+        LOAD_AND_CHECK(glDeleteRenderbuffers)
+        LOAD_AND_CHECK(glBindRenderbuffer)
+        LOAD_AND_CHECK(glRenderbufferStorage)
+        LOAD_AND_CHECK(glFramebufferRenderbuffer)
+
+        LOAD_AND_CHECK(glDrawArrays)
+        LOAD_AND_CHECK(glDrawElements)
+        LOAD_AND_CHECK(glDrawArraysInstanced)
+        LOAD_AND_CHECK(glDrawElementsInstanced)
+
+        LOAD_AND_CHECK(glBlendFunc)
+        LOAD_AND_CHECK(glBlendFuncSeparate)
+        LOAD_AND_CHECK(glBlendEquation)
+        LOAD_AND_CHECK(glBlendEquationSeparate)
+        LOAD_AND_CHECK(glBlendColor)
+        LOAD_AND_CHECK(glDepthFunc)
+        LOAD_AND_CHECK(glDepthMask)
+        LOAD_AND_CHECK(glStencilFunc)
+        LOAD_AND_CHECK(glStencilOp)
+        LOAD_AND_CHECK(glStencilMask)
+        LOAD_AND_CHECK(glColorMask)
+
+        LOAD_AND_CHECK(glReadPixels)
+        LOAD_AND_CHECK(glCopyTexSubImage2D)
+
+        LOAD_AND_CHECK(glGenQueries)
+        LOAD_AND_CHECK(glDeleteQueries)
+        LOAD_AND_CHECK(glBeginQuery)
+        LOAD_AND_CHECK(glEndQuery)
+        LOAD_AND_CHECK(glGetQueryObjectiv)
+        LOAD_AND_CHECK(glGetQueryObjectui64v)
+
+        LOAD_AND_CHECK(glFenceSync)
+        LOAD_AND_CHECK(glDeleteSync)
+        LOAD_AND_CHECK(glClientWaitSync)
+
+        return interface;
+    }
+
+    struct BufferInfo {
+        BufferInfo() = default;
+        BufferInfo(const BufferInfo&) = delete;
+        BufferInfo& operator=(const BufferInfo&) = delete;
+
+        BufferInfo(BufferInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+            , target(other.target)
+        {}
+
+        BufferInfo& operator=(BufferInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+                target = other.target;
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+        GLenum target;
+
+        struct UsingGuard {
+            BufferInfo* ref;
+
+            UsingGuard(BufferInfo& buffer) : ref(&buffer) {
+                ref->glRef->glBindBuffer(ref->target, ref->id);
+            }
+
+            UsingGuard(const UsingGuard&) = delete;
+            UsingGuard& operator=(const UsingGuard&) = delete;
+            UsingGuard(UsingGuard&&) = delete;
+            UsingGuard& operator=(UsingGuard&&) = delete;
+
+            void data(GLsizeiptr size, const void* data, GLenum usage) {
+                ref->glRef->glBufferData(ref->target, size, data, usage);
+            }
+
+            template <typename T>
+            void data(std::span<const T> data, GLenum usage) {
+                ref->glRef->glBufferData(ref->target, data.size() * sizeof(T), data.data(), usage);
+            }
+
+            void subData(GLintptr offset, GLsizeiptr size, const void* data) {
+                ref->glRef->glBufferSubData(ref->target, offset, size, data);
+            }
+
+            template <typename T>
+            void subData(GLintptr offset, std::span<const T> data) {
+                ref->glRef->glBufferSubData(ref->target, offset, data.size() * sizeof(T), data.data());
+            }
+
+            struct MappingGuard {
+                UsingGuard* ref;
+                void* data;
+
+                MappingGuard(UsingGuard& buffer, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
+                    data = ref->ref->glRef->glMapBuffer(ref->ref->target, access);
+                }
+
+                MappingGuard(const MappingGuard&) = delete;
+                MappingGuard& operator=(const MappingGuard&) = delete;
+                MappingGuard(MappingGuard&&) = delete;
+                MappingGuard& operator=(MappingGuard&&) = delete;
+
+                ~MappingGuard() {
+                    ref->ref->glRef->glUnmapBuffer(ref->ref->target);
+                }
+            };
+
+            struct MappingRangeGuard {
+                UsingGuard* ref;
+                void* data;
+
+                MappingRangeGuard(UsingGuard& buffer, GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
+                    data = ref->ref->glRef->glMapBufferRange(ref->ref->target, offset, length, access);
+                }
+
+                MappingRangeGuard(const MappingRangeGuard&) = delete;
+                MappingRangeGuard& operator=(const MappingRangeGuard&) = delete;
+                MappingRangeGuard(MappingRangeGuard&&) = delete;
+                MappingRangeGuard& operator=(MappingRangeGuard&&) = delete;
+
+                ~MappingRangeGuard() {
+                    ref->ref->glRef->glUnmapBuffer(ref->ref->target);
+                }
+            };
+
+            ~UsingGuard() {
+                ref->glRef->glBindBuffer(ref->target, 0);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        ~BufferInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteBuffers(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct VertexArrayInfo {
+        VertexArrayInfo() = default;
+        VertexArrayInfo(const VertexArrayInfo&) = delete;
+        VertexArrayInfo& operator=(const VertexArrayInfo&) = delete;
+
+        VertexArrayInfo(VertexArrayInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        VertexArrayInfo& operator=(VertexArrayInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            VertexArrayInfo* ref;
+
+            UsingGuard(VertexArrayInfo& array) : ref(&array) {
+                ref->glRef->glBindVertexArray(ref->id);
+            }
+
+            UsingGuard(const UsingGuard&) = delete;
+            UsingGuard& operator=(const UsingGuard&) = delete;
+            UsingGuard(UsingGuard&&) = delete;
+            UsingGuard& operator=(UsingGuard&&) = delete;
+
+            void enable(GLuint index) { ref->glRef->glEnableVertexAttribArray(index); }
+            void disable(GLuint index) { ref->glRef->glDisableVertexAttribArray(index); }
+
+            void attribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer) {
+                ref->glRef->glVertexAttribPointer(index, size, type, normalized, stride, pointer);
+            }
+
+            void attribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer) {
+                ref->glRef->glVertexAttribIPointer(index, size, type, stride, pointer);
+            }
+
+            void attribDivisor(GLuint index, GLuint divisor) {
+                ref->glRef->glVertexAttribDivisor(index, divisor);
+            }
+
+            ~UsingGuard() {
+                // ref->glRef->glBindVertexArray(0);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        ~VertexArrayInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteVertexArrays(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct ShaderInfo {
+        ShaderInfo() = default;
+        ShaderInfo(const ShaderInfo&) = delete;
+        ShaderInfo& operator=(const ShaderInfo&) = delete;
+
+        ShaderInfo(ShaderInfo&& other) noexcept
+            : glRef(other.glRef)
+            , type(other.type)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        ShaderInfo& operator=(ShaderInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                type = other.type;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLenum type;
+        GLuint id;
+
+        void source(const std::string& source) {
+            const GLchar* ptr = (GLchar*)source.c_str();
+            GLint len = source.length();
+            glRef->glShaderSource(id, 1, &ptr, &len);
+        }
+
+        void source(std::span<const std::string> sources) {
+            std::vector<const GLchar*> ptrs;
+            std::vector<GLint> lens;
+            ptrs.reserve(sources.size());
+            lens.reserve(sources.size());
+            for (const auto& source : sources) {
+                ptrs.push_back((GLchar*)source.c_str());
+                lens.push_back(source.length());
+            }
+            glRef->glShaderSource(id, sources.size(), ptrs.data(), lens.data());
+        }
+
+        bool compile(std::string* outLog = nullptr) {
+            glRef->glCompileShader(id);
+            GLint status = 0;
+            glRef->glGetShaderiv(id, GL_COMPILE_STATUS, &status);
+            if (outLog) {
+                GLint logLen;
+                glRef->glGetShaderiv(id, GL_INFO_LOG_LENGTH, &logLen);
+                if (logLen > 0) {
+                    outLog->resize(logLen);
+                    GLsizei written = 0;
+                    glRef->glGetShaderInfoLog(id, logLen, &written, (GLchar*)outLog->data());
+                    outLog->resize(written);
+                }
+            }
+            return status == GL_TRUE;
+        }
+
+        ~ShaderInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteShader(id);
+                id = 0;
+            }
+        }
+    };
+
+    struct ProgramInfo {
+        ProgramInfo() = default;
+        ProgramInfo(const ProgramInfo&) = delete;
+        ProgramInfo& operator=(const ProgramInfo&) = delete;
+
+        ProgramInfo(ProgramInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        ProgramInfo& operator=(ProgramInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        void attachShader(const ShaderInfo& shader) {
+            glRef->glAttachShader(id, shader.id);
+        }
+
+        bool link(std::string* outLog = nullptr) {
+            glRef->glLinkProgram(id);
+            GLint status = 0;
+            glRef->glGetProgramiv(id, GL_LINK_STATUS, &status);
+            if (outLog) {
+                GLint logLen = 0;
+                glRef->glGetProgramiv(id, GL_INFO_LOG_LENGTH, &logLen);
+                if (logLen > 0) {
+                    outLog->resize(logLen);
+                    GLsizei written = 0;
+                    glRef->glGetProgramInfoLog(id, logLen, &written, (GLchar*)outLog->data());
+                    outLog->resize(written);
+                }
+            }
+            return status == GL_TRUE;
+        }
+
+        struct UsingGuard {
+            ProgramInfo* ref;
+
+            UsingGuard(ProgramInfo& program) : ref(&program) {
+                ref->glRef->glUseProgram(ref->id);
+            }
+
+            UsingGuard(const UsingGuard&) = delete;
+            UsingGuard& operator=(const UsingGuard&) = delete;
+            UsingGuard(UsingGuard&&) = delete;
+            UsingGuard& operator=(UsingGuard&&) = delete;
+
+            ~UsingGuard() {
+                // ref->glRef->glUseProgram(0);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        struct Location {
+            ProgramInfo* ref;
+
+            GLint location;
+
+            void set(GLfloat v0) { ref->glRef->glUniform1f(location, v0); }
+            void set(GLfloat v0, GLfloat v1) { ref->glRef->glUniform2f(location, v0, v1); }
+            void set(GLfloat v0, GLfloat v1, GLfloat v2) { ref->glRef->glUniform3f(location, v0, v1, v2); }
+            void set(GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3) { ref->glRef->glUniform4f(location, v0, v1, v2, v3); }
+            
+            void set(GLint v0) { ref->glRef->glUniform1i(location, v0); }
+            void set(GLint v0, GLint v1) { ref->glRef->glUniform2i(location, v0, v1); }
+            void set(GLint v0, GLint v1, GLint v2) { ref->glRef->glUniform3i(location, v0, v1, v2); }
+            void set(GLint v0, GLint v1, GLint v2, GLint v3) { ref->glRef->glUniform4i(location, v0, v1, v2, v3); }
+
+            void set(const std::array<GLfloat, 2>& value) { set(value[0], value[1]); }
+            void set(const std::array<GLfloat, 3>& value) { set(value[0], value[1], value[2]); }
+            void set(const std::array<GLfloat, 4>& value) { set(value[0], value[1], value[2], value[3]); }
+
+            void set1fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform1fv(location, count, value); }
+            void set2fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform2fv(location, count, value); }
+            void set3fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform3fv(location, count, value); }
+            void set4fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform4fv(location, count, value); }
+
+            void set1iv(GLsizei count, const GLint* value) { ref->glRef->glUniform1iv(location, count, value); }
+            void set2iv(GLsizei count, const GLint* value) { ref->glRef->glUniform2iv(location, count, value); }
+            void set3iv(GLsizei count, const GLint* value) { ref->glRef->glUniform3iv(location, count, value); }
+            void set4iv(GLsizei count, const GLint* value) { ref->glRef->glUniform4iv(location, count, value); }
+
+            void setMatrix2fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix2fv(location, count, transpose, value); }
+            void setMatrix3fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix3fv(location, count, transpose, value); }
+            void setMatrix4fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix4fv(location, count, transpose, value); }
+        };
+
+        Location getAttribLocation(const std::string& name) {
+            Location result;
+            result.ref = this;
+            result.location = glRef->glGetAttribLocation(id, (GLchar*)name.c_str());
+            return result;
+        }
+
+        Location getUniformLocation(const std::string& name) {
+            Location result;
+            result.ref = this;
+            result.location = glRef->glGetUniformLocation(id, (GLchar*)name.c_str());
+            return result;
+        }
+
+        ~ProgramInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteProgram(id);
+                id = 0;
+            }
+        }
+    };
+
+    struct TextureInfo {
+        TextureInfo() = default;
+        TextureInfo(const TextureInfo&) = delete;
+        TextureInfo& operator=(const TextureInfo&) = delete;
+
+        TextureInfo(TextureInfo&& other) noexcept
+            : glRef(other.glRef)
+            , target(other.target)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        TextureInfo& operator=(TextureInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                target = other.target;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLenum target;
+        GLuint id;
+
+        struct UsingGuard {
+            TextureInfo* ref;
+
+            UsingGuard(TextureInfo& texture, GLenum activeTexture) : ref(&texture) {
+                ref->glRef->glActiveTexture(activeTexture);
+                ref->glRef->glBindTexture(ref->target, ref->id);
+            }
+
+            void image2D(GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels) {
+                ref->glRef->glTexImage2D(ref->target, level, internalformat, width, height, border, format, type, pixels);
+            }
+
+            void subImage2D(GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels) {
+                ref->glRef->glTexSubImage2D(ref->target, level, xoffset, yoffset, width, height, format, type, pixels);
+            }
+
+            void parameteri(GLenum pname, GLint param) {
+                ref->glRef->glTexParameteri(ref->target, pname, param);
+            }
+
+            void parameterf(GLenum pname, GLfloat param) {
+                ref->glRef->glTexParameterf(ref->target, pname, param);
+            }
+
+            void generateMipmap() {
+                ref->glRef->glGenerateMipmap(ref->target);
+            }
+
+            void storage2D(GLint levels, GLenum internalformat, GLsizei width, GLsizei height) {
+                ref->glRef->glTexStorage2D(ref->target, levels, internalformat, width, height);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glBindTexture(ref->target, 0);
+            }
+        };
+
+        UsingGuard use(GLenum activeTexture = GL_TEXTURE0) {
+            return UsingGuard(*this, activeTexture);
+        }
+
+        ~TextureInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteTextures(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct FramebufferInfo {
+        FramebufferInfo() = default;
+        FramebufferInfo(const FramebufferInfo&) = delete;
+        FramebufferInfo& operator=(const FramebufferInfo&) = delete;
+
+        FramebufferInfo(FramebufferInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        FramebufferInfo& operator=(FramebufferInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            FramebufferInfo* ref;
+            GLenum target;
+
+            UsingGuard(FramebufferInfo& framebuffer, GLenum target) : ref(&framebuffer), target(target) {
+                ref->glRef->glBindFramebuffer(target, ref->id);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glBindFramebuffer(target, 0);
+            }
+        };
+
+        UsingGuard use(GLenum target = GL_FRAMEBUFFER) {
+            return UsingGuard(*this, target);
+        }
+
+        void texture2D(GLint attachment, const TextureInfo& texture, GLenum target = GL_FRAMEBUFFER, GLint level = 0) {
+            glRef->glFramebufferTexture2D(target, attachment, texture.target, texture.id, level);
+        }
+
+        void blit(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter = GL_NEAREST) {
+            glRef->glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+        }
+
+        ~FramebufferInfo() {
+            reset();
+        }
+
+        void reset() {
+            if (id) {
+                glRef->glDeleteFramebuffers(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct RenderbufferInfo {
+        RenderbufferInfo() = default;
+        RenderbufferInfo(const RenderbufferInfo&) = delete;
+        RenderbufferInfo& operator=(const RenderbufferInfo&) = delete;
+
+        RenderbufferInfo(RenderbufferInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        RenderbufferInfo& operator=(RenderbufferInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            RenderbufferInfo* ref;
+
+            UsingGuard(RenderbufferInfo& renderbuffer) : ref(&renderbuffer) {
+                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, ref->id);
+            }
+
+            void storage(GLenum internalformat, GLsizei width, GLsizei height) {
+                ref->glRef->glRenderbufferStorage(GL_RENDERBUFFER, internalformat, width, height);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, 0);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        ~RenderbufferInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteRenderbuffers(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct QueryInfo {
+        QueryInfo() = default;
+        QueryInfo(const QueryInfo&) = delete;
+        QueryInfo& operator=(const QueryInfo&) = delete;
+
+        QueryInfo(QueryInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        QueryInfo& operator=(QueryInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            QueryInfo* ref;
+            GLenum target;
+
+            UsingGuard(QueryInfo& query, GLenum target) : ref(&query), target(target) {
+                ref->glRef->glBeginQuery(target, ref->id);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glEndQuery(target);
+            }
+        };
+
+        UsingGuard use(GLenum target = GL_TIME_ELAPSED) {
+            return UsingGuard(*this, target);
+        }
+
+        GLint getResultInt() const {
+            GLint result = 0;
+            glRef->glGetQueryObjectiv(id, GL_QUERY_RESULT, &result);
+            return result;
+        }
+
+        GLuint64 getResultUInt64() const {
+            GLuint64 result = 0;
+            glRef->glGetQueryObjectui64v(id, GL_QUERY_RESULT, &result);
+            return result;
+        }
+
+        bool isResultAvailable() const {
+            GLint result = 0;
+            glRef->glGetQueryObjectiv(id, GL_QUERY_RESULT_AVAILABLE, &result);
+            return result != 0;
+        }
+
+        ~QueryInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteQueries(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct SyncInfo {
+        SyncInfo() = default;
+        SyncInfo(const SyncInfo&) = delete;
+        SyncInfo& operator=(const SyncInfo&) = delete;
+
+        SyncInfo(SyncInfo&& other) noexcept
+            : glRef(other.glRef)
+            , sync(std::exchange(other.sync, nullptr))
+        {}
+
+        SyncInfo& operator=(SyncInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                sync = std::exchange(other.sync, nullptr);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLsync sync;
+
+        GLenum wait(GLbitfield flags, GLuint64 timeout = GL_TIMEOUT_IGNORED) const {
+            return glRef->glClientWaitSync(sync, flags, timeout);
+        }
+
+        ~SyncInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (sync) {
+                glRef->glDeleteSync(sync);
+                sync = nullptr;
+            }
+        }
+    };
+
+    struct GL33Context {
+        GL33Context(GL33CoreInterface& interface) : gl(interface) {}
+        GL33Context(const GL33Context&) = delete;
+        GL33Context& operator=(const GL33Context&) = delete;
+        GL33Context(GL33Context&&) = delete;
+        GL33Context& operator=(GL33Context&&) = delete;
+
+        GL33CoreInterface gl;
+
+        GLenum getError() const { return gl.glGetError(); }
+        bool hasError() const { return getError() != GL_NO_ERROR; }
+
+        void enable(GLenum cap) { gl.glEnable(cap); }
+        void disable(GLenum cap) { gl.glDisable(cap); }
+        bool isEnabled(GLenum cap) const { return gl.glIsEnabled(cap); }
+
+        void setViewport(GLint x, GLint y, GLsizei width, GLsizei height) { gl.glViewport(x, y, width, height); }
+        void setViewport(GLsizei width, GLsizei height) { gl.glViewport(0, 0, width, height); }
+
+        void setScissor(GLint x, GLint y, GLsizei width, GLsizei height) { gl.glScissor(x, y, width, height); }
+        void setScissor(GLsizei width, GLsizei height) { gl.glScissor(0, 0, width, height); }
+
+        void setClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) { gl.glClearColor(r, g, b, a); }
+        
+        void clear(GLbitfield mask) { gl.glClear(mask); }
+
+        void flush() { gl.glFlush(); }
+        void finish() { gl.glFinish(); }
+
+        GLint getInteger(GLenum pname) const { GLint result; gl.glGetIntegerv(pname, &result); return result; }
+        GLfloat getFloat(GLenum pname) const { GLfloat result; gl.glGetFloatv(pname, &result); return result; }
+        const char* getString(GLenum pname) const { auto* res = (const char*)gl.glGetString(pname); return res ? res : ""; }
+        const char* getStringi(GLenum pname, GLuint index) const { auto* res = (const char*)gl.glGetStringi(pname, index); return res ? res : ""; }
+
+        BufferInfo createBuffer(GLenum target = GL_ARRAY_BUFFER) {
+            BufferInfo info;
+            info.glRef = &gl;
+            info.target = target;
+            gl.glGenBuffers(1, &info.id);
+            return info;
+        }
+
+        VertexArrayInfo createVertexArray() {
+            VertexArrayInfo info;
+            info.glRef = &gl;
+            gl.glGenVertexArrays(1, &info.id);
+            return info;
+        }
+
+        ShaderInfo createShader(GLenum type) {
+            ShaderInfo info;
+            info.glRef = &gl;
+            info.type = type;
+            info.id = gl.glCreateShader(type);
+            return info;
+        }
+
+        ProgramInfo createProgram() {
+            ProgramInfo info;
+            info.glRef = &gl;
+            info.id = gl.glCreateProgram();
+            return info;
+        }
+
+        TextureInfo createTexture(GLenum target = GL_TEXTURE_2D) {
+            TextureInfo info;
+            info.glRef = &gl;
+            info.target = target;
+            gl.glGenTextures(1, &info.id);
+            return info;
+        }
+
+        FramebufferInfo createFramebuffer() {
+            FramebufferInfo info;
+            info.glRef = &gl;
+            gl.glGenFramebuffers(1, &info.id);
+            return info;
+        }
+
+        GLenum checkFramebufferStatus(GLenum target = GL_FRAMEBUFFER) const {
+            return gl.glCheckFramebufferStatus(target);
+        }
+
+        bool isFramebufferComplete(GLenum target = GL_FRAMEBUFFER) const {
+            return gl.glCheckFramebufferStatus(target) == GL_FRAMEBUFFER_COMPLETE;
+        }
+
+        RenderbufferInfo createRenderbuffer() {
+            RenderbufferInfo info;
+            info.glRef = &gl;
+            gl.glGenRenderbuffers(1, &info.id);
+            return info;
+        }
+
+        void framebufferRenderbuffer(GLenum target, GLenum attachment, const RenderbufferInfo& renderbuffer) {
+            gl.glFramebufferRenderbuffer(target, attachment, GL_RENDERBUFFER, renderbuffer.id);
+        }
+        
+        void drawArrays(GLenum mode, GLint first, GLsizei count) {
+            gl.glDrawArrays(mode, first, count);
+        }
+
+        void drawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
+            gl.glDrawElements(mode, count, type, indices);
+        }
+
+        void drawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instancecount) {
+            gl.glDrawArraysInstanced(mode, first, count, instancecount);
+        }
+
+        void drawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei instancecount) {
+            gl.glDrawElementsInstanced(mode, count, type, indices, instancecount);
+        }
+        
+        void blendFunc(GLenum sfactor, GLenum dfactor) { gl.glBlendFunc(sfactor, dfactor); }
+        void blendFuncSeparate(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha) { gl.glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha); }
+        void blendEquation(GLenum mode) { gl.glBlendEquation(mode); }
+        void blendEquationSeparate(GLenum modeRGB, GLenum modeAlpha) { gl.glBlendEquationSeparate(modeRGB, modeAlpha); }
+        void blendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) { gl.glBlendColor(r, g, b, a); }
+        
+        void depthFunc(GLenum func) { gl.glDepthFunc(func); }
+        void depthMask(GLboolean flag) { gl.glDepthMask(flag); }
+
+        void stencilFunc(GLenum func, GLint ref, GLuint mask) { gl.glStencilFunc(func, ref, mask); }
+        void stencilOp(GLenum sfail, GLenum dpfail, GLenum dppass) { gl.glStencilOp(sfail, dpfail, dppass); }
+        void stencilMask(GLuint mask) { gl.glStencilMask(mask); }
+
+        void colorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a) { gl.glColorMask(r, g, b, a); }
+
+        QueryInfo createQuery() {
+            QueryInfo info;
+            info.glRef = &gl;
+            gl.glGenQueries(1, &info.id);
+            return info;
+        }
+
+        SyncInfo createSync(GLenum condition = GL_SYNC_GPU_COMMANDS_COMPLETE, GLbitfield flags = 0) {
+            SyncInfo info;
+            info.glRef = &gl;
+            info.sync = gl.glFenceSync(condition, flags);
+            return info;
         }
     };
 };
