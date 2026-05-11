@@ -1,8 +1,6 @@
 #include <easy_phi.hpp>
 
 #include <miniaudio/miniaudio.h>
-#define GLFW_INCLUDE_NONE
-#include <glad/glad.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -61,6 +59,8 @@ extern "C" {
 #include <map>
 #include <charconv>
 #include <intrin.h>
+
+using namespace easy_phi::GL;
 
 #define WAV_HEADER_SIZE 44
 
@@ -286,6 +286,30 @@ struct FontMgr {
     }
 };
 
+void skImageToWOSK(gl_sp<TextureInfo>& texInfo, sk_sp<SkImage> image) {
+    SkImageInfo dstInfo = SkImageInfo::Make(
+        image->width(), 
+        image->height(),
+        kRGBA_8888_SkColorType,
+        kUnpremul_SkAlphaType
+    );
+    
+    std::vector<uint8_t> buffer(dstInfo.minRowBytes() * dstInfo.height());
+    SkPixmap dstPixmap(dstInfo, buffer.data(), dstInfo.minRowBytes());
+    image->readPixels(dstPixmap, 0, 0);
+
+    texInfo->use().image2D(
+        0,
+        GL_RGBA8,
+        image->width(),
+        image->height(),
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        buffer.data()
+    );
+}
+
 using StoryboardTexturesType = std::unordered_map<easy_phi::ep_u64, sk_sp<SkImage>>;
 void attachTextureLoader(
     easy_phi::PhiChart& chart,
@@ -306,6 +330,37 @@ void attachTextureLoader(
 
             easy_phi::ep_u64 id = currentStoryboardTextureId++;
             (*loadedStoryboardTexturesPtr)[id] = image;
+            return std::make_pair(id, easy_phi::Vec2 { (double)image->width(), (double)image->height() });
+        },
+        [=](easy_phi::ep_u64 texture) {
+            loadedStoryboardTexturesPtr->erase(texture);
+        }
+    );
+}
+
+using StoryboardTexturesWOSKType = std::unordered_map<easy_phi::ep_u64, gl_sp<TextureInfo>>;
+void attachTextureLoaderWOSK(
+    GL33Context& glCtx,
+    easy_phi::PhiChart& chart,
+    const std::string& assetsPath,
+    StoryboardTexturesWOSKType& loadedStoryboardTextures
+) {
+    static easy_phi::ep_u64 currentStoryboardTextureId = 0;
+    StoryboardTexturesWOSKType* loadedStoryboardTexturesPtr = &loadedStoryboardTextures;
+    GL33Context* glCtxPtr = &glCtx;
+
+    easy_phi::StoryboardHelpers::attachTextureLoader(
+        chart.storyboardAssets,
+        assetsPath,
+        [=](std::string path) -> std::optional<std::pair<easy_phi::ep_u64, easy_phi::Vec2>> {
+            easy_phi::Data imageData;
+            easy_phi::Data::FromFile(&imageData, path);
+            auto image = loadImage(imageData);
+            if (!image) return std::nullopt;
+
+            easy_phi::ep_u64 id = currentStoryboardTextureId++;
+            (*loadedStoryboardTexturesPtr)[id] = glCtxPtr->createTexture();
+            skImageToWOSK((*loadedStoryboardTexturesPtr)[id], image);
             return std::make_pair(id, easy_phi::Vec2 { (double)image->width(), (double)image->height() });
         },
         [=](easy_phi::ep_u64 texture) {
@@ -348,6 +403,47 @@ NoteImagesType loadNoteImages(easy_phi::CalculateFrameConfig& config) {
     return noteImages;
 }
 
+using NoteImagesWOSKType = std::unordered_map<easy_phi::EnumPhiNoteType, std::pair<gl_sp<TextureInfo>, gl_sp<TextureInfo>>>;
+NoteImagesWOSKType loadNoteImagesWOSK(GL33Context& glCtx, easy_phi::CalculateFrameConfig& config) {
+    NoteImagesWOSKType noteImages;
+
+    const double nonHoldCP = 0.499;
+
+    for (const auto& [ type, name ] : std::vector<std::pair<easy_phi::EnumPhiNoteType, std::string>> {
+        { easy_phi::EnumPhiNoteType::Tap, "click" },
+        { easy_phi::EnumPhiNoteType::Drag, "drag" },
+        { easy_phi::EnumPhiNoteType::Flick, "flick" },
+        { easy_phi::EnumPhiNoteType::Hold, "hold" },
+    }) {
+        auto single_data = StaticResource::get(std::string("/") + name + ".png");
+        auto simul_data = StaticResource::get(std::string("/") + name + "_mh.png");
+        auto sk_single_img = loadImage(single_data);
+        auto sk_simul_img = loadImage(simul_data);
+
+        noteImages[type] = { glCtx.createTexture(), glCtx.createTexture() };
+        auto& single = noteImages[type].first;
+        auto& simul = noteImages[type].second;
+        skImageToWOSK(single, sk_single_img);
+        skImageToWOSK(simul, sk_simul_img);
+
+        auto simulScale = (double)sk_single_img->width() / sk_simul_img->width();
+
+        config.noteTextureInfos[type] = easy_phi::CalculateFrameConfig::NoteTextureInfo {
+            .single = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
+                .textureSize = easy_phi::Vec2 { (double)sk_single_img->width(), (double)sk_single_img->height() },
+                .cutPadding = name == "hold" ? easy_phi::Vec2 { 50.0, 50.0 } : easy_phi::Vec2 { (double)sk_single_img->height() * nonHoldCP, (double)sk_single_img->height() * nonHoldCP }
+            },
+            .simul = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
+                .textureSize = easy_phi::Vec2 { (double)sk_simul_img->width(), (double)sk_simul_img->height() },
+                .cutPadding = name == "hold" ? easy_phi::Vec2 { 100.0, 100.0 } : easy_phi::Vec2 { (double)sk_simul_img->height() * nonHoldCP, (double)sk_simul_img->height() * nonHoldCP },
+                .scaling = easy_phi::Vec2 { simulScale, simulScale }
+            },
+        };
+    }
+
+    return noteImages;
+}
+
 static const int hitsoundsBufferSize = 3;
 
 using NoteHitsoundsType = std::unordered_map<easy_phi::EnumPhiNoteType, std::vector<ma_sound*>>;
@@ -376,6 +472,17 @@ HitEffectImagesType loadHitEffectImages() {
         hitEffectImages.push_back(loadImage(data));
     }
 
+    return hitEffectImages;
+}
+
+using HitEffectImagesWOSKType = std::vector<gl_sp<TextureInfo>>;
+HitEffectImagesWOSKType loadHitEffectImagesWOSK(GL33Context& glCtx) {
+    HitEffectImagesWOSKType hitEffectImages;
+    for (int i = 0; i < 60; i++) {
+        auto data = StaticResource::get(std::string("/") + "hit_fx_" + std::to_string(i + 1) + ".png");
+        hitEffectImages.push_back(glCtx.createTexture());
+        skImageToWOSK(hitEffectImages.back(), loadImage(data));
+    }
     return hitEffectImages;
 }
 
@@ -1080,6 +1187,248 @@ struct TelemetryDeckClient {
     };
 };
 
+struct WindowWOSkia {
+    GLFWwindow* window;
+    bool vsync;
+    ma_engine maeng;
+    easy_phi::CalculateFrameConfig calculateFrameConfig;
+    ma_sound* mainSound;
+    NoteImagesWOSKType noteImages;
+    NoteHitsoundsType noteHitsounds;
+    HitEffectImagesWOSKType hitEffectImages;
+    std::vector<ma_sound*> playingHitsounds;
+    // FontMgr fontMgr;
+    // FontInstance font;
+    // std::pair<double, sk_sp<SkImage>> cachedBluredImage;
+    // sk_sp<SkImage> bgImage;
+    // sk_sp<SkSurface> bluredImageTempSurface;
+    double globalScale;
+    easy_phi::CalculatedFrame calculatedFrame;
+    easy_phi::PhiChart chart;
+    StoryboardTexturesWOSKType loadedStoryboardTextures;
+    int width, height;
+    bool hidden;
+    double frameBusyWaitPercentage;
+
+    GL33Context glCtx;
+
+    void init() {
+        glfwInit();
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+
+        auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
+        int32_t width = vm->width * 0.6;
+        int32_t height = vm->height * 0.6;
+        window = glfwCreateWindow(width, height, "", nullptr, nullptr);
+
+        glfwMakeContextCurrent(window);
+        glCtx = GL33Context::Make(MakeGL33CoreInterface(
+            [](const char* name) { return (void*)glfwGetProcAddress(name); }
+        ));
+
+        vsync = false;
+        
+        resetSurface();
+
+        ma_engine_init(NULL, &maeng);
+
+        noteHitsounds = loadNoteHitsounds(maeng);
+        noteImages = std::move(loadNoteImagesWOSK(glCtx, calculateFrameConfig));
+        hitEffectImages = std::move(loadHitEffectImagesWOSK(glCtx));
+
+        globalScale = 1.0;
+        frameBusyWaitPercentage = 0.8;
+    }
+    
+    std::optional<std::string> loadBgImage(const std::string& path) {
+        easy_phi::Data data;
+        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
+        return std::nullopt;
+    }
+    
+    std::optional<std::string> loadMainSound(const std::string& path) {
+        easy_phi::Data data;
+        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
+        mainSound = loadMaSoundFromMemory(&maeng, data);
+        if (!mainSound) return "failed to load";
+        calculateFrameConfig.songLength = getMaSoundDuration(mainSound);
+        return std::nullopt;
+    }
+
+    void startMainSound() {
+        ma_sound_seek_to_pcm_frame(mainSound, 0);
+        ma_sound_start(mainSound);
+        while (!ma_sound_is_playing(mainSound)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+    }
+
+    std::optional<std::string> loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
+        easy_phi::Data data;
+        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read chart file";
+
+        double load_st = globalTimer();
+        auto chartLoadResult = easy_phi::loadChartFromData(data);
+        if (loadingTook) *loadingTook = globalTimer() - load_st;
+        std::cout << "loadChartFromData took: " << globalTimer() - load_st << " s" << std::endl;
+        std::cout << "chartLoadResult.success: " << chartLoadResult.success << std::endl;
+        std::cout << "chartLoadResult.erros: " << std::endl;
+        for (const auto& e : chartLoadResult.errors) std::cout << e << std::endl;
+        if (!chartLoadResult.success) return "failed to load chart";
+        chart = std::move(chartLoadResult.chart);
+        
+        attachTextureLoaderWOSK(glCtx, chart, chartDir, loadedStoryboardTextures);
+
+        easy_phi::Data extraData;
+        if (easy_phi::Data::FromFile(&extraData, chartDir + "extra.json")) {
+            auto extraLoadResult = easy_phi::loadExtraFromJsonData(extraData, chart.storyboardAssets);
+            if (std::holds_alternative<easy_phi::PhiExtra>(extraLoadResult)) {
+                chart.extra = std::move(std::get<easy_phi::PhiExtra>(extraLoadResult));
+                std::cout << "loaded extra" << std::endl;
+            } else if (std::holds_alternative<std::string>(extraLoadResult)) {
+                std::cout << "failed to load extra: " << std::get<std::string>(extraLoadResult) << std::endl;
+            }
+        }
+
+        chart.storyboardAssets.shaderPreloader = [&](const std::string& name) {
+            std::cout << std::string(80, '-') << std::endl;
+            std::unordered_set<std::string> builtinShaders = {
+                "chromatic", "circleBlur", "fisheye",
+                "glitch", "grayscale", "noise",
+                "pixel", "radialBlur", "shockwave",
+                "trigrid", "vignette"
+            };
+
+            easy_phi::Data shaderText;
+            if (builtinShaders.contains(name)) {
+                shaderText = StaticResource::get(std::string("/shaders/") + name + ".glsl");
+            } else {
+                if (!easy_phi::Data::FromFile(&shaderText, std::filesystem::path(chartDir + "/" + name).lexically_normal().string())) {
+                    std::cout << "failed to read shader file: " << name << std::endl;
+                    return;
+                }
+            }
+        };
+
+        chart.init();
+        return std::nullopt;
+    }
+
+    void resetSurface() {
+        if (vsync) glfwSwapInterval(1);
+        else glfwSwapInterval(0);
+        calculateFrameConfig.screenSize = { (double)width, (double)height };
+    }
+    
+    struct MainloopConfig {
+        bool isRenderingVideo = false;
+        TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi = nullptr;
+    };
+
+    bool mainloopFrame(
+        double t,
+        const MainloopConfig& mainloopConfig
+    ) {
+        std::cout << "mainloopFrame" << std::endl;
+        double frameSt = globalTimer();
+        if (!mainloopConfig.isRenderingVideo && glfwWindowShouldClose(window)) {
+            glfwSetWindowShouldClose(window, GLFW_FALSE);
+            return false;
+        }
+
+        if (!mainloopConfig.isRenderingVideo) {
+            int32_t last_w = width, last_h = height;
+            glfwGetFramebufferSize(window, &width, &height);
+            if (width != last_w || height != last_h) resetSurface();
+        }
+
+        {
+            double st = globalTimer();
+            easy_phi::calculateFrame(chart, t, calculateFrameConfig, calculatedFrame);
+            double took = (globalTimer() - st) * 1000;
+            if (mainloopConfig.pccfi) mainloopConfig.pccfi->calculationTook = took;
+            std::cout << "calculateFrame took " << took << " ms" << std::endl;
+        }
+
+        double renderSt = globalTimer();
+
+        glCtx.setViewport(width, height);
+        glCtx.setClearColor(0.0f, 0.4f, 1.0f, 1.0f);
+        glCtx.clear(GL_COLOR_BUFFER_BIT);
+
+        if (!mainloopConfig.isRenderingVideo) {
+            playingHitsounds.erase(
+                std::remove_if(
+                    playingHitsounds.begin(), playingHitsounds.end(),
+                    [](ma_sound* sound) {
+                        return !ma_sound_is_playing(sound);
+                    }
+                ), playingHitsounds.end()
+            );
+
+            for (int i = std::max<int>(0, calculatedFrame.hitsounds.size() - hitsoundsBufferSize); i < calculatedFrame.hitsounds.size(); i++) {
+                auto& type = calculatedFrame.hitsounds[i].first;
+                
+                while (playingHitsounds.size() >= hitsoundsBufferSize) {
+                    ma_sound_stop(playingHitsounds.front());
+                    playingHitsounds.erase(playingHitsounds.begin());
+                }
+
+                for (auto* sound : noteHitsounds[type]) {
+                    if (std::find(playingHitsounds.begin(), playingHitsounds.end(), sound) == playingHitsounds.end()) {
+                        ma_sound_start(sound);
+                        ma_sound_seek_to_pcm_frame(sound, 0);
+                        playingHitsounds.push_back(sound);
+                    }
+                }
+            }
+        }
+
+        if (mainloopConfig.pccfi) {
+            mainloopConfig.pccfi->screenSize = { (double)width, (double)height };
+            mainloopConfig.pccfi->timeRange = calculatedFrame.frameTimeRange.toPair();
+            mainloopConfig.pccfi->renderTook = (globalTimer() - renderSt) * 1000;
+            // mainloopConfig.pccfi->hardwareUsage = TelemetryDeckClient::Performance::HardwareUsage::make(skGrCtx.get());
+        }
+
+        std::cout << "frame took (without glfw operation) " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
+
+        if (!mainloopConfig.isRenderingVideo) {
+            glCtx.flush();
+            glfwPollEvents();
+
+            if (vsync) {
+                double waitSt = globalTimer();
+                auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
+                volatile int* dummy = nullptr;
+                while ((globalTimer() - frameSt) < frameBusyWaitPercentage / vm->refreshRate) {
+                    dummy++;
+                }
+                std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+            }
+
+            double waitSt = globalTimer();
+            glfwSwapBuffers(window);
+            std::cout << "swap took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+        }
+
+        std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
+
+        {
+            size_t resourceBytes = 0;
+            // skGrCtx->getResourceCacheUsage(nullptr, &resourceBytes);
+            std::cout << "gpu resources size: " << easy_phi::formatToStdString("%.2f MB", resourceBytes / 1024.0 / 1024.0) << std::endl;
+        }
+
+        std::cout << std::string(80, '.') << std::endl;
+
+        return true;
+    }
+};
+
 struct Window {
     GLFWwindow* window;
     sk_sp<GrDirectContext> skGrCtx;
@@ -1110,18 +1459,25 @@ struct Window {
     bool hidden;
     double frameBusyWaitPercentage;
 
+    GL33Context glCtx;
+
     void init() {
         glfwInit();
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+
         auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
         int32_t width = vm->width * 0.6;
         int32_t height = vm->height * 0.6;
         window = glfwCreateWindow(width, height, "", nullptr, nullptr);
+
         glfwMakeContextCurrent(window);
-        gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+        glCtx = GL33Context::Make(MakeGL33CoreInterface(
+            [](const char* name) { return (void*)glfwGetProcAddress(name); }
+        ));
+
         skGrCtx = GrDirectContexts::MakeGL();
         skGrCtx->setResourceCacheLimit(std::numeric_limits<size_t>::max());
         skFbi.fFBOID = 0;

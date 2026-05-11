@@ -20,6 +20,7 @@
 #include <unordered_set>
 #include <string_view>
 #include <utility>
+#include <atomic>
 
 namespace easy_phi {
 
@@ -3809,7 +3810,7 @@ std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
     return infos;
 }
 
-struct GL {
+namespace GL {
     using GLboolean = unsigned char;
     using GLbitfield = unsigned int;
     using GLbyte = signed char;
@@ -3963,229 +3964,229 @@ struct GL {
         GLenum (*glClientWaitSync)(GLsync sync, GLbitfield flags, GLuint64 timeout);
     };
 
-    static constexpr GLenum GL_NO_ERROR = 0;
-    static constexpr GLenum GL_INVALID_ENUM = 0x0500;
-    static constexpr GLenum GL_INVALID_VALUE = 0x0501;
-    static constexpr GLenum GL_INVALID_OPERATION = 0x0502;
-    static constexpr GLenum GL_OUT_OF_MEMORY = 0x0505;
-    static constexpr GLenum GL_VENDOR = 0x1F00;
-    static constexpr GLenum GL_RENDERER = 0x1F01;
-    static constexpr GLenum GL_VERSION = 0x1F02;
-    static constexpr GLenum GL_EXTENSIONS = 0x1F03;
-    static constexpr GLenum GL_MAJOR_VERSION = 0x821B;
-    static constexpr GLenum GL_MINOR_VERSION = 0x821C;
-    static constexpr GLenum GL_MAX_TEXTURE_SIZE = 0x0D33;
-    static constexpr GLenum GL_MAX_VERTEX_ATTRIBS = 0x8869;
-    static constexpr GLenum GL_MAX_TEXTURE_IMAGE_UNITS = 0x8872;
-    static constexpr GLenum GL_MAX_DRAW_BUFFERS = 0x8824;
-    static constexpr GLenum GL_MAX_UNIFORM_BLOCK_SIZE = 0x8A30;
-    static constexpr GLenum GL_MAX_VERTEX_UNIFORM_BLOCKS = 0x8A2B;
-    static constexpr GLenum GL_MAX_FRAGMENT_UNIFORM_BLOCKS = 0x8A2D;
-    static constexpr GLenum GL_VIEWPORT = 0x0BA2;
-    static constexpr GLenum GL_SCISSOR_BOX = 0x0C10;
-    static constexpr GLenum GL_SCISSOR_TEST = 0x0C11;
-    static constexpr GLenum GL_BLEND = 0x0BE2;
-    static constexpr GLenum GL_DEPTH_TEST = 0x0B71;
-    static constexpr GLenum GL_STENCIL_TEST = 0x0B90;
-    static constexpr GLenum GL_CULL_FACE = 0x0B44;
-    static constexpr GLenum GL_DITHER = 0x0BD0;
-    static constexpr GLenum GL_COLOR_CLEAR_VALUE = 0x0C22;
-    static constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
-    static constexpr GLenum GL_PACK_ALIGNMENT = 0x0D05;
-    static constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
-    static constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
-    static constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
-    static constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
-    static constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
-    static constexpr GLenum GL_DEPTH_WRITEMASK = 0x0B72;
+    constexpr GLenum GL_NO_ERROR = 0;
+    constexpr GLenum GL_INVALID_ENUM = 0x0500;
+    constexpr GLenum GL_INVALID_VALUE = 0x0501;
+    constexpr GLenum GL_INVALID_OPERATION = 0x0502;
+    constexpr GLenum GL_OUT_OF_MEMORY = 0x0505;
+    constexpr GLenum GL_VENDOR = 0x1F00;
+    constexpr GLenum GL_RENDERER = 0x1F01;
+    constexpr GLenum GL_VERSION = 0x1F02;
+    constexpr GLenum GL_EXTENSIONS = 0x1F03;
+    constexpr GLenum GL_MAJOR_VERSION = 0x821B;
+    constexpr GLenum GL_MINOR_VERSION = 0x821C;
+    constexpr GLenum GL_MAX_TEXTURE_SIZE = 0x0D33;
+    constexpr GLenum GL_MAX_VERTEX_ATTRIBS = 0x8869;
+    constexpr GLenum GL_MAX_TEXTURE_IMAGE_UNITS = 0x8872;
+    constexpr GLenum GL_MAX_DRAW_BUFFERS = 0x8824;
+    constexpr GLenum GL_MAX_UNIFORM_BLOCK_SIZE = 0x8A30;
+    constexpr GLenum GL_MAX_VERTEX_UNIFORM_BLOCKS = 0x8A2B;
+    constexpr GLenum GL_MAX_FRAGMENT_UNIFORM_BLOCKS = 0x8A2D;
+    constexpr GLenum GL_VIEWPORT = 0x0BA2;
+    constexpr GLenum GL_SCISSOR_BOX = 0x0C10;
+    constexpr GLenum GL_SCISSOR_TEST = 0x0C11;
+    constexpr GLenum GL_BLEND = 0x0BE2;
+    constexpr GLenum GL_DEPTH_TEST = 0x0B71;
+    constexpr GLenum GL_STENCIL_TEST = 0x0B90;
+    constexpr GLenum GL_CULL_FACE = 0x0B44;
+    constexpr GLenum GL_DITHER = 0x0BD0;
+    constexpr GLenum GL_COLOR_CLEAR_VALUE = 0x0C22;
+    constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
+    constexpr GLenum GL_PACK_ALIGNMENT = 0x0D05;
+    constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
+    constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
+    constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
+    constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
+    constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
+    constexpr GLenum GL_DEPTH_WRITEMASK = 0x0B72;
 
-    static constexpr GLenum GL_ARRAY_BUFFER = 0x8892;
-    static constexpr GLenum GL_ELEMENT_ARRAY_BUFFER = 0x8893;
-    static constexpr GLenum GL_UNIFORM_BUFFER = 0x8A11;
-    static constexpr GLenum GL_PIXEL_PACK_BUFFER = 0x88EB;
-    static constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC;
+    constexpr GLenum GL_ARRAY_BUFFER = 0x8892;
+    constexpr GLenum GL_ELEMENT_ARRAY_BUFFER = 0x8893;
+    constexpr GLenum GL_UNIFORM_BUFFER = 0x8A11;
+    constexpr GLenum GL_PIXEL_PACK_BUFFER = 0x88EB;
+    constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC;
 
-    static constexpr GLenum GL_STREAM_DRAW = 0x88E0;
-    static constexpr GLenum GL_STREAM_READ = 0x88E1;
-    static constexpr GLenum GL_STREAM_COPY = 0x88E2;
-    static constexpr GLenum GL_STATIC_DRAW = 0x88E4;
-    static constexpr GLenum GL_STATIC_READ = 0x88E5;
-    static constexpr GLenum GL_STATIC_COPY = 0x88E6;
-    static constexpr GLenum GL_DYNAMIC_DRAW = 0x88E8;
-    static constexpr GLenum GL_DYNAMIC_READ = 0x88E9;
-    static constexpr GLenum GL_DYNAMIC_COPY = 0x88EA;
+    constexpr GLenum GL_STREAM_DRAW = 0x88E0;
+    constexpr GLenum GL_STREAM_READ = 0x88E1;
+    constexpr GLenum GL_STREAM_COPY = 0x88E2;
+    constexpr GLenum GL_STATIC_DRAW = 0x88E4;
+    constexpr GLenum GL_STATIC_READ = 0x88E5;
+    constexpr GLenum GL_STATIC_COPY = 0x88E6;
+    constexpr GLenum GL_DYNAMIC_DRAW = 0x88E8;
+    constexpr GLenum GL_DYNAMIC_READ = 0x88E9;
+    constexpr GLenum GL_DYNAMIC_COPY = 0x88EA;
 
-    static constexpr GLenum GL_READ_ONLY = 0x88B8;
-    static constexpr GLenum GL_WRITE_ONLY = 0x88B9;
-    static constexpr GLenum GL_READ_WRITE = 0x88BA;
+    constexpr GLenum GL_READ_ONLY = 0x88B8;
+    constexpr GLenum GL_WRITE_ONLY = 0x88B9;
+    constexpr GLenum GL_READ_WRITE = 0x88BA;
 
-    static constexpr GLenum GL_BYTE = 0x1400;
-    static constexpr GLenum GL_SHORT = 0x1402;
-    static constexpr GLenum GL_INT = 0x1404;
-    static constexpr GLenum GL_HALF_FLOAT = 0x140B;
-    static constexpr GLenum GL_FIXED = 0x140C;
-    static constexpr GLenum GL_DOUBLE = 0x140A;
+    constexpr GLenum GL_BYTE = 0x1400;
+    constexpr GLenum GL_SHORT = 0x1402;
+    constexpr GLenum GL_INT = 0x1404;
+    constexpr GLenum GL_HALF_FLOAT = 0x140B;
+    constexpr GLenum GL_FIXED = 0x140C;
+    constexpr GLenum GL_DOUBLE = 0x140A;
 
-    static constexpr GLenum GL_VERTEX_SHADER = 0x8B31;
-    static constexpr GLenum GL_FRAGMENT_SHADER = 0x8B30;
+    constexpr GLenum GL_VERTEX_SHADER = 0x8B31;
+    constexpr GLenum GL_FRAGMENT_SHADER = 0x8B30;
 
-    static constexpr GLenum GL_COMPILE_STATUS = 0x8B81;
-    static constexpr GLenum GL_LINK_STATUS = 0x8B82;
-    static constexpr GLenum GL_INFO_LOG_LENGTH = 0x8B84;
-    static constexpr GLenum GL_DELETE_STATUS = 0x8B80;
-    static constexpr GLenum GL_SHADER_TYPE = 0x8B4F;
+    constexpr GLenum GL_COMPILE_STATUS = 0x8B81;
+    constexpr GLenum GL_LINK_STATUS = 0x8B82;
+    constexpr GLenum GL_INFO_LOG_LENGTH = 0x8B84;
+    constexpr GLenum GL_DELETE_STATUS = 0x8B80;
+    constexpr GLenum GL_SHADER_TYPE = 0x8B4F;
 
-    static constexpr GLenum GL_ACTIVE_ATTRIBUTES = 0x8B89;
-    static constexpr GLenum GL_ACTIVE_UNIFORMS = 0x8B86;
-    static constexpr GLenum GL_ACTIVE_ATTRIBUTE_MAX_LENGTH = 0x8B8A;
-    static constexpr GLenum GL_ACTIVE_UNIFORM_MAX_LENGTH = 0x8B87;
+    constexpr GLenum GL_ACTIVE_ATTRIBUTES = 0x8B89;
+    constexpr GLenum GL_ACTIVE_UNIFORMS = 0x8B86;
+    constexpr GLenum GL_ACTIVE_ATTRIBUTE_MAX_LENGTH = 0x8B8A;
+    constexpr GLenum GL_ACTIVE_UNIFORM_MAX_LENGTH = 0x8B87;
 
-    static constexpr GLenum GL_TEXTURE_2D = 0x0DE1;
-    static constexpr GLenum GL_TEXTURE_CUBE_MAP = 0x8513;
-    static constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_X = 0x8515;
-    static constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_X = 0x8516;
-    static constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Y = 0x8517;
-    static constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Y = 0x8518;
-    static constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Z = 0x8519;
-    static constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x851A;
+    constexpr GLenum GL_TEXTURE_2D = 0x0DE1;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP = 0x8513;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_X = 0x8515;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_X = 0x8516;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Y = 0x8517;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Y = 0x8518;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Z = 0x8519;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x851A;
 
-    static constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
-    static constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
-    static constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
-    static constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
-    static constexpr GLenum GL_NEAREST = 0x2600;
-    static constexpr GLenum GL_LINEAR = 0x2601;
-    static constexpr GLenum GL_NEAREST_MIPMAP_NEAREST = 0x2700;
-    static constexpr GLenum GL_LINEAR_MIPMAP_NEAREST = 0x2701;
-    static constexpr GLenum GL_NEAREST_MIPMAP_LINEAR = 0x2702;
-    static constexpr GLenum GL_LINEAR_MIPMAP_LINEAR = 0x2703;
-    static constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
-    static constexpr GLenum GL_REPEAT = 0x2901;
-    static constexpr GLenum GL_MIRRORED_REPEAT = 0x8370;
+    constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
+    constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
+    constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
+    constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
+    constexpr GLenum GL_NEAREST = 0x2600;
+    constexpr GLenum GL_LINEAR = 0x2601;
+    constexpr GLenum GL_NEAREST_MIPMAP_NEAREST = 0x2700;
+    constexpr GLenum GL_LINEAR_MIPMAP_NEAREST = 0x2701;
+    constexpr GLenum GL_NEAREST_MIPMAP_LINEAR = 0x2702;
+    constexpr GLenum GL_LINEAR_MIPMAP_LINEAR = 0x2703;
+    constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
+    constexpr GLenum GL_REPEAT = 0x2901;
+    constexpr GLenum GL_MIRRORED_REPEAT = 0x8370;
 
-    static constexpr GLenum GL_TEXTURE0 = 0x84C0;
-    static constexpr GLenum GL_TEXTURE1 = 0x84C1;
-    static constexpr GLenum GL_TEXTURE2 = 0x84C2;
-    static constexpr GLenum GL_TEXTURE3 = 0x84C3;
-    static constexpr GLenum GL_TEXTURE4 = 0x84C4;
-    static constexpr GLenum GL_TEXTURE5 = 0x84C5;
-    static constexpr GLenum GL_TEXTURE6 = 0x84C6;
-    static constexpr GLenum GL_TEXTURE7 = 0x84C7;
+    constexpr GLenum GL_TEXTURE0 = 0x84C0;
+    constexpr GLenum GL_TEXTURE1 = 0x84C1;
+    constexpr GLenum GL_TEXTURE2 = 0x84C2;
+    constexpr GLenum GL_TEXTURE3 = 0x84C3;
+    constexpr GLenum GL_TEXTURE4 = 0x84C4;
+    constexpr GLenum GL_TEXTURE5 = 0x84C5;
+    constexpr GLenum GL_TEXTURE6 = 0x84C6;
+    constexpr GLenum GL_TEXTURE7 = 0x84C7;
 
-    static constexpr GLenum GL_RED = 0x1903;
-    static constexpr GLenum GL_RG = 0x8227;
-    static constexpr GLenum GL_RGB = 0x1907;
-    static constexpr GLenum GL_RGBA = 0x1908;
-    static constexpr GLenum GL_BGR = 0x80E0;
-    static constexpr GLenum GL_BGRA = 0x80E1;
-    static constexpr GLenum GL_R8 = 0x8229;
-    static constexpr GLenum GL_RG8 = 0x822B;
-    static constexpr GLenum GL_RGB8 = 0x8051;
-    static constexpr GLenum GL_RGBA8 = 0x8058;
-    static constexpr GLenum GL_R16F = 0x822D;
-    static constexpr GLenum GL_RG16F = 0x822F;
-    static constexpr GLenum GL_RGB16F = 0x881B;
-    static constexpr GLenum GL_RGBA16F = 0x881A;
-    static constexpr GLenum GL_R32F = 0x822E;
-    static constexpr GLenum GL_RG32F = 0x8230;
-    static constexpr GLenum GL_RGB32F = 0x8815;
-    static constexpr GLenum GL_RGBA32F = 0x8814;
-    static constexpr GLenum GL_RGB10_A2 = 0x8059;
-    static constexpr GLenum GL_DEPTH_COMPONENT = 0x1902;
-    static constexpr GLenum GL_DEPTH_COMPONENT16 = 0x81A5;
-    static constexpr GLenum GL_DEPTH_COMPONENT24 = 0x81A6;
-    static constexpr GLenum GL_DEPTH_COMPONENT32F = 0x8CAC;
-    static constexpr GLenum GL_DEPTH24_STENCIL8 = 0x88F0;
-    static constexpr GLenum GL_FLOAT = 0x1406;
-    static constexpr GLenum GL_UNSIGNED_INT_24_8 = 0x84FA;
+    constexpr GLenum GL_RED = 0x1903;
+    constexpr GLenum GL_RG = 0x8227;
+    constexpr GLenum GL_RGB = 0x1907;
+    constexpr GLenum GL_RGBA = 0x1908;
+    constexpr GLenum GL_BGR = 0x80E0;
+    constexpr GLenum GL_BGRA = 0x80E1;
+    constexpr GLenum GL_R8 = 0x8229;
+    constexpr GLenum GL_RG8 = 0x822B;
+    constexpr GLenum GL_RGB8 = 0x8051;
+    constexpr GLenum GL_RGBA8 = 0x8058;
+    constexpr GLenum GL_R16F = 0x822D;
+    constexpr GLenum GL_RG16F = 0x822F;
+    constexpr GLenum GL_RGB16F = 0x881B;
+    constexpr GLenum GL_RGBA16F = 0x881A;
+    constexpr GLenum GL_R32F = 0x822E;
+    constexpr GLenum GL_RG32F = 0x8230;
+    constexpr GLenum GL_RGB32F = 0x8815;
+    constexpr GLenum GL_RGBA32F = 0x8814;
+    constexpr GLenum GL_RGB10_A2 = 0x8059;
+    constexpr GLenum GL_DEPTH_COMPONENT = 0x1902;
+    constexpr GLenum GL_DEPTH_COMPONENT16 = 0x81A5;
+    constexpr GLenum GL_DEPTH_COMPONENT24 = 0x81A6;
+    constexpr GLenum GL_DEPTH_COMPONENT32F = 0x8CAC;
+    constexpr GLenum GL_DEPTH24_STENCIL8 = 0x88F0;
+    constexpr GLenum GL_FLOAT = 0x1406;
+    constexpr GLenum GL_UNSIGNED_INT_24_8 = 0x84FA;
 
-    static constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
-    static constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8;
-    static constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
-    static constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
-    static constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
-    static constexpr GLenum GL_COLOR_ATTACHMENT1 = 0x8CE1;
-    static constexpr GLenum GL_COLOR_ATTACHMENT2 = 0x8CE2;
-    static constexpr GLenum GL_COLOR_ATTACHMENT3 = 0x8CE3;
-    static constexpr GLenum GL_DEPTH_ATTACHMENT = 0x8D00;
-    static constexpr GLenum GL_STENCIL_ATTACHMENT = 0x8D20;
-    static constexpr GLenum GL_DEPTH_STENCIL_ATTACHMENT = 0x821A;
+    constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
+    constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8;
+    constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
+    constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
+    constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
+    constexpr GLenum GL_COLOR_ATTACHMENT1 = 0x8CE1;
+    constexpr GLenum GL_COLOR_ATTACHMENT2 = 0x8CE2;
+    constexpr GLenum GL_COLOR_ATTACHMENT3 = 0x8CE3;
+    constexpr GLenum GL_DEPTH_ATTACHMENT = 0x8D00;
+    constexpr GLenum GL_STENCIL_ATTACHMENT = 0x8D20;
+    constexpr GLenum GL_DEPTH_STENCIL_ATTACHMENT = 0x821A;
 
-    static constexpr GLenum GL_RENDERBUFFER = 0x8D41;
+    constexpr GLenum GL_RENDERBUFFER = 0x8D41;
 
-    static constexpr GLenum GL_POINTS = 0x0000;
-    static constexpr GLenum GL_LINES = 0x0001;
-    static constexpr GLenum GL_LINE_LOOP = 0x0002;
-    static constexpr GLenum GL_LINE_STRIP = 0x0003;
-    static constexpr GLenum GL_TRIANGLES = 0x0004;
-    static constexpr GLenum GL_TRIANGLE_STRIP = 0x0005;
-    static constexpr GLenum GL_TRIANGLE_FAN = 0x0006;
+    constexpr GLenum GL_POINTS = 0x0000;
+    constexpr GLenum GL_LINES = 0x0001;
+    constexpr GLenum GL_LINE_LOOP = 0x0002;
+    constexpr GLenum GL_LINE_STRIP = 0x0003;
+    constexpr GLenum GL_TRIANGLES = 0x0004;
+    constexpr GLenum GL_TRIANGLE_STRIP = 0x0005;
+    constexpr GLenum GL_TRIANGLE_FAN = 0x0006;
 
-    static constexpr GLenum GL_UNSIGNED_BYTE = 0x1401;
-    static constexpr GLenum GL_UNSIGNED_SHORT = 0x1403;
-    static constexpr GLenum GL_UNSIGNED_INT = 0x1405;
+    constexpr GLenum GL_UNSIGNED_BYTE = 0x1401;
+    constexpr GLenum GL_UNSIGNED_SHORT = 0x1403;
+    constexpr GLenum GL_UNSIGNED_INT = 0x1405;
 
-    static constexpr GLenum GL_COLOR_BUFFER_BIT = 0x00004000;
-    static constexpr GLenum GL_DEPTH_BUFFER_BIT = 0x00000100;
-    static constexpr GLenum GL_STENCIL_BUFFER_BIT = 0x00000400;
+    constexpr GLenum GL_COLOR_BUFFER_BIT = 0x00004000;
+    constexpr GLenum GL_DEPTH_BUFFER_BIT = 0x00000100;
+    constexpr GLenum GL_STENCIL_BUFFER_BIT = 0x00000400;
 
-    static constexpr GLenum GL_ZERO = 0;
-    static constexpr GLenum GL_ONE = 1;
-    static constexpr GLenum GL_SRC_COLOR = 0x0300;
-    static constexpr GLenum GL_ONE_MINUS_SRC_COLOR = 0x0301;
-    static constexpr GLenum GL_SRC_ALPHA = 0x0302;
-    static constexpr GLenum GL_ONE_MINUS_SRC_ALPHA = 0x0303;
-    static constexpr GLenum GL_DST_ALPHA = 0x0304;
-    static constexpr GLenum GL_ONE_MINUS_DST_ALPHA = 0x0305;
-    static constexpr GLenum GL_DST_COLOR = 0x0306;
-    static constexpr GLenum GL_ONE_MINUS_DST_COLOR = 0x0307;
+    constexpr GLenum GL_ZERO = 0;
+    constexpr GLenum GL_ONE = 1;
+    constexpr GLenum GL_SRC_COLOR = 0x0300;
+    constexpr GLenum GL_ONE_MINUS_SRC_COLOR = 0x0301;
+    constexpr GLenum GL_SRC_ALPHA = 0x0302;
+    constexpr GLenum GL_ONE_MINUS_SRC_ALPHA = 0x0303;
+    constexpr GLenum GL_DST_ALPHA = 0x0304;
+    constexpr GLenum GL_ONE_MINUS_DST_ALPHA = 0x0305;
+    constexpr GLenum GL_DST_COLOR = 0x0306;
+    constexpr GLenum GL_ONE_MINUS_DST_COLOR = 0x0307;
 
-    static constexpr GLenum GL_FUNC_ADD = 0x8006;
-    static constexpr GLenum GL_FUNC_SUBTRACT = 0x800A;
-    static constexpr GLenum GL_FUNC_REVERSE_SUBTRACT = 0x800B;
-    static constexpr GLenum GL_MIN = 0x8007;
-    static constexpr GLenum GL_MAX = 0x8008;
+    constexpr GLenum GL_FUNC_ADD = 0x8006;
+    constexpr GLenum GL_FUNC_SUBTRACT = 0x800A;
+    constexpr GLenum GL_FUNC_REVERSE_SUBTRACT = 0x800B;
+    constexpr GLenum GL_MIN = 0x8007;
+    constexpr GLenum GL_MAX = 0x8008;
 
-    static constexpr GLenum GL_NEVER = 0x0200;
-    static constexpr GLenum GL_LESS = 0x0201;
-    static constexpr GLenum GL_EQUAL = 0x0202;
-    static constexpr GLenum GL_LEQUAL = 0x0203;
-    static constexpr GLenum GL_GREATER = 0x0204;
-    static constexpr GLenum GL_NOTEQUAL = 0x0205;
-    static constexpr GLenum GL_GEQUAL = 0x0206;
-    static constexpr GLenum GL_ALWAYS = 0x0207;
+    constexpr GLenum GL_NEVER = 0x0200;
+    constexpr GLenum GL_LESS = 0x0201;
+    constexpr GLenum GL_EQUAL = 0x0202;
+    constexpr GLenum GL_LEQUAL = 0x0203;
+    constexpr GLenum GL_GREATER = 0x0204;
+    constexpr GLenum GL_NOTEQUAL = 0x0205;
+    constexpr GLenum GL_GEQUAL = 0x0206;
+    constexpr GLenum GL_ALWAYS = 0x0207;
 
-    static constexpr GLenum GL_KEEP = 0x1E00;
-    static constexpr GLenum GL_REPLACE = 0x1E01;
-    static constexpr GLenum GL_INCR = 0x1E02;
-    static constexpr GLenum GL_DECR = 0x1E03;
-    static constexpr GLenum GL_INVERT = 0x150A;
-    static constexpr GLenum GL_INCR_WRAP = 0x8507;
-    static constexpr GLenum GL_DECR_WRAP = 0x8508;
+    constexpr GLenum GL_KEEP = 0x1E00;
+    constexpr GLenum GL_REPLACE = 0x1E01;
+    constexpr GLenum GL_INCR = 0x1E02;
+    constexpr GLenum GL_DECR = 0x1E03;
+    constexpr GLenum GL_INVERT = 0x150A;
+    constexpr GLenum GL_INCR_WRAP = 0x8507;
+    constexpr GLenum GL_DECR_WRAP = 0x8508;
 
-    static constexpr GLenum GL_TIME_ELAPSED = 0x88BF;
-    static constexpr GLenum GL_QUERY_RESULT = 0x8866;
-    static constexpr GLenum GL_QUERY_RESULT_AVAILABLE = 0x8867;
+    constexpr GLenum GL_TIME_ELAPSED = 0x88BF;
+    constexpr GLenum GL_QUERY_RESULT = 0x8866;
+    constexpr GLenum GL_QUERY_RESULT_AVAILABLE = 0x8867;
 
-    static constexpr GLenum GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117;
-    static constexpr GLenum GL_ALREADY_SIGNALED = 0x911A;
-    static constexpr GLenum GL_TIMEOUT_EXPIRED = 0x911B;
-    static constexpr GLenum GL_CONDITION_SATISFIED = 0x911C;
-    static constexpr GLenum GL_WAIT_FAILED = 0x911D;
-    static constexpr GLenum GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001;
-    static constexpr GLuint64 GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFFull;
+    constexpr GLenum GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117;
+    constexpr GLenum GL_ALREADY_SIGNALED = 0x911A;
+    constexpr GLenum GL_TIMEOUT_EXPIRED = 0x911B;
+    constexpr GLenum GL_CONDITION_SATISFIED = 0x911C;
+    constexpr GLenum GL_WAIT_FAILED = 0x911D;
+    constexpr GLenum GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001;
+    constexpr GLuint64 GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFFull;
 
-    static constexpr GLint GL_TRUE = 1;
-    static constexpr GLint GL_FALSE = 0;
+    constexpr GLint GL_TRUE = 1;
+    constexpr GLint GL_FALSE = 0;
 
     using GLProcLoader = std::function<void*(const char*)>;
     static GL33CoreInterface MakeGL33CoreInterface(GLProcLoader loader) {
         GL33CoreInterface interface {};
 
         #define LOAD_AND_CHECK(proc) { \
-            auto ptr = loader("gl" #proc); \
+            auto ptr = loader(#proc); \
             if (!ptr) { \
-                throw std::runtime_error("failed to load gl" #proc); \
+                throw std::runtime_error("failed to load " #proc); \
             } \
             using F = decltype(interface.proc); \
             interface.proc = (F)ptr; \
@@ -5027,14 +5028,182 @@ struct GL {
         }
     };
 
-    struct GL33Context {
-        GL33Context(GL33CoreInterface& interface) : gl(interface) {}
-        GL33Context(const GL33Context&) = delete;
-        GL33Context& operator=(const GL33Context&) = delete;
-        GL33Context(GL33Context&&) = delete;
-        GL33Context& operator=(GL33Context&&) = delete;
+    template <typename T>
+    class gl_sp {
+        struct RefCnt {
+            T* ptr;
+            std::atomic<int> count{1};
+            
+            explicit RefCnt(T* p) : ptr(p) {}
+            void ref() { ++count; }
+            void unref() {
+                if (--count == 0) {
+                    delete ptr;
+                    delete this;
+                }
+            }
+        };
+        
+        RefCnt* fCtrl;
 
+        explicit gl_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
+
+    public:
+        using element_type = T;
+
+        constexpr gl_sp() noexcept : fCtrl(nullptr) {}
+        constexpr gl_sp(std::nullptr_t) noexcept : fCtrl(nullptr) {}
+        
+        explicit gl_sp(T* ptr) : fCtrl(ptr ? new RefCnt(ptr) : nullptr) {}
+
+        gl_sp(const gl_sp& o) noexcept : fCtrl(o.fCtrl) {
+            if (fCtrl) fCtrl->ref();
+        }
+        
+        gl_sp(gl_sp&& o) noexcept : fCtrl(o.fCtrl) {
+            o.fCtrl = nullptr;
+        }
+
+        template <typename U>
+        gl_sp(const gl_sp<U>& o) noexcept : fCtrl(o.fCtrl) {
+            if (fCtrl) fCtrl->ref();
+        }
+        
+        template <typename U>
+        gl_sp(gl_sp<U>&& o) noexcept : fCtrl(o.release_ctrl()) {}
+
+        ~gl_sp() { if (fCtrl) fCtrl->unref(); }
+
+        gl_sp& operator=(const gl_sp& o) noexcept {
+            if (o.fCtrl != fCtrl) {
+                if (o.fCtrl) o.fCtrl->ref();
+                auto* old = fCtrl;
+                fCtrl = o.fCtrl;
+                if (old) old->unref();
+            }
+            return *this;
+        }
+        
+        gl_sp& operator=(gl_sp&& o) noexcept {
+            if (o.fCtrl != fCtrl) {
+                auto* old = fCtrl;
+                fCtrl = o.fCtrl;
+                o.fCtrl = nullptr;
+                if (old) old->unref();
+            }
+            return *this;
+        }
+        
+        gl_sp& operator=(std::nullptr_t) noexcept {
+            reset();
+            return *this;
+        }
+
+        T& operator*() const { return *fCtrl->ptr; }
+        T* operator->() const { return fCtrl->ptr; }
+        T* get() const noexcept { return fCtrl ? fCtrl->ptr : nullptr; }
+        explicit operator bool() const noexcept { return fCtrl != nullptr; }
+
+        T* release() noexcept {
+            if (!fCtrl) return nullptr;
+            auto* p = fCtrl->ptr;
+            fCtrl->ptr = nullptr;
+            fCtrl->unref();
+            fCtrl = nullptr;
+            return p;
+        }
+        
+        void reset(T* ptr = nullptr) noexcept {
+            if (fCtrl && fCtrl->ptr == ptr) return;
+            auto* old = fCtrl;
+            fCtrl = ptr ? new RefCnt(ptr) : nullptr;
+            if (old) old->unref();
+        }
+        
+        void swap(gl_sp& o) noexcept {
+            std::swap(fCtrl, o.fCtrl);
+        }
+
+        template <typename U> friend class gl_sp;
+        auto* release_ctrl() noexcept {
+            auto* c = fCtrl;
+            fCtrl = nullptr;
+            return c;
+        }
+    };
+
+    template <typename T, typename U>
+    bool operator==(const gl_sp<T>& a, const gl_sp<U>& b) { return a.get() == b.get(); }
+    template <typename T>
+    bool operator==(const gl_sp<T>& a, std::nullptr_t) { return !a; }
+    template <typename T>
+    bool operator==(std::nullptr_t, const gl_sp<T>& a) { return !a; }
+
+    template <typename T, typename... Args>
+    gl_sp<T> gl_make_sp(Args&&... args) {
+        return gl_sp<T>(new T(std::forward<Args>(args)...));
+    }
+
+    static const char* defaultVertexShaderSource = R"(
+#version 330 core
+
+layout(location = 0) in vec2 inPosition;
+layout(location = 1) in vec2 inTexCoord;
+layout(location = 2) in vec4 inColor;
+
+out vec2 fragTexCoord;
+out vec4 fragColor;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+    fragTexCoord = inTexCoord;
+    fragColor = inColor;
+}
+)";
+
+    static const char* defaultFragmentShaderSource = R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+in vec4 fragColor;
+
+uniform sampler2D uTexture;
+uniform bool uHasTexture;
+
+out vec4 outColor;
+
+void main() {
+    vec4 texColor = uHasTexture ? texture(uTexture, fragTexCoord) : vec4(1.0);
+    outColor = texColor * fragColor;
+}
+)";
+
+    struct Vertex {
+        GLfloat x, y;
+        GLfloat u, v;
+        GLuint color;
+    };
+
+    struct Mesh {
+        std::vector<Vertex> vertices;
+        TextureInfo* texture;
+        ProgramInfo* program;
+        std::function<void(Mesh*)> uniformer;
+    };
+
+    struct MeshGroup {
+        std::vector<Mesh> meshes;
+    };
+
+    struct GL33Context {
         GL33CoreInterface gl;
+
+        static GL33Context Make(const GL33CoreInterface& interface) {
+            GL33Context ctx {};
+            ctx.gl = interface;
+            ctx.initDefaultResources();
+            return ctx;
+        }
 
         GLenum getError() const { return gl.glGetError(); }
         bool hasError() const { return getError() != GL_NO_ERROR; }
@@ -5061,49 +5230,49 @@ struct GL {
         const char* getString(GLenum pname) const { auto* res = (const char*)gl.glGetString(pname); return res ? res : ""; }
         const char* getStringi(GLenum pname, GLuint index) const { auto* res = (const char*)gl.glGetStringi(pname, index); return res ? res : ""; }
 
-        BufferInfo createBuffer(GLenum target = GL_ARRAY_BUFFER) {
-            BufferInfo info;
-            info.glRef = &gl;
-            info.target = target;
-            gl.glGenBuffers(1, &info.id);
-            return info;
+        gl_sp<BufferInfo> createBuffer(GLenum target = GL_ARRAY_BUFFER) {
+            auto* info = new BufferInfo();
+            info->glRef = &gl;
+            info->target = target;
+            gl.glGenBuffers(1, &info->id);
+            return gl_sp<BufferInfo>(info);
         }
 
-        VertexArrayInfo createVertexArray() {
-            VertexArrayInfo info;
-            info.glRef = &gl;
-            gl.glGenVertexArrays(1, &info.id);
-            return info;
+        gl_sp<VertexArrayInfo> createVertexArray() {
+            auto* info = new VertexArrayInfo();
+            info->glRef = &gl;
+            gl.glGenVertexArrays(1, &info->id);
+            return gl_sp<VertexArrayInfo>(info);
         }
 
-        ShaderInfo createShader(GLenum type) {
-            ShaderInfo info;
-            info.glRef = &gl;
-            info.type = type;
-            info.id = gl.glCreateShader(type);
-            return info;
+        gl_sp<ShaderInfo> createShader(GLenum type) {
+            auto* info = new ShaderInfo();
+            info->glRef = &gl;
+            info->type = type;
+            info->id = gl.glCreateShader(type);
+            return gl_sp<ShaderInfo>(info);
         }
 
-        ProgramInfo createProgram() {
-            ProgramInfo info;
-            info.glRef = &gl;
-            info.id = gl.glCreateProgram();
-            return info;
+        gl_sp<ProgramInfo> createProgram() {
+            auto* info = new ProgramInfo();
+            info->glRef = &gl;
+            info->id = gl.glCreateProgram();
+            return gl_sp<ProgramInfo>(info);
         }
 
-        TextureInfo createTexture(GLenum target = GL_TEXTURE_2D) {
-            TextureInfo info;
-            info.glRef = &gl;
-            info.target = target;
-            gl.glGenTextures(1, &info.id);
-            return info;
+        gl_sp<TextureInfo> createTexture(GLenum target = GL_TEXTURE_2D) {
+            auto* info = new TextureInfo();
+            info->glRef = &gl;
+            info->target = target;
+            gl.glGenTextures(1, &info->id);
+            return gl_sp<TextureInfo>(info);
         }
 
-        FramebufferInfo createFramebuffer() {
-            FramebufferInfo info;
-            info.glRef = &gl;
-            gl.glGenFramebuffers(1, &info.id);
-            return info;
+        gl_sp<FramebufferInfo> createFramebuffer() {
+            auto* info = new FramebufferInfo();
+            info->glRef = &gl;
+            gl.glGenFramebuffers(1, &info->id);
+            return gl_sp<FramebufferInfo>(info);
         }
 
         GLenum checkFramebufferStatus(GLenum target = GL_FRAMEBUFFER) const {
@@ -5114,11 +5283,11 @@ struct GL {
             return gl.glCheckFramebufferStatus(target) == GL_FRAMEBUFFER_COMPLETE;
         }
 
-        RenderbufferInfo createRenderbuffer() {
-            RenderbufferInfo info;
-            info.glRef = &gl;
-            gl.glGenRenderbuffers(1, &info.id);
-            return info;
+        gl_sp<RenderbufferInfo> createRenderbuffer() {
+            auto* info = new RenderbufferInfo();
+            info->glRef = &gl;
+            gl.glGenRenderbuffers(1, &info->id);
+            return gl_sp<RenderbufferInfo>(info);
         }
 
         void framebufferRenderbuffer(GLenum target, GLenum attachment, const RenderbufferInfo& renderbuffer) {
@@ -5156,18 +5325,46 @@ struct GL {
 
         void colorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a) { gl.glColorMask(r, g, b, a); }
 
-        QueryInfo createQuery() {
-            QueryInfo info;
-            info.glRef = &gl;
-            gl.glGenQueries(1, &info.id);
-            return info;
+        gl_sp<QueryInfo> createQuery() {
+            auto* info = new QueryInfo();
+            info->glRef = &gl;
+            gl.glGenQueries(1, &info->id);
+            return gl_sp<QueryInfo>(info);
         }
 
-        SyncInfo createSync(GLenum condition = GL_SYNC_GPU_COMMANDS_COMPLETE, GLbitfield flags = 0) {
-            SyncInfo info;
-            info.glRef = &gl;
-            info.sync = gl.glFenceSync(condition, flags);
-            return info;
+        gl_sp<SyncInfo> createSync(GLenum condition = GL_SYNC_GPU_COMMANDS_COMPLETE, GLbitfield flags = 0) {
+            auto* info = new SyncInfo();
+            info->glRef = &gl;
+            info->sync = gl.glFenceSync(condition, flags);
+            return gl_sp<SyncInfo>(info);
+        }
+
+        void drawMeshGroup(MeshGroup& meshGroup) {
+
+        }
+
+        private:
+        gl_sp<ProgramInfo> defaultProgram;
+        bool resourcesInitialized = false;
+
+        void initDefaultResources() {
+            if (resourcesInitialized) return;
+            resourcesInitialized = true;
+            
+            auto vert = createShader(GL_VERTEX_SHADER);
+            auto frag = createShader(GL_FRAGMENT_SHADER);
+
+            vert->source(defaultVertexShaderSource);
+            frag->source(defaultFragmentShaderSource);
+
+            std::string log;
+            if (!vert->compile(&log)) throw std::runtime_error("vertex compile: " + log);
+            if (!frag->compile(&log)) throw std::runtime_error("fragment compile: " + log);
+
+            defaultProgram = createProgram();
+            defaultProgram->attachShader(*vert);
+            defaultProgram->attachShader(*frag);
+            if (!defaultProgram->link(&log)) throw std::runtime_error("program link: " + log);
         }
     };
 };
