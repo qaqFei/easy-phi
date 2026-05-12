@@ -4326,6 +4326,213 @@ namespace GL {
         return interface;
     }
 
+    template <typename T>
+    class gl_sp {
+        struct RefCnt {
+            T* ptr;
+            std::atomic<int> count{1};
+            
+            explicit RefCnt(T* p) : ptr(p) {}
+            void ref() { ++count; }
+            void unref() {
+                if (--count == 0) {
+                    delete ptr;
+                    delete this;
+                }
+            }
+        };
+        
+        RefCnt* fCtrl;
+
+        explicit gl_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
+
+    public:
+        using element_type = T;
+
+        constexpr gl_sp() noexcept : fCtrl(nullptr) {}
+        constexpr gl_sp(std::nullptr_t) noexcept : fCtrl(nullptr) {}
+        
+        explicit gl_sp(T* ptr) : fCtrl(ptr ? new RefCnt(ptr) : nullptr) {}
+
+        gl_sp(const gl_sp& o) noexcept : fCtrl(o.fCtrl) {
+            if (fCtrl) fCtrl->ref();
+        }
+        
+        gl_sp(gl_sp&& o) noexcept : fCtrl(o.fCtrl) {
+            o.fCtrl = nullptr;
+        }
+
+        template <typename U>
+        gl_sp(const gl_sp<U>& o) noexcept : fCtrl(o.fCtrl) {
+            if (fCtrl) fCtrl->ref();
+        }
+        
+        template <typename U>
+        gl_sp(gl_sp<U>&& o) noexcept : fCtrl(o.release_ctrl()) {}
+
+        ~gl_sp() { if (fCtrl) fCtrl->unref(); }
+
+        gl_sp& operator=(const gl_sp& o) noexcept {
+            if (o.fCtrl != fCtrl) {
+                if (o.fCtrl) o.fCtrl->ref();
+                auto* old = fCtrl;
+                fCtrl = o.fCtrl;
+                if (old) old->unref();
+            }
+            return *this;
+        }
+        
+        gl_sp& operator=(gl_sp&& o) noexcept {
+            if (o.fCtrl != fCtrl) {
+                auto* old = fCtrl;
+                fCtrl = o.fCtrl;
+                o.fCtrl = nullptr;
+                if (old) old->unref();
+            }
+            return *this;
+        }
+        
+        gl_sp& operator=(std::nullptr_t) noexcept {
+            reset();
+            return *this;
+        }
+
+        T& operator*() const { return *fCtrl->ptr; }
+        T* operator->() const { return fCtrl->ptr; }
+        T* get() const noexcept { return fCtrl ? fCtrl->ptr : nullptr; }
+        explicit operator bool() const noexcept { return fCtrl != nullptr; }
+
+        T* release() noexcept {
+            if (!fCtrl) return nullptr;
+            auto* p = fCtrl->ptr;
+            fCtrl->ptr = nullptr;
+            fCtrl->unref();
+            fCtrl = nullptr;
+            return p;
+        }
+        
+        void reset(T* ptr = nullptr) noexcept {
+            if (fCtrl && fCtrl->ptr == ptr) return;
+            auto* old = fCtrl;
+            fCtrl = ptr ? new RefCnt(ptr) : nullptr;
+            if (old) old->unref();
+        }
+        
+        void swap(gl_sp& o) noexcept {
+            std::swap(fCtrl, o.fCtrl);
+        }
+
+        template <typename U> friend class gl_sp;
+        auto* release_ctrl() noexcept {
+            auto* c = fCtrl;
+            fCtrl = nullptr;
+            return c;
+        }
+    };
+    
+    struct GLvec2 {
+        GLfloat x, y;
+        
+        GLvec2() : x(0), y(0) {}
+        template <typename A, typename B> constexpr GLvec2(A a, B b) : x((GLfloat)a), y((GLfloat)b) {}
+
+        GLvec2 operator+(const GLvec2& o) const { return {x + o.x, y + o.y}; }
+        GLvec2 operator-(const GLvec2& o) const { return {x - o.x, y - o.y}; }
+        GLvec2 operator*(const GLvec2& o) const { return {x * o.x, y * o.y}; }
+        GLvec2 operator/(const GLvec2& o) const { return {x / o.x, y / o.y}; }
+        GLvec2 operator+(GLfloat o) const { return {x + o, y + o}; }
+        GLvec2 operator-(GLfloat o) const { return {x - o, y - o}; }
+        GLvec2 operator*(GLfloat o) const { return {x * o, y * o}; }
+        GLvec2 operator/(GLfloat o) const { return {x / o, y / o}; }
+        GLvec2& operator+=(const GLvec2& o) { x += o.x; y += o.y; return *this; }
+        GLvec2& operator-=(const GLvec2& o) { x -= o.x; y -= o.y; return *this; }
+        GLvec2& operator*=(const GLvec2& o) { x *= o.x; y *= o.y; return *this; }
+        GLvec2& operator/=(const GLvec2& o) { x /= o.x; y /= o.y; return *this; }
+        GLvec2& operator+=(GLfloat o) { x += o; y += o; return *this; }
+        GLvec2& operator-=(GLfloat o) { x -= o; y -= o; return *this; }
+        GLvec2& operator*=(GLfloat o) { x *= o; y *= o; return *this; }
+        GLvec2& operator/=(GLfloat o) { x /= o; y /= o; return *this; }
+    };
+    static_assert(offsetof(GLvec2, x) == 0, "GLvec2.x must be at offset 0");
+    static_assert(offsetof(GLvec2, y) == sizeof(GLfloat), "GLvec2.y must be at offset 1");
+
+    struct GLvec3 {
+        GLfloat x, y, z;
+        
+        GLvec3() : x(0), y(0), z(0) {}
+        template <typename A, typename B, typename C> constexpr GLvec3(A a, B b, C c) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c) {}
+
+        GLvec3 operator+(const GLvec3& o) const { return {x + o.x, y + o.y, z + o.z}; }
+        GLvec3 operator-(const GLvec3& o) const { return {x - o.x, y - o.y, z - o.z}; }
+        GLvec3 operator*(const GLvec3& o) const { return {x * o.x, y * o.y, z * o.z}; }
+        GLvec3 operator/(const GLvec3& o) const { return {x / o.x, y / o.y, z / o.z}; }
+        GLvec3 operator+(GLfloat o) const { return {x + o, y + o, z + o}; }
+        GLvec3 operator-(GLfloat o) const { return {x - o, y - o, z - o}; }
+        GLvec3 operator*(GLfloat o) const { return {x * o, y * o, z * o}; }
+        GLvec3 operator/(GLfloat o) const { return {x / o, y / o, z / o}; }
+        GLvec3& operator+=(const GLvec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
+        GLvec3& operator-=(const GLvec3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
+        GLvec3& operator*=(const GLvec3& o) { x *= o.x; y *= o.y; z *= o.z; return *this; }
+        GLvec3& operator/=(const GLvec3& o) { x /= o.x; y /= o.y; z /= o.z; return *this; }
+        GLvec3& operator+=(GLfloat o) { x += o; y += o; z += o; return *this; }
+        GLvec3& operator-=(GLfloat o) { x -= o; y -= o; z -= o; return *this; }
+        GLvec3& operator*=(GLfloat o) { x *= o; y *= o; z *= o; return *this; }
+        GLvec3& operator/=(GLfloat o) { x /= o; y /= o; z /= o; return *this; }
+    };
+    static_assert(offsetof(GLvec3, x) == 0, "GLvec3.x must be at offset 0");
+    static_assert(offsetof(GLvec3, y) == sizeof(GLfloat), "GLvec3.y must be at offset 1");
+    static_assert(offsetof(GLvec3, z) == sizeof(GLfloat) * 2, "GLvec3.z must be at offset 2");
+
+    struct GLvec4 {
+        GLfloat x, y, z, w;
+        
+        GLvec4() : x(0), y(0), z(0), w(0) {}
+        template <typename A, typename B, typename C, typename D> constexpr GLvec4(A a, B b, C c, D d) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c), w((GLfloat)d) {}
+
+        GLvec4 operator+(const GLvec4& o) const { return {x + o.x, y + o.y, z + o.z, w + o.w}; }
+        GLvec4 operator-(const GLvec4& o) const { return {x - o.x, y - o.y, z - o.z, w - o.w}; }
+        GLvec4 operator*(const GLvec4& o) const { return {x * o.x, y * o.y, z * o.z, w * o.w}; }
+        GLvec4 operator/(const GLvec4& o) const { return {x / o.x, y / o.y, z / o.z, w / o.w}; }
+        GLvec4 operator+(GLfloat o) const { return {x + o, y + o, z + o, w + o}; }
+        GLvec4 operator-(GLfloat o) const { return {x - o, y - o, z - o, w - o}; }
+        GLvec4 operator*(GLfloat o) const { return {x * o, y * o, z * o, w * o}; }
+        GLvec4 operator/(GLfloat o) const { return {x / o, y / o, z / o, w / o}; }
+        GLvec4& operator+=(const GLvec4& o) { x += o.x; y += o.y; z += o.z; w += o.w; return *this; }
+        GLvec4& operator-=(const GLvec4& o) { x -= o.x; y -= o.y; z -= o.z; w -= o.w; return *this; }
+        GLvec4& operator*=(const GLvec4& o) { x *= o.x; y *= o.y; z *= o.z; w *= o.w; return *this; }
+        GLvec4& operator/=(const GLvec4& o) { x /= o.x; y /= o.y; z /= o.z; w /= o.w; return *this; }
+        GLvec4& operator+=(GLfloat o) { x += o; y += o; z += o; w += o; return *this; }
+        GLvec4& operator-=(GLfloat o) { x -= o; y -= o; z -= o; w -= o; return *this; }
+        GLvec4& operator*=(GLfloat o) { x *= o; y *= o; z *= o; w *= o; return *this; }
+        GLvec4& operator/=(GLfloat o) { x /= o; y /= o; z /= o; w /= o; return *this; }
+    };
+    static_assert(offsetof(GLvec4, x) == 0, "GLvec4.x must be at offset 0");
+    static_assert(offsetof(GLvec4, y) == sizeof(GLfloat), "GLvec4.y must be at offset 1");
+    static_assert(offsetof(GLvec4, z) == sizeof(GLfloat) * 2, "GLvec4.z must be at offset 2");
+    static_assert(offsetof(GLvec4, w) == sizeof(GLfloat) * 3, "GLvec4.w must be at offset 3");
+
+    struct Vertex {
+        GLvec2 position;
+        GLvec2 texCoord;
+    };
+
+    struct BufferInfo;
+    struct VertexArrayInfo;
+    struct ShaderInfo;
+    struct ProgramInfo;
+    struct TextureInfo;
+    struct FramebufferInfo;
+    struct RenderbufferInfo;
+    struct QueryInfo;
+    struct SyncInfo;
+
+    struct Mesh {
+        std::vector<Vertex> vertices;
+        GLvec4 color;
+        TextureInfo* texture;
+        ProgramInfo* program;
+    };
+
     struct BufferInfo {
         BufferInfo() = default;
         BufferInfo(const BufferInfo&) = delete;
@@ -4480,15 +4687,15 @@ namespace GL {
             void enable(GLuint index) { ref->glRef->glEnableVertexAttribArray(index); }
             void disable(GLuint index) { ref->glRef->glDisableVertexAttribArray(index); }
 
-            void attribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer) {
+            void pointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer) {
                 ref->glRef->glVertexAttribPointer(index, size, type, normalized, stride, pointer);
             }
 
-            void attribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer) {
+            void iPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer) {
                 ref->glRef->glVertexAttribIPointer(index, size, type, stride, pointer);
             }
 
-            void attribDivisor(GLuint index, GLuint divisor) {
+            void divisor(GLuint index, GLuint divisor) {
                 ref->glRef->glVertexAttribDivisor(index, divisor);
             }
 
@@ -4613,6 +4820,12 @@ namespace GL {
 
         GLuint id;
 
+        gl_sp<VertexArrayInfo> vao;
+        gl_sp<BufferInfo> vbo;
+
+        using BufferFillerFunc = std::function<void(ProgramInfo*, std::vector<Vertex>*)>;
+        BufferFillerFunc bufferFiller;
+
         void attachShader(const ShaderInfo& shader) {
             glRef->glAttachShader(id, shader.id);
         }
@@ -4674,6 +4887,10 @@ namespace GL {
             void set(const std::array<GLfloat, 3>& value) { set(value[0], value[1], value[2]); }
             void set(const std::array<GLfloat, 4>& value) { set(value[0], value[1], value[2], value[3]); }
 
+            void set(const GLvec2& value) { set(value.x, value.y); }
+            void set(const GLvec3& value) { set(value.x, value.y, value.z); }
+            void set(const GLvec4& value) { set(value.x, value.y, value.z, value.w); }
+
             void set1fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform1fv(location, count, value); }
             void set2fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform2fv(location, count, value); }
             void set3fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform3fv(location, count, value); }
@@ -4689,18 +4906,27 @@ namespace GL {
             void setMatrix4fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix4fv(location, count, transpose, value); }
         };
 
+        GLint getAttribLocationPosition(const std::string& name) { return glRef->glGetAttribLocation(id, (GLchar*)name.c_str()); }
+        GLint getUniformLocationPosition(const std::string& name) { return glRef->glGetUniformLocation(id, (GLchar*)name.c_str()); }
+
         Location getAttribLocation(const std::string& name) {
             Location result;
             result.ref = this;
-            result.location = glRef->glGetAttribLocation(id, (GLchar*)name.c_str());
+            result.location = getAttribLocationPosition(name);
             return result;
         }
 
         Location getUniformLocation(const std::string& name) {
             Location result;
             result.ref = this;
-            result.location = glRef->glGetUniformLocation(id, (GLchar*)name.c_str());
+            result.location = getUniformLocationPosition(name);
             return result;
+        }
+
+        void setVertices(std::vector<Vertex>& vertices) {
+            if (!vao || !vbo) return;
+            if (!bufferFiller) return;
+            bufferFiller(this, &vertices);
         }
 
         ~ProgramInfo() {
@@ -5028,110 +5254,6 @@ namespace GL {
         }
     };
 
-    template <typename T>
-    class gl_sp {
-        struct RefCnt {
-            T* ptr;
-            std::atomic<int> count{1};
-            
-            explicit RefCnt(T* p) : ptr(p) {}
-            void ref() { ++count; }
-            void unref() {
-                if (--count == 0) {
-                    delete ptr;
-                    delete this;
-                }
-            }
-        };
-        
-        RefCnt* fCtrl;
-
-        explicit gl_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
-
-    public:
-        using element_type = T;
-
-        constexpr gl_sp() noexcept : fCtrl(nullptr) {}
-        constexpr gl_sp(std::nullptr_t) noexcept : fCtrl(nullptr) {}
-        
-        explicit gl_sp(T* ptr) : fCtrl(ptr ? new RefCnt(ptr) : nullptr) {}
-
-        gl_sp(const gl_sp& o) noexcept : fCtrl(o.fCtrl) {
-            if (fCtrl) fCtrl->ref();
-        }
-        
-        gl_sp(gl_sp&& o) noexcept : fCtrl(o.fCtrl) {
-            o.fCtrl = nullptr;
-        }
-
-        template <typename U>
-        gl_sp(const gl_sp<U>& o) noexcept : fCtrl(o.fCtrl) {
-            if (fCtrl) fCtrl->ref();
-        }
-        
-        template <typename U>
-        gl_sp(gl_sp<U>&& o) noexcept : fCtrl(o.release_ctrl()) {}
-
-        ~gl_sp() { if (fCtrl) fCtrl->unref(); }
-
-        gl_sp& operator=(const gl_sp& o) noexcept {
-            if (o.fCtrl != fCtrl) {
-                if (o.fCtrl) o.fCtrl->ref();
-                auto* old = fCtrl;
-                fCtrl = o.fCtrl;
-                if (old) old->unref();
-            }
-            return *this;
-        }
-        
-        gl_sp& operator=(gl_sp&& o) noexcept {
-            if (o.fCtrl != fCtrl) {
-                auto* old = fCtrl;
-                fCtrl = o.fCtrl;
-                o.fCtrl = nullptr;
-                if (old) old->unref();
-            }
-            return *this;
-        }
-        
-        gl_sp& operator=(std::nullptr_t) noexcept {
-            reset();
-            return *this;
-        }
-
-        T& operator*() const { return *fCtrl->ptr; }
-        T* operator->() const { return fCtrl->ptr; }
-        T* get() const noexcept { return fCtrl ? fCtrl->ptr : nullptr; }
-        explicit operator bool() const noexcept { return fCtrl != nullptr; }
-
-        T* release() noexcept {
-            if (!fCtrl) return nullptr;
-            auto* p = fCtrl->ptr;
-            fCtrl->ptr = nullptr;
-            fCtrl->unref();
-            fCtrl = nullptr;
-            return p;
-        }
-        
-        void reset(T* ptr = nullptr) noexcept {
-            if (fCtrl && fCtrl->ptr == ptr) return;
-            auto* old = fCtrl;
-            fCtrl = ptr ? new RefCnt(ptr) : nullptr;
-            if (old) old->unref();
-        }
-        
-        void swap(gl_sp& o) noexcept {
-            std::swap(fCtrl, o.fCtrl);
-        }
-
-        template <typename U> friend class gl_sp;
-        auto* release_ctrl() noexcept {
-            auto* c = fCtrl;
-            fCtrl = nullptr;
-            return c;
-        }
-    };
-
     template <typename T, typename U>
     bool operator==(const gl_sp<T>& a, const gl_sp<U>& b) { return a.get() == b.get(); }
     template <typename T>
@@ -5147,17 +5269,14 @@ namespace GL {
     static const char* defaultVertexShaderSource = R"(
 #version 330 core
 
-layout(location = 0) in vec2 inPosition;
-layout(location = 1) in vec2 inTexCoord;
-layout(location = 2) in vec4 inColor;
+in vec2 inPosition;
+in vec2 inTexCoord;
 
 out vec2 fragTexCoord;
-out vec4 fragColor;
 
 void main() {
     gl_Position = vec4(inPosition, 0.0, 1.0);
     fragTexCoord = inTexCoord;
-    fragColor = inColor;
 }
 )";
 
@@ -5165,8 +5284,8 @@ void main() {
 #version 330 core
 
 in vec2 fragTexCoord;
-in vec4 fragColor;
 
+uniform vec4 uColor;
 uniform sampler2D uTexture;
 uniform bool uHasTexture;
 
@@ -5174,35 +5293,24 @@ out vec4 outColor;
 
 void main() {
     vec4 texColor = uHasTexture ? texture(uTexture, fragTexCoord) : vec4(1.0);
-    outColor = texColor * fragColor;
+    outColor = texColor * uColor;
 }
 )";
 
-    struct Vertex {
-        GLfloat x, y;
-        GLfloat u, v;
-        GLuint color;
-    };
-
-    struct Mesh {
-        std::vector<Vertex> vertices;
-        TextureInfo* texture;
-        ProgramInfo* program;
-        std::function<void(Mesh*)> uniformer;
-    };
-
-    struct MeshGroup {
-        std::vector<Mesh> meshes;
-    };
-
     struct GL33Context {
+        GL33Context() = default;
+        GL33Context(const GL33Context&) = delete;
+        GL33Context& operator=(const GL33Context&) = delete;
+        GL33Context(GL33Context&&) = delete;
+        GL33Context& operator=(GL33Context&&) = delete;
+
         GL33CoreInterface gl;
 
-        static GL33Context Make(const GL33CoreInterface& interface) {
-            GL33Context ctx {};
-            ctx.gl = interface;
-            ctx.initDefaultResources();
-            return ctx;
+        static gl_sp<GL33Context> Make(const GL33CoreInterface& interface) {
+            auto* ctx = new GL33Context();
+            ctx->gl = interface;
+            ctx->initDefaultResources();
+            return gl_sp<GL33Context>(ctx);
         }
 
         GLenum getError() const { return gl.glGetError(); }
@@ -5339,8 +5447,27 @@ void main() {
             return gl_sp<SyncInfo>(info);
         }
 
-        void drawMeshGroup(MeshGroup& meshGroup) {
+        void drawMesh(Mesh& mesh) {
+            auto* prog = mesh.program ? mesh.program : defaultProgram.get();
+            prog->setVertices(mesh.vertices);
 
+            if (!prog->vao) return;
+
+            prog->getUniformLocation("uColor").set(mesh.color);
+            prog->getUniformLocation("uTexture").set((GLint)(mesh.texture ? mesh.texture->id : 0));
+            prog->getUniformLocation("uHasTexture").set(mesh.texture != nullptr);
+
+            auto vaoGuard = prog->vao->use();
+            gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.size());
+        }
+
+        struct Canvas;
+        Canvas getCanvas();
+
+        GLvec4 getViewport() const {
+            GLint vp[4];
+            gl.glGetIntegerv(GL_VIEWPORT, vp);
+            return GLvec4(vp[0], vp[1], vp[2], vp[3]);
         }
 
         private:
@@ -5365,8 +5492,83 @@ void main() {
             defaultProgram->attachShader(*vert);
             defaultProgram->attachShader(*frag);
             if (!defaultProgram->link(&log)) throw std::runtime_error("program link: " + log);
+
+            defaultProgram->vbo = createBuffer();
+            defaultProgram->bufferFiller = [](ProgramInfo* prog, std::vector<Vertex>* vertices) {
+                auto vaoGuard = prog->vao->use();
+                auto vboGuard = prog->vbo->use();
+                vboGuard.data(
+                    vertices->size() * sizeof(Vertex),
+                    vertices->data(),
+                    GL_DYNAMIC_DRAW
+                );
+            };
+
+            defaultProgram->vao = createVertexArray();
+
+            {
+                auto vaoGuard = defaultProgram->vao->use();
+                auto vboGuard = defaultProgram->vbo->use();
+                auto inPosition = defaultProgram->getAttribLocationPosition("inPosition");
+                auto inTexCoord = defaultProgram->getAttribLocationPosition("inTexCoord");
+                vaoGuard.enable(inPosition);
+                vaoGuard.enable(inTexCoord);
+                vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
+                vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
+            }
         }
     };
+
+    struct GL33Context::Canvas {
+        Transform2D transform;
+        GL33Context* glCtx;
+
+        GLvec2 toNDC(const GLvec2& pos) {
+            auto vp = glCtx->getViewport();
+            return {
+                (pos.x - vp.x) / vp.z * 2.0 - 1.0,
+                -((pos.y - vp.y) / vp.w * 2.0 - 1.0)
+            };
+        }
+
+        GLvec2 transformPoint(const GLvec2& pos) {
+            auto p = transform.transformPoint(pos.x, pos.y);
+            return { p.x, p.y };
+        }
+
+        void normVertices(std::vector<Vertex>& vertices) {
+            for (auto& v : vertices) {
+                v.position = toNDC(transformPoint(v.position));
+            }
+        }
+
+        struct DrawRectConfig {
+            GLvec2 position, size;
+            GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
+        };
+        void drawRect(const DrawRectConfig& config) {
+            Mesh mesh {};
+            mesh.color = config.color;
+            mesh.vertices = {
+                { config.position, { 0.0, 0.0 } },
+                { config.position + GLvec2 { config.size.x, 0.0 }, { 1.0, 0.0 } },
+                { config.position + GLvec2 { config.size.x, config.size.y }, { 1.0, 1.0 } },
+
+                { config.position, { 0.0, 0.0 } },
+                { config.position + GLvec2 { 0.0, config.size.y }, { 0.0, 1.0 } },
+                { config.position + GLvec2 { config.size.x, config.size.y }, { 1.0, 1.0 } },
+            };
+
+            normVertices(mesh.vertices);
+            glCtx->drawMesh(mesh);
+        }
+    };
+
+    GL33Context::Canvas GL33Context::getCanvas() {
+        return Canvas {
+            .glCtx = this
+        };
+    }
 };
 
 struct PhiLineAttachUIData {

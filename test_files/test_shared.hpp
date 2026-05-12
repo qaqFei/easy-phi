@@ -340,14 +340,13 @@ void attachTextureLoader(
 
 using StoryboardTexturesWOSKType = std::unordered_map<easy_phi::ep_u64, gl_sp<TextureInfo>>;
 void attachTextureLoaderWOSK(
-    GL33Context& glCtx,
+    gl_sp<GL33Context>& glCtx,
     easy_phi::PhiChart& chart,
     const std::string& assetsPath,
     StoryboardTexturesWOSKType& loadedStoryboardTextures
 ) {
     static easy_phi::ep_u64 currentStoryboardTextureId = 0;
     StoryboardTexturesWOSKType* loadedStoryboardTexturesPtr = &loadedStoryboardTextures;
-    GL33Context* glCtxPtr = &glCtx;
 
     easy_phi::StoryboardHelpers::attachTextureLoader(
         chart.storyboardAssets,
@@ -359,7 +358,7 @@ void attachTextureLoaderWOSK(
             if (!image) return std::nullopt;
 
             easy_phi::ep_u64 id = currentStoryboardTextureId++;
-            (*loadedStoryboardTexturesPtr)[id] = glCtxPtr->createTexture();
+            (*loadedStoryboardTexturesPtr)[id] = glCtx->createTexture();
             skImageToWOSK((*loadedStoryboardTexturesPtr)[id], image);
             return std::make_pair(id, easy_phi::Vec2 { (double)image->width(), (double)image->height() });
         },
@@ -404,7 +403,7 @@ NoteImagesType loadNoteImages(easy_phi::CalculateFrameConfig& config) {
 }
 
 using NoteImagesWOSKType = std::unordered_map<easy_phi::EnumPhiNoteType, std::pair<gl_sp<TextureInfo>, gl_sp<TextureInfo>>>;
-NoteImagesWOSKType loadNoteImagesWOSK(GL33Context& glCtx, easy_phi::CalculateFrameConfig& config) {
+NoteImagesWOSKType loadNoteImagesWOSK(gl_sp<GL33Context>& glCtx, easy_phi::CalculateFrameConfig& config) {
     NoteImagesWOSKType noteImages;
 
     const double nonHoldCP = 0.499;
@@ -420,7 +419,7 @@ NoteImagesWOSKType loadNoteImagesWOSK(GL33Context& glCtx, easy_phi::CalculateFra
         auto sk_single_img = loadImage(single_data);
         auto sk_simul_img = loadImage(simul_data);
 
-        noteImages[type] = { glCtx.createTexture(), glCtx.createTexture() };
+        noteImages[type] = { glCtx->createTexture(), glCtx->createTexture() };
         auto& single = noteImages[type].first;
         auto& simul = noteImages[type].second;
         skImageToWOSK(single, sk_single_img);
@@ -476,11 +475,11 @@ HitEffectImagesType loadHitEffectImages() {
 }
 
 using HitEffectImagesWOSKType = std::vector<gl_sp<TextureInfo>>;
-HitEffectImagesWOSKType loadHitEffectImagesWOSK(GL33Context& glCtx) {
+HitEffectImagesWOSKType loadHitEffectImagesWOSK(gl_sp<GL33Context>& glCtx) {
     HitEffectImagesWOSKType hitEffectImages;
     for (int i = 0; i < 60; i++) {
         auto data = StaticResource::get(std::string("/") + "hit_fx_" + std::to_string(i + 1) + ".png");
-        hitEffectImages.push_back(glCtx.createTexture());
+        hitEffectImages.push_back(glCtx->createTexture());
         skImageToWOSK(hitEffectImages.back(), loadImage(data));
     }
     return hitEffectImages;
@@ -1210,7 +1209,7 @@ struct WindowWOSkia {
     bool hidden;
     double frameBusyWaitPercentage;
 
-    GL33Context glCtx;
+    gl_sp<GL33Context> glCtx;
 
     void init() {
         glfwInit();
@@ -1355,9 +1354,17 @@ struct WindowWOSkia {
 
         double renderSt = globalTimer();
 
-        glCtx.setViewport(width, height);
-        glCtx.setClearColor(0.0f, 0.4f, 1.0f, 1.0f);
-        glCtx.clear(GL_COLOR_BUFFER_BIT);
+        glCtx->setViewport(width, height);
+        glCtx->setClearColor(0.0f, 0.4f, 1.0f, 1.0f);
+        glCtx->clear(GL_COLOR_BUFFER_BIT);
+
+        auto canvas = glCtx->getCanvas();
+        auto p = std::fmod(t, 1.0) * 0.5;
+        canvas.drawRect({
+            .position = { 0.0, 0.0 },
+            .size = { width * p, height * p },
+            .color = { 1.0, 1.0, 1.0, 1.0 }
+        });
 
         if (!mainloopConfig.isRenderingVideo) {
             playingHitsounds.erase(
@@ -1397,7 +1404,7 @@ struct WindowWOSkia {
         std::cout << "frame took (without glfw operation) " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
 
         if (!mainloopConfig.isRenderingVideo) {
-            glCtx.flush();
+            glCtx->flush();
             glfwPollEvents();
 
             if (vsync) {
@@ -1459,7 +1466,7 @@ struct Window {
     bool hidden;
     double frameBusyWaitPercentage;
 
-    GL33Context glCtx;
+    gl_sp<GL33Context> glCtx;
 
     void init() {
         glfwInit();
