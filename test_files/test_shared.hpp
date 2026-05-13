@@ -1235,8 +1235,8 @@ struct WindowWOSkia {
         ma_engine_init(NULL, &maeng);
 
         noteHitsounds = loadNoteHitsounds(maeng);
-        noteImages = std::move(loadNoteImagesWOSK(glCtx, calculateFrameConfig));
-        hitEffectImages = std::move(loadHitEffectImagesWOSK(glCtx));
+        noteImages = loadNoteImagesWOSK(glCtx, calculateFrameConfig);
+        hitEffectImages = loadHitEffectImagesWOSK(glCtx);
 
         globalScale = 1.0;
         frameBusyWaitPercentage = 0.8;
@@ -1363,7 +1363,7 @@ struct WindowWOSkia {
         canvas.drawRect({
             .position = { 0.0, 0.0 },
             .size = { width * p, height * p },
-            .color = { 1.0, 1.0, 1.0, 1.0 }
+            .texture = hitEffectImages[0].get()
         });
 
         if (!mainloopConfig.isRenderingVideo) {

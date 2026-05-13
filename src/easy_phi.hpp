@@ -4065,13 +4065,6 @@ namespace GL {
     constexpr GLenum GL_MIRRORED_REPEAT = 0x8370;
 
     constexpr GLenum GL_TEXTURE0 = 0x84C0;
-    constexpr GLenum GL_TEXTURE1 = 0x84C1;
-    constexpr GLenum GL_TEXTURE2 = 0x84C2;
-    constexpr GLenum GL_TEXTURE3 = 0x84C3;
-    constexpr GLenum GL_TEXTURE4 = 0x84C4;
-    constexpr GLenum GL_TEXTURE5 = 0x84C5;
-    constexpr GLenum GL_TEXTURE6 = 0x84C6;
-    constexpr GLenum GL_TEXTURE7 = 0x84C7;
 
     constexpr GLenum GL_RED = 0x1903;
     constexpr GLenum GL_RG = 0x8227;
@@ -4531,6 +4524,16 @@ namespace GL {
         GLvec4 color;
         TextureInfo* texture;
         ProgramInfo* program;
+
+        void addRect(const GLvec2& position, const GLvec2& size, const GLvec2& uvPosition, const GLvec2& uvSize) {
+            vertices.push_back({ position, uvPosition });
+            vertices.push_back({ position + GLvec2 { size.x, 0 }, uvPosition + GLvec2 { uvSize.x, 0 } });
+            vertices.push_back({ position + size, uvPosition + uvSize });
+
+            vertices.push_back({ position, uvPosition });
+            vertices.push_back({ position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y } });
+            vertices.push_back({ position + size, uvPosition + uvSize });
+        }
     };
 
     struct BufferInfo {
@@ -4804,6 +4807,9 @@ namespace GL {
         ProgramInfo(ProgramInfo&& other) noexcept
             : glRef(other.glRef)
             , id(std::exchange(other.id, 0))
+            , vao(std::exchange(other.vao, nullptr))
+            , vbo(std::exchange(other.vbo, nullptr))
+            , bufferFiller(other.bufferFiller)
         {}
 
         ProgramInfo& operator=(ProgramInfo&& other) noexcept {
@@ -4811,6 +4817,9 @@ namespace GL {
                 reset();
                 glRef = other.glRef;
                 id = std::exchange(other.id, 0);
+                vao = std::exchange(other.vao, nullptr);
+                vbo = std::exchange(other.vbo, nullptr);
+                bufferFiller = other.bufferFiller;
             }
 
             return *this;
@@ -4972,17 +4981,22 @@ namespace GL {
         struct UsingGuard {
             TextureInfo* ref;
 
-            UsingGuard(TextureInfo& texture, GLenum activeTexture) : ref(&texture) {
-                ref->glRef->glActiveTexture(activeTexture);
+            GLenum index;
+
+            UsingGuard(TextureInfo& texture, GLenum index) : ref(&texture) {
+                this->index = index;
+                ref->glRef->glActiveTexture(GL_TEXTURE0 + index);
                 ref->glRef->glBindTexture(ref->target, ref->id);
             }
 
             void image2D(GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels) {
                 ref->glRef->glTexImage2D(ref->target, level, internalformat, width, height, border, format, type, pixels);
+                setFilterRecommended();
             }
 
             void subImage2D(GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels) {
                 ref->glRef->glTexSubImage2D(ref->target, level, xoffset, yoffset, width, height, format, type, pixels);
+                setFilterRecommended();
             }
 
             void parameteri(GLenum pname, GLint param) {
@@ -5001,13 +5015,22 @@ namespace GL {
                 ref->glRef->glTexStorage2D(ref->target, levels, internalformat, width, height);
             }
 
+            void setFilter(GLenum minFilter, GLenum magFilter) {
+                parameteri(GL_TEXTURE_MIN_FILTER, minFilter);
+                parameteri(GL_TEXTURE_MAG_FILTER, magFilter);
+            }
+
+            void setFilterRecommended() {
+                setFilter(GL_LINEAR, GL_LINEAR);
+            }
+
             ~UsingGuard() {
                 ref->glRef->glBindTexture(ref->target, 0);
             }
         };
 
-        UsingGuard use(GLenum activeTexture = GL_TEXTURE0) {
-            return UsingGuard(*this, activeTexture);
+        UsingGuard use(GLenum index = 0) {
+            return UsingGuard(*this, index);
         }
 
         ~TextureInfo() {
@@ -5287,13 +5310,11 @@ in vec2 fragTexCoord;
 
 uniform vec4 uColor;
 uniform sampler2D uTexture;
-uniform bool uHasTexture;
 
 out vec4 outColor;
 
 void main() {
-    vec4 texColor = uHasTexture ? texture(uTexture, fragTexCoord) : vec4(1.0);
-    outColor = texColor * uColor;
+    outColor = uColor * texture(uTexture, fragTexCoord);
 }
 )";
 
@@ -5402,22 +5423,6 @@ void main() {
             gl.glFramebufferRenderbuffer(target, attachment, GL_RENDERBUFFER, renderbuffer.id);
         }
         
-        void drawArrays(GLenum mode, GLint first, GLsizei count) {
-            gl.glDrawArrays(mode, first, count);
-        }
-
-        void drawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
-            gl.glDrawElements(mode, count, type, indices);
-        }
-
-        void drawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instancecount) {
-            gl.glDrawArraysInstanced(mode, first, count, instancecount);
-        }
-
-        void drawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei instancecount) {
-            gl.glDrawElementsInstanced(mode, count, type, indices, instancecount);
-        }
-        
         void blendFunc(GLenum sfactor, GLenum dfactor) { gl.glBlendFunc(sfactor, dfactor); }
         void blendFuncSeparate(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha) { gl.glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha); }
         void blendEquation(GLenum mode) { gl.glBlendEquation(mode); }
@@ -5449,15 +5454,16 @@ void main() {
 
         void drawMesh(Mesh& mesh) {
             auto* prog = mesh.program ? mesh.program : defaultProgram.get();
+            auto* tex = mesh.texture ? mesh.texture : defaultWhiteTexture.get();
             prog->setVertices(mesh.vertices);
 
             if (!prog->vao) return;
 
-            prog->getUniformLocation("uColor").set(mesh.color);
-            prog->getUniformLocation("uTexture").set((GLint)(mesh.texture ? mesh.texture->id : 0));
-            prog->getUniformLocation("uHasTexture").set(mesh.texture != nullptr);
-
+            auto progGuard = prog->use();
+            auto texGuard = tex->use();
             auto vaoGuard = prog->vao->use();
+            prog->getUniformLocation("uColor").set(mesh.color);
+            prog->getUniformLocation("uTexture").set((GLint)texGuard.index);
             gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.size());
         }
 
@@ -5472,6 +5478,7 @@ void main() {
 
         private:
         gl_sp<ProgramInfo> defaultProgram;
+        gl_sp<TextureInfo> defaultWhiteTexture;
         bool resourcesInitialized = false;
 
         void initDefaultResources() {
@@ -5516,6 +5523,28 @@ void main() {
                 vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
                 vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
             }
+
+
+            unsigned char whiteTextureData[16] = {
+                255, 255, 255, 255,
+                255, 255, 255, 255,
+                255, 255, 255, 255,
+                255, 255, 255, 255
+            };
+
+            defaultWhiteTexture = createTexture();
+            defaultWhiteTexture->use().image2D(
+                0,
+                GL_RGBA8,
+                2, 2,
+                0,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                (void*)(&whiteTextureData[0])
+            );
+
+            enable(GL_BLEND);
+            blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
     };
 
@@ -5545,20 +5574,16 @@ void main() {
         struct DrawRectConfig {
             GLvec2 position, size;
             GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
+            GLvec2 uvPosition = { 0.0, 0.0 };
+            GLvec2 uvSize = { 1.0, 1.0 };
+            TextureInfo* texture;
         };
         void drawRect(const DrawRectConfig& config) {
             Mesh mesh {};
             mesh.color = config.color;
-            mesh.vertices = {
-                { config.position, { 0.0, 0.0 } },
-                { config.position + GLvec2 { config.size.x, 0.0 }, { 1.0, 0.0 } },
-                { config.position + GLvec2 { config.size.x, config.size.y }, { 1.0, 1.0 } },
-
-                { config.position, { 0.0, 0.0 } },
-                { config.position + GLvec2 { 0.0, config.size.y }, { 0.0, 1.0 } },
-                { config.position + GLvec2 { config.size.x, config.size.y }, { 1.0, 1.0 } },
-            };
-
+            mesh.texture = config.texture;
+            mesh.vertices.reserve(6);
+            mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
             normVertices(mesh.vertices);
             glCtx->drawMesh(mesh);
         }
