@@ -3710,22 +3710,20 @@ std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiS
 }
 
 struct StoryboardHelpers {
+    static std::string textureNameToPath(const std::string& dir, const std::string& name) {
+        return std::filesystem::path(dir + "/" + name)
+            .lexically_normal()
+            .string();
+    }
+
     static void attachTextureLoader(
         PhiStoryboardAssets& assets,
-        const std::string& path,
+        const std::string& dir,
         const std::function<std::optional<std::pair<ep_u64, Vec2>>(std::string)>& loader,
         const std::function<void(ep_u64)>& destroyer
     ) {
         assets.clearTextures();
-
-        assets.textureLoader = [=](std::string name) {
-            return loader(
-                std::filesystem::path(path + "/" + name)
-                .lexically_normal()
-                .string()
-            );
-        };
-
+        assets.textureLoader = [=](std::string name) { return loader(textureNameToPath(dir, name)); };
         assets.textureDestroyer = destroyer;
     }
 };
@@ -3809,6 +3807,111 @@ std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
 
     return infos;
 }
+
+
+template <typename T>
+class ep_sp {
+    struct RefCnt {
+        T* ptr;
+        std::atomic<int> count{1};
+        
+        explicit RefCnt(T* p) : ptr(p) {}
+        void ref() { ++count; }
+        void unref() {
+            if (--count == 0) {
+                delete ptr;
+                delete this;
+            }
+        }
+    };
+    
+    RefCnt* fCtrl;
+
+    explicit ep_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
+
+public:
+    using element_type = T;
+
+    constexpr ep_sp() noexcept : fCtrl(nullptr) {}
+    constexpr ep_sp(std::nullptr_t) noexcept : fCtrl(nullptr) {}
+    
+    explicit ep_sp(T* ptr) : fCtrl(ptr ? new RefCnt(ptr) : nullptr) {}
+
+    ep_sp(const ep_sp& o) noexcept : fCtrl(o.fCtrl) {
+        if (fCtrl) fCtrl->ref();
+    }
+    
+    ep_sp(ep_sp&& o) noexcept : fCtrl(o.fCtrl) {
+        o.fCtrl = nullptr;
+    }
+
+    template <typename U>
+    ep_sp(const ep_sp<U>& o) noexcept : fCtrl(o.fCtrl) {
+        if (fCtrl) fCtrl->ref();
+    }
+    
+    template <typename U>
+    ep_sp(ep_sp<U>&& o) noexcept : fCtrl(o.release_ctrl()) {}
+
+    ~ep_sp() { if (fCtrl) fCtrl->unref(); }
+
+    ep_sp& operator=(const ep_sp& o) noexcept {
+        if (o.fCtrl != fCtrl) {
+            if (o.fCtrl) o.fCtrl->ref();
+            auto* old = fCtrl;
+            fCtrl = o.fCtrl;
+            if (old) old->unref();
+        }
+        return *this;
+    }
+    
+    ep_sp& operator=(ep_sp&& o) noexcept {
+        if (o.fCtrl != fCtrl) {
+            auto* old = fCtrl;
+            fCtrl = o.fCtrl;
+            o.fCtrl = nullptr;
+            if (old) old->unref();
+        }
+        return *this;
+    }
+    
+    ep_sp& operator=(std::nullptr_t) noexcept {
+        reset();
+        return *this;
+    }
+
+    T& operator*() const { return *fCtrl->ptr; }
+    T* operator->() const { return fCtrl->ptr; }
+    T* get() const noexcept { return fCtrl ? fCtrl->ptr : nullptr; }
+    explicit operator bool() const noexcept { return fCtrl != nullptr; }
+
+    T* release() noexcept {
+        if (!fCtrl) return nullptr;
+        auto* p = fCtrl->ptr;
+        fCtrl->ptr = nullptr;
+        fCtrl->unref();
+        fCtrl = nullptr;
+        return p;
+    }
+    
+    void reset(T* ptr = nullptr) noexcept {
+        if (fCtrl && fCtrl->ptr == ptr) return;
+        auto* old = fCtrl;
+        fCtrl = ptr ? new RefCnt(ptr) : nullptr;
+        if (old) old->unref();
+    }
+    
+    void swap(ep_sp& o) noexcept {
+        std::swap(fCtrl, o.fCtrl);
+    }
+
+    template <typename U> friend class ep_sp;
+    auto* release_ctrl() noexcept {
+        auto* c = fCtrl;
+        fCtrl = nullptr;
+        return c;
+    }
+};
 
 namespace GL {
     using GLboolean = unsigned char;
@@ -4318,110 +4421,6 @@ namespace GL {
 
         return interface;
     }
-
-    template <typename T>
-    class gl_sp {
-        struct RefCnt {
-            T* ptr;
-            std::atomic<int> count{1};
-            
-            explicit RefCnt(T* p) : ptr(p) {}
-            void ref() { ++count; }
-            void unref() {
-                if (--count == 0) {
-                    delete ptr;
-                    delete this;
-                }
-            }
-        };
-        
-        RefCnt* fCtrl;
-
-        explicit gl_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
-
-    public:
-        using element_type = T;
-
-        constexpr gl_sp() noexcept : fCtrl(nullptr) {}
-        constexpr gl_sp(std::nullptr_t) noexcept : fCtrl(nullptr) {}
-        
-        explicit gl_sp(T* ptr) : fCtrl(ptr ? new RefCnt(ptr) : nullptr) {}
-
-        gl_sp(const gl_sp& o) noexcept : fCtrl(o.fCtrl) {
-            if (fCtrl) fCtrl->ref();
-        }
-        
-        gl_sp(gl_sp&& o) noexcept : fCtrl(o.fCtrl) {
-            o.fCtrl = nullptr;
-        }
-
-        template <typename U>
-        gl_sp(const gl_sp<U>& o) noexcept : fCtrl(o.fCtrl) {
-            if (fCtrl) fCtrl->ref();
-        }
-        
-        template <typename U>
-        gl_sp(gl_sp<U>&& o) noexcept : fCtrl(o.release_ctrl()) {}
-
-        ~gl_sp() { if (fCtrl) fCtrl->unref(); }
-
-        gl_sp& operator=(const gl_sp& o) noexcept {
-            if (o.fCtrl != fCtrl) {
-                if (o.fCtrl) o.fCtrl->ref();
-                auto* old = fCtrl;
-                fCtrl = o.fCtrl;
-                if (old) old->unref();
-            }
-            return *this;
-        }
-        
-        gl_sp& operator=(gl_sp&& o) noexcept {
-            if (o.fCtrl != fCtrl) {
-                auto* old = fCtrl;
-                fCtrl = o.fCtrl;
-                o.fCtrl = nullptr;
-                if (old) old->unref();
-            }
-            return *this;
-        }
-        
-        gl_sp& operator=(std::nullptr_t) noexcept {
-            reset();
-            return *this;
-        }
-
-        T& operator*() const { return *fCtrl->ptr; }
-        T* operator->() const { return fCtrl->ptr; }
-        T* get() const noexcept { return fCtrl ? fCtrl->ptr : nullptr; }
-        explicit operator bool() const noexcept { return fCtrl != nullptr; }
-
-        T* release() noexcept {
-            if (!fCtrl) return nullptr;
-            auto* p = fCtrl->ptr;
-            fCtrl->ptr = nullptr;
-            fCtrl->unref();
-            fCtrl = nullptr;
-            return p;
-        }
-        
-        void reset(T* ptr = nullptr) noexcept {
-            if (fCtrl && fCtrl->ptr == ptr) return;
-            auto* old = fCtrl;
-            fCtrl = ptr ? new RefCnt(ptr) : nullptr;
-            if (old) old->unref();
-        }
-        
-        void swap(gl_sp& o) noexcept {
-            std::swap(fCtrl, o.fCtrl);
-        }
-
-        template <typename U> friend class gl_sp;
-        auto* release_ctrl() noexcept {
-            auto* c = fCtrl;
-            fCtrl = nullptr;
-            return c;
-        }
-    };
     
     struct GLvec2 {
         GLfloat x, y;
@@ -4829,8 +4828,8 @@ namespace GL {
 
         GLuint id;
 
-        gl_sp<VertexArrayInfo> vao;
-        gl_sp<BufferInfo> vbo;
+        ep_sp<VertexArrayInfo> vao;
+        ep_sp<BufferInfo> vbo;
 
         using BufferFillerFunc = std::function<void(ProgramInfo*, std::vector<Vertex>*)>;
         BufferFillerFunc bufferFiller;
@@ -5278,15 +5277,15 @@ namespace GL {
     };
 
     template <typename T, typename U>
-    bool operator==(const gl_sp<T>& a, const gl_sp<U>& b) { return a.get() == b.get(); }
+    bool operator==(const ep_sp<T>& a, const ep_sp<U>& b) { return a.get() == b.get(); }
     template <typename T>
-    bool operator==(const gl_sp<T>& a, std::nullptr_t) { return !a; }
+    bool operator==(const ep_sp<T>& a, std::nullptr_t) { return !a; }
     template <typename T>
-    bool operator==(std::nullptr_t, const gl_sp<T>& a) { return !a; }
+    bool operator==(std::nullptr_t, const ep_sp<T>& a) { return !a; }
 
     template <typename T, typename... Args>
-    gl_sp<T> gl_make_sp(Args&&... args) {
-        return gl_sp<T>(new T(std::forward<Args>(args)...));
+    ep_sp<T> gl_make_sp(Args&&... args) {
+        return ep_sp<T>(new T(std::forward<Args>(args)...));
     }
 
     static const char* defaultVertexShaderSource = R"(
@@ -5327,11 +5326,11 @@ void main() {
 
         GL33CoreInterface gl;
 
-        static gl_sp<GL33Context> Make(const GL33CoreInterface& interface) {
+        static ep_sp<GL33Context> Make(const GL33CoreInterface& interface) {
             auto* ctx = new GL33Context();
             ctx->gl = interface;
             ctx->initDefaultResources();
-            return gl_sp<GL33Context>(ctx);
+            return ep_sp<GL33Context>(ctx);
         }
 
         GLenum getError() const { return gl.glGetError(); }
@@ -5359,49 +5358,49 @@ void main() {
         const char* getString(GLenum pname) const { auto* res = (const char*)gl.glGetString(pname); return res ? res : ""; }
         const char* getStringi(GLenum pname, GLuint index) const { auto* res = (const char*)gl.glGetStringi(pname, index); return res ? res : ""; }
 
-        gl_sp<BufferInfo> createBuffer(GLenum target = GL_ARRAY_BUFFER) {
+        ep_sp<BufferInfo> createBuffer(GLenum target = GL_ARRAY_BUFFER) {
             auto* info = new BufferInfo();
             info->glRef = &gl;
             info->target = target;
             gl.glGenBuffers(1, &info->id);
-            return gl_sp<BufferInfo>(info);
+            return ep_sp<BufferInfo>(info);
         }
 
-        gl_sp<VertexArrayInfo> createVertexArray() {
+        ep_sp<VertexArrayInfo> createVertexArray() {
             auto* info = new VertexArrayInfo();
             info->glRef = &gl;
             gl.glGenVertexArrays(1, &info->id);
-            return gl_sp<VertexArrayInfo>(info);
+            return ep_sp<VertexArrayInfo>(info);
         }
 
-        gl_sp<ShaderInfo> createShader(GLenum type) {
+        ep_sp<ShaderInfo> createShader(GLenum type) {
             auto* info = new ShaderInfo();
             info->glRef = &gl;
             info->type = type;
             info->id = gl.glCreateShader(type);
-            return gl_sp<ShaderInfo>(info);
+            return ep_sp<ShaderInfo>(info);
         }
 
-        gl_sp<ProgramInfo> createProgram() {
+        ep_sp<ProgramInfo> createProgram() {
             auto* info = new ProgramInfo();
             info->glRef = &gl;
             info->id = gl.glCreateProgram();
-            return gl_sp<ProgramInfo>(info);
+            return ep_sp<ProgramInfo>(info);
         }
 
-        gl_sp<TextureInfo> createTexture(GLenum target = GL_TEXTURE_2D) {
+        ep_sp<TextureInfo> createTexture(GLenum target = GL_TEXTURE_2D) {
             auto* info = new TextureInfo();
             info->glRef = &gl;
             info->target = target;
             gl.glGenTextures(1, &info->id);
-            return gl_sp<TextureInfo>(info);
+            return ep_sp<TextureInfo>(info);
         }
 
-        gl_sp<FramebufferInfo> createFramebuffer() {
+        ep_sp<FramebufferInfo> createFramebuffer() {
             auto* info = new FramebufferInfo();
             info->glRef = &gl;
             gl.glGenFramebuffers(1, &info->id);
-            return gl_sp<FramebufferInfo>(info);
+            return ep_sp<FramebufferInfo>(info);
         }
 
         GLenum checkFramebufferStatus(GLenum target = GL_FRAMEBUFFER) const {
@@ -5412,11 +5411,11 @@ void main() {
             return gl.glCheckFramebufferStatus(target) == GL_FRAMEBUFFER_COMPLETE;
         }
 
-        gl_sp<RenderbufferInfo> createRenderbuffer() {
+        ep_sp<RenderbufferInfo> createRenderbuffer() {
             auto* info = new RenderbufferInfo();
             info->glRef = &gl;
             gl.glGenRenderbuffers(1, &info->id);
-            return gl_sp<RenderbufferInfo>(info);
+            return ep_sp<RenderbufferInfo>(info);
         }
 
         void framebufferRenderbuffer(GLenum target, GLenum attachment, const RenderbufferInfo& renderbuffer) {
@@ -5438,18 +5437,18 @@ void main() {
 
         void colorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a) { gl.glColorMask(r, g, b, a); }
 
-        gl_sp<QueryInfo> createQuery() {
+        ep_sp<QueryInfo> createQuery() {
             auto* info = new QueryInfo();
             info->glRef = &gl;
             gl.glGenQueries(1, &info->id);
-            return gl_sp<QueryInfo>(info);
+            return ep_sp<QueryInfo>(info);
         }
 
-        gl_sp<SyncInfo> createSync(GLenum condition = GL_SYNC_GPU_COMMANDS_COMPLETE, GLbitfield flags = 0) {
+        ep_sp<SyncInfo> createSync(GLenum condition = GL_SYNC_GPU_COMMANDS_COMPLETE, GLbitfield flags = 0) {
             auto* info = new SyncInfo();
             info->glRef = &gl;
             info->sync = gl.glFenceSync(condition, flags);
-            return gl_sp<SyncInfo>(info);
+            return ep_sp<SyncInfo>(info);
         }
 
         void drawMesh(Mesh& mesh) {
@@ -5477,8 +5476,8 @@ void main() {
         }
 
         private:
-        gl_sp<ProgramInfo> defaultProgram;
-        gl_sp<TextureInfo> defaultWhiteTexture;
+        ep_sp<ProgramInfo> defaultProgram;
+        ep_sp<TextureInfo> defaultWhiteTexture;
         bool resourcesInitialized = false;
 
         void initDefaultResources() {
@@ -5570,6 +5569,14 @@ void main() {
                 v.position = toNDC(transformPoint(v.position));
             }
         }
+
+        void resetTransform() { transform = Transform2D(); }
+        void translate(ep_f64 x, ep_f64 y) { transform.translate(x, y); }
+        void translate(const GLvec2& pos) { transform.translate(pos.x, pos.y); }
+        void scale(ep_f64 x, ep_f64 y) { transform.scale(x, y); }
+        void scale(const GLvec2& scale) { transform.scale(scale.x, scale.y); }
+        void rotate(ep_f64 angle) { transform.rotate(angle); }
+        void rotateDegrees(ep_f64 angle) { rotate(angle / 180.0 * std::numbers::pi); }
 
         struct DrawRectConfig {
             GLvec2 position, size;
@@ -5713,6 +5720,190 @@ struct CalculatedFrame {
 
     Cache cache;
     Vec2 frameTimeRange;
+
+    struct GLRenderer {
+        GLRenderer() = default;
+        GLRenderer(const GLRenderer&) = delete;
+        GLRenderer(GLRenderer&&) = delete;
+        GLRenderer& operator=(const GLRenderer&) = delete;
+        GLRenderer& operator=(GLRenderer&&) = delete;
+
+        static ep_sp<GLRenderer> Make() {
+            auto* renderer = new GLRenderer();
+            return ep_sp<GLRenderer>(renderer);
+        }
+        
+        struct DecodedTexture {
+            std::vector<ep_u8> data;
+            ep_u64 width, height;
+
+            bool valid() const {
+                return width > 0 && height > 0 && data.size() == (width * height * 4);
+            }
+        };
+        using TextureDeocder = std::function<DecodedTexture(const Data&)>;
+        TextureDeocder textureDeocder;
+
+        struct NoteTextureDataReaderConfig {
+            EnumPhiNoteType type;
+            ep_bool isSimul;
+        };
+        struct NoteTextureDataReaderResult {
+            Data encoded;
+            Vec2 cutPadding;
+            ep_bool cutPaddingIsPixel;
+            ep_bool ignoreCutPadding;
+        };
+        using NoteTextureDataReader = std::function<NoteTextureDataReaderResult(const NoteTextureDataReaderConfig&)>;
+        NoteTextureDataReader noteTextureDataReader;
+
+        using HitEffectDataReader = std::function<std::vector<Data>()>;
+        HitEffectDataReader hitEffectDataReader;
+
+        using StoryboardDataReader = std::function<Data(const std::string&)>;
+        StoryboardDataReader storyboardDataReader;
+
+        using ShaderDataReader = std::function<std::string(const std::string&)>;
+        ShaderDataReader shaderDataReader;
+
+        using HitsoundPlayer = std::function<void(EnumPhiNoteType)>;
+        HitsoundPlayer hitsoundPlayer;
+
+        ep_sp<GL::GL33Context> glCtx;
+
+        void check() {
+            auto checkBool = [](ep_bool cond, const std::string& err) {
+                if (!cond) {
+                    throw std::runtime_error(err);
+                }
+            };
+
+            checkBool(!!textureDeocder, "textureDeocder is not set");
+            checkBool(!!noteTextureDataReader, "noteTextureDataReader is not set");
+            checkBool(!!hitEffectDataReader, "hitEffectDataReader is not set");
+            checkBool(!!storyboardDataReader, "storyboardDataReader is not set");
+            checkBool(!!shaderDataReader, "shaderDataReader is not set");
+            checkBool(!!hitsoundPlayer, "hitsoundPlayer is not set");
+            checkBool(!!glCtx, "glCtx is not set");
+        }
+
+        void loadIllustion(const Data& data) {
+            const auto decoded = textureDeocder(data);
+            illustionTexture = loadTextureFromDecoded(decoded);
+        }
+
+        void loadResources(CalculateFrameConfig& calcConfig) {
+            clearResources();
+
+            for (const auto type : {
+                EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
+                EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
+            }) {
+                noteTextures[type] = { nullptr, nullptr };
+                calcConfig.noteTextureInfos[type] = {};
+
+                for (const auto isSimul : { false, true }) {
+                    auto loadResult = noteTextureDataReader(NoteTextureDataReaderConfig {
+                        .type = type,
+                        .isSimul = isSimul
+                    });
+
+                    auto decoded = textureDeocder(loadResult.encoded);
+                    auto tex = loadTextureFromDecoded(decoded);
+                    if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding /= decoded.height;
+                    if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.height, (ep_f64)decoded.height } / 2;
+
+                    if (!isSimul) noteTextures[type].first = tex;
+                    else noteTextures[type].second = tex;
+
+                    CalculateFrameConfig::NoteTextureInfo::Item item {
+                        .textureSize = Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height },
+                        .cutPadding = loadResult.cutPadding
+                    };
+
+                    if (!isSimul) calcConfig.noteTextureInfos[type].single = item;
+                    else calcConfig.noteTextureInfos[type].simul = item;
+                }
+            }
+
+            auto hitEffectDatas = hitEffectDataReader();
+            for (const auto& data : hitEffectDatas) {
+                auto decoded = textureDeocder(data);
+                auto tex = loadTextureFromDecoded(decoded);
+                hitEffectTextures.push_back(tex);
+            }
+        }
+
+        using ChartIniter = std::function<void(PhiChart&)>;
+        void initChart(PhiChart& chart, const ChartIniter& initer = [](PhiChart& chart) {
+            chart.init();
+        }) {
+            ep_u64 storyboardTextureId = 0;
+
+            chart.storyboardAssets.clearTextures();
+            chart.storyboardAssets.textureLoader = [&, this](const std::string& name) {
+                auto data = storyboardDataReader(name);
+                auto decoded = textureDeocder(data);
+                auto tex = loadTextureFromDecoded(decoded);
+                auto id = storyboardTextureId++;
+                storyboardTextures[id] = tex;
+                return std::make_pair(id, Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height });
+            };
+            chart.storyboardAssets.textureDestroyer = [this](ep_u64 id) {
+                storyboardTextures.erase(id);
+            };
+
+            chart.storyboardAssets.shaderPreloader = [this](const std::string& name) {
+                auto shaderString = shaderDataReader(name);
+
+                // TODO: ...
+            };
+
+            initer(chart);
+        }
+
+        void render(
+            const CalculateFrameConfig& calcConfig,
+            const CalculatedFrame& frame
+        ) {
+            using namespace GL;
+
+            glCtx->setViewport(calcConfig.screenSize.x, calcConfig.screenSize.y);
+            glCtx->setClearColor(0.0, 0.0, 0.0, 0.0);
+            glCtx->clear(GL_COLOR_BUFFER_BIT);
+
+            auto cvs = glCtx->getCanvas();
+            cvs.drawRect({
+                .size = { 50.0, 50.0 }
+            });
+            std::cout << "drawing...\n";
+        }
+
+        private:
+        ep_sp<GL::TextureInfo> illustionTexture;
+        std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
+        std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
+        std::unordered_map<ep_u64, ep_sp<GL::TextureInfo>> storyboardTextures;
+
+        ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedTexture& decoded) {
+            if (!decoded.valid()) throw std::runtime_error("texture is invalid");
+
+            auto tex = glCtx->createTexture();
+            tex->use().image2D(
+                0, GL::GL_RGBA8,
+                decoded.width, decoded.height,
+                0, GL::GL_RGBA, GL::GL_UNSIGNED_BYTE,
+                decoded.data.data()
+            );
+            return tex;
+        }
+
+        void clearResources() {
+            noteTextures.clear();
+            hitEffectTextures.clear();
+            storyboardTextures.clear();
+        }
+    };
 };
 
 void calculateFrame(
