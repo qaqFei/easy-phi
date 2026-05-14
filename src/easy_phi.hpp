@@ -4959,6 +4959,8 @@ namespace GL {
             : glRef(other.glRef)
             , target(other.target)
             , id(std::exchange(other.id, 0))
+            , cahcedRawData(std::move(other.cahcedRawData))
+            , cachedInternalFormat(other.cachedInternalFormat)
         {}
 
         TextureInfo& operator=(TextureInfo&& other) noexcept {
@@ -4967,6 +4969,8 @@ namespace GL {
                 glRef = other.glRef;
                 target = other.target;
                 id = std::exchange(other.id, 0);
+                cahcedRawData = std::move(other.cahcedRawData);
+                cachedInternalFormat = other.cachedInternalFormat;
             }
 
             return *this;
@@ -4976,6 +4980,13 @@ namespace GL {
 
         GLenum target;
         GLuint id;
+        
+        struct {
+            std::vector<uint8_t> pixels;
+            GLuint width = 0, height = 0;
+        } cahcedRawData;
+
+        GLint cachedInternalFormat = GL_RGBA8;
 
         struct UsingGuard {
             TextureInfo* ref;
@@ -4988,14 +4999,17 @@ namespace GL {
                 ref->glRef->glBindTexture(ref->target, ref->id);
             }
 
-            void image2D(GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels) {
-                ref->glRef->glTexImage2D(ref->target, level, internalformat, width, height, border, format, type, pixels);
-                setFilterRecommended();
-            }
+            // only GL_RGBA and GL_UNSIGNED_BYTE ;)
+            void image2D(GLint level, GLint internalformat, GLsizei width, GLsizei height, const void* pixels) {
+                if (width <= 0 || height <= 0) return;
 
-            void subImage2D(GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels) {
-                ref->glRef->glTexSubImage2D(ref->target, level, xoffset, yoffset, width, height, format, type, pixels);
+                ref->glRef->glTexImage2D(ref->target, level, internalformat, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
                 setFilterRecommended();
+
+                ref->cahcedRawData.pixels = std::vector<uint8_t>((uint8_t*)pixels, (uint8_t*)pixels + width * height * 4);
+                ref->cahcedRawData.width = width;
+                ref->cahcedRawData.height = height;
+                ref->cachedInternalFormat = internalformat;
             }
 
             void parameteri(GLenum pname, GLint param) {
@@ -5031,6 +5045,20 @@ namespace GL {
         UsingGuard use(GLenum index = 0) {
             return UsingGuard(*this, index);
         }
+
+        using StaticEffector = std::function<void(TextureInfo*)>;
+        void applyStaticEffect(const StaticEffector& effector) {
+            if (cahcedRawData.width <= 0 || cahcedRawData.height <= 0) return;
+            effector(this);
+        }
+
+        struct StaticEffectorPresets {
+            static StaticEffector gaussianBlur(GLfloat sigma) {
+                return [sigma](TextureInfo* texture) {
+                    // TODO: ...
+                };
+            }
+        };
 
         ~TextureInfo() {
             reset();
@@ -5536,9 +5564,6 @@ void main() {
                 0,
                 GL_RGBA8,
                 2, 2,
-                0,
-                GL_RGBA,
-                GL_UNSIGNED_BYTE,
                 (void*)(&whiteTextureData[0])
             );
 
@@ -5892,7 +5917,6 @@ struct CalculatedFrame {
             tex->use().image2D(
                 0, GL::GL_RGBA8,
                 decoded.width, decoded.height,
-                0, GL::GL_RGBA, GL::GL_UNSIGNED_BYTE,
                 decoded.data.data()
             );
             return tex;

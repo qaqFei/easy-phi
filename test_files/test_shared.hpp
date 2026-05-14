@@ -287,30 +287,6 @@ struct FontMgr {
     }
 };
 
-void skImageToWOSK(ep_sp<TextureInfo>& texInfo, sk_sp<SkImage> image) {
-    SkImageInfo dstInfo = SkImageInfo::Make(
-        image->width(), 
-        image->height(),
-        kRGBA_8888_SkColorType,
-        kUnpremul_SkAlphaType
-    );
-    
-    std::vector<uint8_t> buffer(dstInfo.minRowBytes() * dstInfo.height());
-    SkPixmap dstPixmap(dstInfo, buffer.data(), dstInfo.minRowBytes());
-    image->readPixels(dstPixmap, 0, 0);
-
-    texInfo->use().image2D(
-        0,
-        GL_RGBA8,
-        image->width(),
-        image->height(),
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        buffer.data()
-    );
-}
-
 using StoryboardTexturesType = std::unordered_map<easy_phi::ep_u64, sk_sp<SkImage>>;
 void attachTextureLoader(
     easy_phi::PhiChart& chart,
@@ -331,36 +307,6 @@ void attachTextureLoader(
 
             easy_phi::ep_u64 id = currentStoryboardTextureId++;
             (*loadedStoryboardTexturesPtr)[id] = image;
-            return std::make_pair(id, easy_phi::Vec2 { (double)image->width(), (double)image->height() });
-        },
-        [=](easy_phi::ep_u64 texture) {
-            loadedStoryboardTexturesPtr->erase(texture);
-        }
-    );
-}
-
-using StoryboardTexturesWOSKType = std::unordered_map<easy_phi::ep_u64, ep_sp<TextureInfo>>;
-void attachTextureLoaderWOSK(
-    ep_sp<GL33Context>& glCtx,
-    easy_phi::PhiChart& chart,
-    const std::string& assetsPath,
-    StoryboardTexturesWOSKType& loadedStoryboardTextures
-) {
-    static easy_phi::ep_u64 currentStoryboardTextureId = 0;
-    StoryboardTexturesWOSKType* loadedStoryboardTexturesPtr = &loadedStoryboardTextures;
-
-    easy_phi::StoryboardHelpers::attachTextureLoader(
-        chart.storyboardAssets,
-        assetsPath,
-        [=](std::string path) -> std::optional<std::pair<easy_phi::ep_u64, easy_phi::Vec2>> {
-            easy_phi::Data imageData;
-            easy_phi::Data::FromFile(&imageData, path);
-            auto image = loadImage(imageData);
-            if (!image) return std::nullopt;
-
-            easy_phi::ep_u64 id = currentStoryboardTextureId++;
-            (*loadedStoryboardTexturesPtr)[id] = glCtx->createTexture();
-            skImageToWOSK((*loadedStoryboardTexturesPtr)[id], image);
             return std::make_pair(id, easy_phi::Vec2 { (double)image->width(), (double)image->height() });
         },
         [=](easy_phi::ep_u64 texture) {
@@ -403,47 +349,6 @@ NoteImagesType loadNoteImages(easy_phi::CalculateFrameConfig& config) {
     return noteImages;
 }
 
-using NoteImagesWOSKType = std::unordered_map<easy_phi::EnumPhiNoteType, std::pair<ep_sp<TextureInfo>, ep_sp<TextureInfo>>>;
-NoteImagesWOSKType loadNoteImagesWOSK(ep_sp<GL33Context>& glCtx, easy_phi::CalculateFrameConfig& config) {
-    NoteImagesWOSKType noteImages;
-
-    const double nonHoldCP = 0.499;
-
-    for (const auto& [ type, name ] : std::vector<std::pair<easy_phi::EnumPhiNoteType, std::string>> {
-        { easy_phi::EnumPhiNoteType::Tap, "click" },
-        { easy_phi::EnumPhiNoteType::Drag, "drag" },
-        { easy_phi::EnumPhiNoteType::Flick, "flick" },
-        { easy_phi::EnumPhiNoteType::Hold, "hold" },
-    }) {
-        auto single_data = StaticResource::get(std::string("/") + name + ".png");
-        auto simul_data = StaticResource::get(std::string("/") + name + "_mh.png");
-        auto sk_single_img = loadImage(single_data);
-        auto sk_simul_img = loadImage(simul_data);
-
-        noteImages[type] = { glCtx->createTexture(), glCtx->createTexture() };
-        auto& single = noteImages[type].first;
-        auto& simul = noteImages[type].second;
-        skImageToWOSK(single, sk_single_img);
-        skImageToWOSK(simul, sk_simul_img);
-
-        auto simulScale = (double)sk_single_img->width() / sk_simul_img->width();
-
-        config.noteTextureInfos[type] = easy_phi::CalculateFrameConfig::NoteTextureInfo {
-            .single = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
-                .textureSize = easy_phi::Vec2 { (double)sk_single_img->width(), (double)sk_single_img->height() },
-                .cutPadding = name == "hold" ? easy_phi::Vec2 { 50.0, 50.0 } : easy_phi::Vec2 { (double)sk_single_img->height() * nonHoldCP, (double)sk_single_img->height() * nonHoldCP }
-            },
-            .simul = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
-                .textureSize = easy_phi::Vec2 { (double)sk_simul_img->width(), (double)sk_simul_img->height() },
-                .cutPadding = name == "hold" ? easy_phi::Vec2 { 100.0, 100.0 } : easy_phi::Vec2 { (double)sk_simul_img->height() * nonHoldCP, (double)sk_simul_img->height() * nonHoldCP },
-                .scaling = easy_phi::Vec2 { simulScale, simulScale }
-            },
-        };
-    }
-
-    return noteImages;
-}
-
 static const int hitsoundsBufferSize = 3;
 
 using NoteHitsoundsType = std::unordered_map<easy_phi::EnumPhiNoteType, std::vector<ma_sound*>>;
@@ -472,17 +377,6 @@ HitEffectImagesType loadHitEffectImages() {
         hitEffectImages.push_back(loadImage(data));
     }
 
-    return hitEffectImages;
-}
-
-using HitEffectImagesWOSKType = std::vector<ep_sp<TextureInfo>>;
-HitEffectImagesWOSKType loadHitEffectImagesWOSK(ep_sp<GL33Context>& glCtx) {
-    HitEffectImagesWOSKType hitEffectImages;
-    for (int i = 0; i < 60; i++) {
-        auto data = StaticResource::get(std::string("/") + "hit_fx_" + std::to_string(i + 1) + ".png");
-        hitEffectImages.push_back(glCtx->createTexture());
-        skImageToWOSK(hitEffectImages.back(), loadImage(data));
-    }
     return hitEffectImages;
 }
 
@@ -1203,7 +1097,6 @@ struct WindowWOSkia {
     double globalScale;
     easy_phi::CalculatedFrame calculatedFrame;
     easy_phi::PhiChart chart;
-    StoryboardTexturesWOSKType loadedStoryboardTextures;
     int width, height;
     bool hidden;
     double frameBusyWaitPercentage;
