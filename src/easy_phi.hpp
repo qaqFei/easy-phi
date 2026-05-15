@@ -21,6 +21,7 @@
 #include <string_view>
 #include <utility>
 #include <atomic>
+#include <thread>
 
 namespace easy_phi {
 
@@ -123,108 +124,41 @@ struct Data {
 struct Vec2 {
     ep_f64 x, y;
 
-    ep_f64 sum() const {
-        return x + y;
-    }
+    Vec2() = default;
+    template <typename A, typename B> Vec2(A a, B b) : x((ep_f64)a), y((ep_f64)b) {}
 
-    ep_f64 length() const {
-        return std::sqrt(x * x + y * y);
-    }
+    ep_f64 sum() const { return x + y; }
+    ep_f64 length() const { return std::sqrt(x * x + y * y); }
+    ep_f64 lengthSquared() const { return x * x + y * y; }
+    ep_f64 xyDiff() const { return std::abs(x - y); }
 
-    ep_f64 lengthSquared() const {
-        return x * x + y * y;
-    }
+    Vec2 operator+(const Vec2& v) const { return Vec2 { x + v.x, y + v.y }; }
+    Vec2 operator-(const Vec2& v) const { return Vec2 { x - v.x, y - v.y }; }
+    Vec2 operator*(const Vec2& v) const { return Vec2 { x * v.x, y * v.y }; }
+    Vec2 operator/(const Vec2& v) const { return Vec2 { x / v.x, y / v.y }; }
+    Vec2 operator+(ep_f64 v) const { return Vec2 { x + v, y + v }; }
+    Vec2 operator-(ep_f64 v) const { return Vec2 { x - v, y - v }; }
+    Vec2 operator*(ep_f64 v) const { return Vec2 { x * v, y * v }; }
+    Vec2 operator/(ep_f64 v) const { return Vec2 { x / v, y / v }; }
 
-    ep_f64 xyDiff() const {
-        return std::abs(x - y);
-    }
+    Vec2& operator+=(const Vec2& v) { x += v.x; y += v.y; return *this; }
+    Vec2& operator-=(const Vec2& v) { x -= v.x; y -= v.y; return *this; }
+    Vec2& operator*=(const Vec2& v) { x *= v.x; y *= v.y; return *this; }
+    Vec2& operator/=(const Vec2& v) { x /= v.x; y /= v.y; return *this; }
+    Vec2& operator+=(ep_f64 v) { x += v; y += v; return *this; }
+    Vec2& operator-=(ep_f64 v) { x -= v; y -= v; return *this; }
+    Vec2& operator*=(ep_f64 v) { x *= v; y *= v; return *this; }
+    Vec2& operator/=(ep_f64 v) { x /= v; y /= v; return *this; }
 
-    Vec2 operator+(const Vec2& v) const {
-        return Vec2 { .x = x + v.x, .y = y + v.y };
-    }
-    
-    Vec2 operator-(const Vec2& v) const {
-        return Vec2 { .x = x - v.x, .y = y - v.y };
-    }
-
-    Vec2 operator*(const Vec2& v) const {
-        return Vec2 { .x = x * v.x, .y = y * v.y };
-    }
-
-    Vec2 operator/(const Vec2& v) const {
-        return Vec2 { .x = x / v.x, .y = y / v.y };
-    }
-
-    Vec2 operator+(ep_f64 v) const {
-        return Vec2 { .x = x + v, .y = y + v };
-    }
-
-    Vec2 operator-(ep_f64 v) const {
-        return Vec2 { .x = x - v, .y = y - v };
-    }
-
-    Vec2 operator*(ep_f64 v) const {
-        return Vec2 { .x = x * v, .y = y * v };
-    }
-
-    Vec2 operator/(ep_f64 v) const {
-        return Vec2 { .x = x / v, .y = y / v };
-    }
-
-    Vec2& operator+=(const Vec2& v) {
-        x += v.x; y += v.y;
-        return *this;
-    }
-
-    Vec2& operator-=(const Vec2& v) {
-        x -= v.x; y -= v.y;
-        return *this;
-    }
-
-    Vec2& operator*=(const Vec2& v) {
-        x *= v.x; y *= v.y;
-        return *this;
-    }
-
-    Vec2& operator/=(const Vec2& v) {
-        x /= v.x; y /= v.y;
-        return *this;
-    }
-
-    Vec2& operator+=(ep_f64 v) {
-        x += v; y += v;
-        return *this;
-    }
-
-    Vec2& operator-=(ep_f64 v) {
-        x -= v; y -= v;
-        return *this;
-    }
-
-    Vec2& operator*=(ep_f64 v) {
-        x *= v; y *= v;
-        return *this;
-    }
-
-    Vec2& operator/=(ep_f64 v) {
-        x /= v; y /= v;
-        return *this;
-    }
-
-    ep_bool operator==(const Vec2& v) const {
-        return x == v.x && y == v.y;
-    }
-
-    ep_bool operator!=(const Vec2& v) const {
-        return x != v.x || y != v.y;
-    }
+    ep_bool operator==(const Vec2& v) const { return x == v.x && y == v.y; }
+    ep_bool operator!=(const Vec2& v) const { return x != v.x || y != v.y; }
 
     Vec2 rotate(ep_f64 angle, ep_f64 length) const {
         ep_f64 c = std::cos(angle);
         ep_f64 s = std::sin(angle);
         return Vec2 {
-            .x = x + c * length,
-            .y = y + s * length
+            x + c * length,
+            y + s * length
         };
     }
 
@@ -463,8 +397,8 @@ struct Transform2D {
 
     Vec2 transformPoint(ep_f64 x, ep_f64 y) const {
         return Vec2 {
-            .x = matrix[0] * x + matrix[2] * y + matrix[4],
-            .y = matrix[1] * x + matrix[3] * y + matrix[5]
+            matrix[0] * x + matrix[2] * y + matrix[4],
+            matrix[1] * x + matrix[3] * y + matrix[5]
         };
     }
 
@@ -3508,6 +3442,8 @@ PhiChartLoadResult loadChartFromData(const Data& data) {
     #undef TRY_LOAD_FUNC
 }
 
+#undef CHART_LOAD_FAILED
+
 std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
@@ -3910,6 +3846,75 @@ public:
         auto* c = fCtrl;
         fCtrl = nullptr;
         return c;
+    }
+};
+
+struct DecodedRGBATexture {
+    std::vector<ep_u8> data;
+    ep_u64 width, height;
+
+    static DecodedRGBATexture Make(ep_u64 width, ep_u64 height) {
+        return {
+            .data = std::vector<ep_u8>(width * height * 4),
+            .width = width, .height = height
+        };
+    }
+
+    bool valid() const {
+        return width > 0 && height > 0 && data.size() == (width * height * 4);
+    }
+
+    void fillWithGray(const std::vector<ep_u8>& gray) {
+        if (gray.size() != width * height) throw std::runtime_error("gray data size mismatch");
+        ensureDataSize();
+
+        std::fill(data.begin(), data.end(), 255);
+        for (ep_u64 i = 0; i < width * height; ++i) {
+            data[i * 4 + 3] = gray[i];
+        }
+    }
+
+    void paste(const DecodedRGBATexture& other, ep_i64 x, ep_i64 y) {
+        if (x >= width || y >= height) return;
+        if (x + other.width < 0 || y + other.height < 0) return;
+
+        for (ep_i64 i = 0; i < other.width; i++) {
+            ep_i64 px = i + x;
+            if (px < 0) continue;
+            if (px >= width) break;
+
+            for (ep_i64 j = 0; j < other.height; j++) {
+                ep_i64 py = j + y;
+                if (py < 0) continue;
+                if (py >= height) break;
+
+                auto src_idx = (j * other.width + i) * 4;
+                auto dst_idx = (py * width + px) * 4;
+
+                ep_f64 src_a = other.data[src_idx + 3] / 255.0;
+                ep_f64 dst_a = data[dst_idx + 3] / 255.0;
+
+                auto a = src_a + dst_a * (1 - src_a);
+                data[dst_idx + 3] = (ep_u8)(a * 255);
+                if (data[dst_idx + 3] == 0) continue;
+
+                for (ep_i64 k = 0; k < 3; k++) {
+                    ep_f64 src = other.data[src_idx + k] / 255.0;
+                    ep_f64 dst = data[dst_idx + k] / 255.0;
+                    auto color = (src * src_a + dst * dst_a * (1 - src_a)) / a;
+                    data[dst_idx + k] = (ep_u8)(color * 255);
+                }
+            }
+        }
+    }
+
+    Vec2 size() {
+        return { width, height };
+    }
+
+    private:
+    void ensureDataSize() {
+        data.resize(width * height * 4);
     }
 };
 
@@ -4426,6 +4431,7 @@ namespace GL {
         GLfloat x, y;
         
         GLvec2() : x(0), y(0) {}
+        GLvec2(const Vec2& o) : x(o.x), y(o.y) {}
         template <typename A, typename B> constexpr GLvec2(A a, B b) : x((GLfloat)a), y((GLfloat)b) {}
 
         GLvec2 operator+(const GLvec2& o) const { return {x + o.x, y + o.y}; }
@@ -4479,6 +4485,7 @@ namespace GL {
         GLfloat x, y, z, w;
         
         GLvec4() : x(0), y(0), z(0), w(0) {}
+        GLvec4(const Color& o) : x(o.r), y(o.g), z(o.b), w(o.a) {}
         template <typename A, typename B, typename C, typename D> constexpr GLvec4(A a, B b, C c, D d) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c), w((GLfloat)d) {}
 
         GLvec4 operator+(const GLvec4& o) const { return {x + o.x, y + o.y, z + o.z, w + o.w}; }
@@ -4981,11 +4988,7 @@ namespace GL {
         GLenum target;
         GLuint id;
         
-        struct {
-            std::vector<uint8_t> pixels;
-            GLuint width = 0, height = 0;
-        } cahcedRawData;
-
+        DecodedRGBATexture cahcedRawData;
         GLint cachedInternalFormat = GL_RGBA8;
 
         struct UsingGuard {
@@ -5006,7 +5009,7 @@ namespace GL {
                 ref->glRef->glTexImage2D(ref->target, level, internalformat, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
                 setFilterRecommended();
 
-                ref->cahcedRawData.pixels = std::vector<uint8_t>((uint8_t*)pixels, (uint8_t*)pixels + width * height * 4);
+                ref->cahcedRawData.data = std::vector<uint8_t>((uint8_t*)pixels, (uint8_t*)pixels + width * height * 4);
                 ref->cahcedRawData.width = width;
                 ref->cahcedRawData.height = height;
                 ref->cachedInternalFormat = internalformat;
@@ -5049,13 +5052,136 @@ namespace GL {
         using StaticEffector = std::function<void(TextureInfo*)>;
         void applyStaticEffect(const StaticEffector& effector) {
             if (cahcedRawData.width <= 0 || cahcedRawData.height <= 0) return;
+
             effector(this);
+            use().image2D(
+                0, cachedInternalFormat,
+                cahcedRawData.width, cahcedRawData.height,
+                (void*)cahcedRawData.data.data()
+            );
         }
 
         struct StaticEffectorPresets {
-            static StaticEffector gaussianBlur(GLfloat sigma) {
-                return [sigma](TextureInfo* texture) {
-                    // TODO: ...
+            static StaticEffector gaussianBlur(GLuint radius) { // by me and kimi ;)
+                return [radius](TextureInfo* texture) {
+                    const ep_i64 width = texture->cahcedRawData.width;
+                    const ep_i64 height = texture->cahcedRawData.height;
+                    ep_u8* srcData = texture->cahcedRawData.data.data();
+
+                    const ep_i64 q = std::min<ep_i64>(std::max<ep_i64>(radius / 16, 1), radius);
+                    const ep_i64 weightCount = radius / q + 2;
+                    std::vector<ep_f32> weights(weightCount);
+                    auto guassian = [](ep_f32 x) { return std::exp(-x * x / 0.18f); };
+                    for (ep_i64 i = 0; i < weightCount; i++) weights[i] = guassian((ep_f32)(i * q) / radius);
+
+                    std::vector<ep_f32> hBlur;
+                    hBlur.resize(width * height * 3);
+                    std::vector<ep_f32> transposed;
+                    transposed.resize(width * height * 3);
+
+                    auto threadCount = std::thread::hardware_concurrency();
+                    threadCount = threadCount ? threadCount : 4;
+                    std::vector<std::thread> threads;
+                    threads.reserve(threadCount);
+
+                    for (int t = 0; t < threadCount; t++) {
+                        threads.emplace_back(std::thread([&, t]() {
+                            const ep_i64 startY = t * height / threadCount;
+                            const ep_i64 endY = (t + 1) * height / threadCount;
+
+                            for (ep_i64 y = startY; y < endY; y++) {
+                                const ep_i64 rowOffset = y * width;
+                                const ep_u8* srcRow = srcData + rowOffset * 4;
+                                ep_f32* dstRow = hBlur.data() + rowOffset * 3;
+
+                                for (ep_i64 x = 0; x < width; x++) {
+                                    const ep_i64 pxs = std::max<ep_i64>(0, x - radius);
+                                    const ep_i64 pxe = std::min<ep_i64>(width, x + radius + 1);
+
+                                    ep_f64 sumR = 0, sumG = 0, sumB = 0, wsum = 0;
+
+                                    for (ep_i64 px = pxs; px < pxe; px += q) {
+                                        const ep_i64 offset = px - x;
+                                        const ep_f32 w = weights[std::abs(offset) / q];
+                                        const ep_u8* pixel = srcRow + px * 4;
+
+                                        sumR += pixel[0] * w;
+                                        sumG += pixel[1] * w;
+                                        sumB += pixel[2] * w;
+                                        wsum += w;
+                                    }
+
+                                    const ep_f32 invWsum = 1.0f / wsum;
+                                    dstRow[x * 3 + 0] = sumR * invWsum;
+                                    dstRow[x * 3 + 1] = sumG * invWsum;
+                                    dstRow[x * 3 + 2] = sumB * invWsum;
+                                }
+                            }
+                        }));
+                    }
+
+                    for (auto& thread : threads) thread.join();
+                    threads.clear();
+
+                    for (int t = 0; t < threadCount; t++) {
+                        threads.emplace_back(std::thread([&, t]() {
+                            const ep_i64 startX = t * width / threadCount;
+                            const ep_i64 endX = (t + 1) * width / threadCount;
+
+                            for (ep_i64 x = startX; x < endX; x++) {
+                                for (ep_i64 y = 0; y < height; y++) {
+                                    const ep_f32* srcPixel = hBlur.data() + (y * width + x) * 3;
+                                    ep_f32* dstPixel = transposed.data() + (x * height + y) * 3;
+                                    dstPixel[0] = srcPixel[0];
+                                    dstPixel[1] = srcPixel[1];
+                                    dstPixel[2] = srcPixel[2];
+                                }
+                            }
+                        }));
+                    }
+
+                    for (auto& thread : threads) thread.join();
+                    threads.clear();
+
+                    for (int t = 0; t < threadCount; t++) {
+                        threads.emplace_back(std::thread([&, t]() {
+                            const ep_i64 startX = t * width / threadCount;
+                            const ep_i64 endX = (t + 1) * width / threadCount;
+
+                            for (ep_i64 x = startX; x < endX; x++) {
+                                const ep_i64 colOffset = x * height;
+                                const ep_f32* srcCol = transposed.data() + colOffset * 3;
+                                ep_u8* dstCol = srcData + x * 4;
+
+                                for (ep_i64 y = 0; y < height; y++) {
+                                    const ep_i64 pys = std::max<ep_i64>(0, y - radius);
+                                    const ep_i64 pye = std::min<ep_i64>(height, y + radius + 1);
+
+                                    ep_f64 sumR = 0, sumG = 0, sumB = 0, wsum = 0;
+
+                                    for (ep_i64 py = pys; py < pye; py += q) {
+                                        const ep_i64 offset = py - y;
+                                        const ep_f32 w = weights[std::abs(offset) / q];
+                                        const ep_f32* pixel = srcCol + py * 3;
+
+                                        sumR += pixel[0] * w;
+                                        sumG += pixel[1] * w;
+                                        sumB += pixel[2] * w;
+                                        wsum += w;
+                                    }
+
+                                    const ep_f32 invWsum = 1.0f / wsum;
+                                    ep_u8* dstPixel = dstCol + y * width * 4;
+                                    dstPixel[0] = (ep_u8)std::clamp(sumR * invWsum, 0.0, 255.0);
+                                    dstPixel[1] = (ep_u8)std::clamp(sumG * invWsum, 0.0, 255.0);
+                                    dstPixel[2] = (ep_u8)std::clamp(sumB * invWsum, 0.0, 255.0);
+                                    dstPixel[3] = 255;
+                                }
+                            }
+                        }));
+                    }
+
+                    for (auto& thread : threads) thread.join();
                 };
             }
         };
@@ -5605,6 +5731,7 @@ void main() {
 
         struct DrawRectConfig {
             GLvec2 position, size;
+            GLvec2 anchor = { 0.0, 0.0 };
             GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
             GLvec2 uvPosition = { 0.0, 0.0 };
             GLvec2 uvSize = { 1.0, 1.0 };
@@ -5615,7 +5742,7 @@ void main() {
             mesh.color = config.color;
             mesh.texture = config.texture;
             mesh.vertices.reserve(6);
-            mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
+            mesh.addRect(config.position + config.anchor * config.size, config.size, config.uvPosition, config.uvSize);
             normVertices(mesh.vertices);
             glCtx->drawMesh(mesh);
         }
@@ -5758,16 +5885,11 @@ struct CalculatedFrame {
             return ep_sp<GLRenderer>(renderer);
         }
         
-        struct DecodedTexture {
-            std::vector<ep_u8> data;
-            ep_u64 width, height;
-
-            bool valid() const {
-                return width > 0 && height > 0 && data.size() == (width * height * 4);
-            }
-        };
-        using TextureDeocder = std::function<DecodedTexture(const Data&)>;
+        using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
         TextureDeocder textureDeocder;
+
+        using TextRenderer = std::function<DecodedRGBATexture(const std::string&, ep_u64)>;
+        TextRenderer textRenderer;
 
         struct NoteTextureDataReaderConfig {
             EnumPhiNoteType type;
@@ -5804,6 +5926,7 @@ struct CalculatedFrame {
             };
 
             checkBool(!!textureDeocder, "textureDeocder is not set");
+            checkBool(!!textRenderer, "textRenderer is not set");
             checkBool(!!noteTextureDataReader, "noteTextureDataReader is not set");
             checkBool(!!hitEffectDataReader, "hitEffectDataReader is not set");
             checkBool(!!storyboardDataReader, "storyboardDataReader is not set");
@@ -5812,9 +5935,10 @@ struct CalculatedFrame {
             checkBool(!!glCtx, "glCtx is not set");
         }
 
-        void loadIllustion(const Data& data) {
-            const auto decoded = textureDeocder(data);
-            illustionTexture = loadTextureFromDecoded(decoded);
+        void loadIllustion(const Data& data, CalculateFrameConfig& calcConfig) {
+            rawIllustionTexture = textureDeocder(data);
+            bluredIllustionCache.key = -1.0;
+            calcConfig.backgroundTextureSize = { rawIllustionTexture.width, rawIllustionTexture.height };
         }
 
         void loadResources(CalculateFrameConfig& calcConfig) {
@@ -5897,20 +6021,61 @@ struct CalculatedFrame {
             glCtx->setClearColor(0.0, 0.0, 0.0, 0.0);
             glCtx->clear(GL_COLOR_BUFFER_BIT);
 
-            auto cvs = glCtx->getCanvas();
-            cvs.drawRect({
-                .size = { 50.0, 50.0 }
+            auto illuTex = bluredIllustionCache.get(frame.backgroundImageBlurRadius, [&]() {
+                auto tex = glCtx->createTexture();
+                tex->use().image2D(
+                    0, GL::GL_RGBA8,
+                    rawIllustionTexture.width, rawIllustionTexture.height,
+                    rawIllustionTexture.data.data()
+                );
+
+                tex->applyStaticEffect(TextureInfo::StaticEffectorPresets::gaussianBlur(frame.backgroundImageBlurRadius));
+                return tex;
             });
-            std::cout << "drawing...\n";
+
+            auto cvs = glCtx->getCanvas();
+
+            cvs.drawRect({
+                .position = { frame.unsafeBackgroundRect.x, frame.unsafeBackgroundRect.y },
+                .size = { frame.unsafeBackgroundRect.w, frame.unsafeBackgroundRect.h },
+                .texture = illuTex.get()
+            });
+
+            cvs.drawRect({
+                .position = { frame.unsafeBackgroundRect.x, frame.unsafeBackgroundRect.y },
+                .size = { frame.unsafeBackgroundRect.w, frame.unsafeBackgroundRect.h },
+                .color = { 0.0, 0.0, 0.0, frame.unsafeAreaDim },
+            });
+
+            glCtx->setViewport(
+                frame.objectsClipRect.x, frame.objectsClipRect.y,
+                frame.objectsClipRect.w, frame.objectsClipRect.h
+            );
+
+            cvs.drawRect({
+                .position = { frame.backgroundRect.x, frame.backgroundRect.y },
+                .size = { frame.backgroundRect.w, frame.backgroundRect.h },
+                .texture = illuTex.get()
+            });
+
+
+            cvs.drawRect({
+                .position = { frame.backgroundRect.x, frame.backgroundRect.y },
+                .size = { frame.backgroundRect.w, frame.backgroundRect.h },
+                .color = { 0.0, 0.0, 0.0, frame.backgroundDim },
+            });
         }
 
         private:
-        ep_sp<GL::TextureInfo> illustionTexture;
+        DecodedRGBATexture rawIllustionTexture;
+        SKVCache<ep_f64, ep_sp<GL::TextureInfo>> bluredIllustionCache;
         std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
         std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
         std::unordered_map<ep_u64, ep_sp<GL::TextureInfo>> storyboardTextures;
+        static constexpr ep_u64 maxTextTextures = 128;
+        std::unordered_map<std::string, ep_sp<GL::TextureInfo>> cachedTextTextures;
 
-        ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedTexture& decoded) {
+        ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedRGBATexture& decoded) {
             if (!decoded.valid()) throw std::runtime_error("texture is invalid");
 
             auto tex = glCtx->createTexture();
@@ -5926,6 +6091,44 @@ struct CalculatedFrame {
             noteTextures.clear();
             hitEffectTextures.clear();
             storyboardTextures.clear();
+        }
+
+        ep_sp<GL::TextureInfo> getTextTexture(const std::string& text, ep_u64 size) {
+            if (cachedTextTextures.find(text) == cachedTextTextures.end()) {
+                if (cachedTextTextures.size() >= maxTextTextures) {
+                    static std::mt19937 rng { std::random_device {} () };
+                    std::uniform_int_distribution<ep_u64> dist { 0, cachedTextTextures.size() - 1 };
+                    
+                    auto it = cachedTextTextures.begin();
+                    std::advance(it, dist(rng));
+                    cachedTextTextures.erase(it);
+                }
+
+                auto decoded = textRenderer(text, size);
+                auto tex = loadTextureFromDecoded(decoded);
+                cachedTextTextures[text] = tex;
+            }
+
+            return cachedTextTextures[text];
+        }
+
+        void drawText(
+            GL::GL33Context::Canvas& cvs,
+            const Vec2& pos, const Vec2& anchor,
+            const std::string& text, ep_f64 size,
+            const Color& color
+        ) {
+            const ep_u64 isize = 100;
+            auto tex = getTextTexture(text, isize);
+            ep_f64 scale = size / isize;
+
+            cvs.drawRect({
+                .position = pos,
+                .size = tex->cahcedRawData.size() * scale,
+                .anchor = anchor,
+                .color = color,
+                .texture = tex.get()
+            });
         }
     };
 };
@@ -6418,8 +6621,114 @@ void calculateFrame(
     calculateExtra(true);
 }
 
-#undef CHART_LOAD_FAILED
-
 } // namespace easy_phi
+
+#ifdef EASY_PHI_TEXT_RENDERER
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "helpers/stb_truetype.h"
+namespace easy_phi {
+    struct TextRenderer {
+        void loadFont(const Data& data, ep_u64 index = 0) {
+            fontData = data;
+            if (!stbtt_InitFont(&font, fontData.data.data(), stbtt_GetFontOffsetForIndex(fontData.data.data(), index))) {
+                throw std::runtime_error("failed to load font");
+            }
+        }
+
+        DecodedRGBATexture render(const std::string& text, ep_u64 fontSize) {
+            struct DrawedChar {
+                DecodedRGBATexture tex;
+                ep_i32 xoff, yoff;
+                ep_f64 advance_width;
+            };
+
+            std::vector<DrawedChar> chars;
+
+            auto scale = stbtt_ScaleForPixelHeight(&font, fontSize);
+
+            for (ep_u64 i = 0; i < text.size(); i++) {
+                ep_u64 codepoint = 0;
+                ep_u8 bytes = 0;
+
+                auto c = text[i];
+                if ((c & 0x80) == 0) {
+                    codepoint = c;
+                    bytes = 1;
+                } else if ((c & 0xE0) == 0xC0) {
+                    codepoint = c & 0x1F;
+                    bytes = 2;
+                } else if ((c & 0xF0) == 0xE0) {
+                    codepoint = c & 0x0F;
+                    bytes = 3;
+                } else if ((c & 0xF8) == 0xF0) {
+                    codepoint = c & 0x07;
+                    bytes = 4;
+                }
+
+                for (ep_u8 j = 1; j < bytes; j++) {
+                    codepoint = (codepoint << 6) | (text[i + j] & 0x3F);
+                }
+
+                i += bytes - 1;
+
+                auto glyph_index = stbtt_FindGlyphIndex(&font, codepoint);
+                if (!glyph_index) glyph_index = stbtt_FindGlyphIndex(&font, '?');
+                if (!glyph_index) continue;
+
+                auto& dc = chars.emplace_back();
+
+                ep_i32 advance, lsb;
+                stbtt_GetGlyphHMetrics(&font, glyph_index, &advance, &lsb);
+                dc.advance_width = advance * scale;
+
+                ep_i32 w, h;
+                stbtt_GetGlyphBitmapBox(&font, glyph_index, scale, scale, &dc.xoff, &dc.yoff, &w, &h);
+                w -= dc.xoff; h -= dc.yoff;
+
+                std::vector<ep_u8> bitmap(w * h);
+                stbtt_MakeGlyphBitmap(&font, bitmap.data(), w, h, w, scale, scale, glyph_index);
+
+                dc.tex = DecodedRGBATexture::Make(w, h);
+                dc.tex.fillWithGray(bitmap);
+            }
+
+            ep_i32 top = 0, bottom = 0;
+            ep_f64 width = 0, real_right = 0;
+
+            for (auto& dc : chars) {
+                top = std::min(top, dc.yoff);
+                bottom = std::max<ep_i32>(bottom, dc.yoff + dc.tex.height);
+                real_right = std::max(real_right, width + dc.xoff + dc.tex.width);
+                width += dc.advance_width;
+                real_right = std::max(real_right, width);
+            }
+
+            ep_i32 iwidth = std::ceil(real_right);
+
+            if (top >= bottom) {
+                return DecodedRGBATexture::Make(2, 2);
+            }
+
+            auto tex = DecodedRGBATexture::Make(iwidth, bottom - top);
+            std::cout << "texture size: " << tex.width << "x" << tex.height << std::endl;
+            ep_f64 x = 0;
+
+            for (auto& dc : chars) {
+                ep_i64 y = dc.yoff - top;
+                ep_i64 ix = std::floor(x);
+                std::cout << "paste: " << ix << "," << y << " " << dc.tex.width << "x" << dc.tex.height << std::endl;
+                tex.paste(dc.tex, ix, y);
+                x += dc.advance_width;
+            }
+
+            return tex;
+        }
+
+        private:
+        Data fontData;
+        stbtt_fontinfo font;
+    };
+}
+#endif // EASY_PHI_TEXT_RENDERER
 
 #endif // EASY_PHI_HPP

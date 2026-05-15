@@ -32,6 +32,10 @@ And the `Open RPE Recorder` is a subproject of this project, you can find it [he
 
 Just include the [`easy_phi.hpp`](./src/easy_phi.hpp) header file in your project and you're ready to go!
 
+If you want to use some extra features, you can define the following macros ([`helpers` module](./src/helpers/) is required):
+
+- `EASY_PHI_TEXT_RENDERER`: Enable internal text renderer, using [`stb_truetype`](https://github.com/nothings/stb/blob/master/stb_truetype.h).
+
 ### Tests
 
 Tests only supports Windows, and you need to install [python](https://www.python.org/downloads/) and  [mingw-w64](https://mingw-w64.org/doku.php/download) that supports C++20 or later to build the test programs.

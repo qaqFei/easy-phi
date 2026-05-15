@@ -1,3 +1,4 @@
+#define EASY_PHI_TEXT_RENDERER
 #include <easy_phi.hpp>
 
 #include <miniaudio/miniaudio.h>
@@ -1087,12 +1088,8 @@ struct WindowWOSkia {
     ma_engine maeng;
     easy_phi::CalculateFrameConfig calculateFrameConfig;
     ma_sound* mainSound;
+    easy_phi::TextRenderer textRenderer;
     std::vector<ma_sound*> playingHitsounds;
-    // FontMgr fontMgr;
-    // FontInstance font;
-    // std::pair<double, sk_sp<SkImage>> cachedBluredImage;
-    // sk_sp<SkImage> bgImage;
-    // sk_sp<SkSurface> bluredImageTempSurface;
     NoteHitsoundsType noteHitsounds;
     double globalScale;
     easy_phi::CalculatedFrame calculatedFrame;
@@ -1132,9 +1129,11 @@ struct WindowWOSkia {
         globalScale = 1.0;
         frameBusyWaitPercentage = 0.8;
 
+        textRenderer.loadFont(StaticResource::get("/font.ttf"));
+
         renderer = easy_phi::CalculatedFrame::GLRenderer::Make();
 
-        renderer->textureDeocder = [](const easy_phi::Data& data) -> easy_phi::CalculatedFrame::GLRenderer::DecodedTexture {
+        renderer->textureDeocder = [](const easy_phi::Data& data) -> easy_phi::DecodedRGBATexture {
             auto image = loadImage(data);
             SkImageInfo dstInfo = SkImageInfo::Make(image->width(), image->height(), kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
             std::vector<uint8_t> buffer(dstInfo.minRowBytes() * dstInfo.height());
@@ -1145,6 +1144,10 @@ struct WindowWOSkia {
                 .width = (uint64_t)image->width(),
                 .height = (uint64_t)image->height()
             };
+        };
+        
+        renderer->textRenderer = [this](const std::string& text, easy_phi::ep_u64 size) -> easy_phi::DecodedRGBATexture {
+            return textRenderer.render(text, size);
         };
 
         renderer->noteTextureDataReader = [](const easy_phi::CalculatedFrame::GLRenderer::NoteTextureDataReaderConfig config) -> easy_phi::CalculatedFrame::GLRenderer::NoteTextureDataReaderResult {
@@ -1241,7 +1244,7 @@ struct WindowWOSkia {
     std::optional<std::string> loadBgImage(const std::string& path) {
         easy_phi::Data data;
         if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
-        try { renderer->loadIllustion(data); }
+        try { renderer->loadIllustion(data, calculateFrameConfig); }
         catch (const std::exception& e) { return e.what(); }
         return std::nullopt;
     }
