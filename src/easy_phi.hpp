@@ -6173,6 +6173,7 @@ struct CalculatedFrame {
                         .pos = text.position,
                         .anchor = anchor,
                         .rotation = text.rotation,
+                        .scale = text.scale,
                         .color = text.color
                     });
                 } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedStoryboardTexture>(obj)) {
@@ -6283,6 +6284,7 @@ struct CalculatedFrame {
             std::string text; ep_f64 fontSize;
             GL::GLvec2 pos, anchor;
             ep_f64 rotation;
+            GL::GLvec2 scale;
             GL::GLvec4 color;
         };
         void drawText(
@@ -6293,7 +6295,7 @@ struct CalculatedFrame {
             auto tex = getTextTexture(config.text, isize);
             ep_f64 scale = config.fontSize / isize;
 
-            auto size = tex->size() * scale;
+            auto size = tex->size() * scale * config.scale;
 
             cvs.save();
             cvs.translate(config.pos);
