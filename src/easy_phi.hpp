@@ -22,6 +22,7 @@
 #include <utility>
 #include <atomic>
 #include <thread>
+#include <map>
 
 namespace easy_phi {
 
@@ -140,6 +141,7 @@ struct Vec2 {
     Vec2 operator-(ep_f64 v) const { return Vec2 { x - v, y - v }; }
     Vec2 operator*(ep_f64 v) const { return Vec2 { x * v, y * v }; }
     Vec2 operator/(ep_f64 v) const { return Vec2 { x / v, y / v }; }
+    Vec2 operator-() const { return Vec2 { -x, -y }; }
 
     Vec2& operator+=(const Vec2& v) { x += v.x; y += v.y; return *this; }
     Vec2& operator-=(const Vec2& v) { x -= v.x; y -= v.y; return *this; }
@@ -162,7 +164,7 @@ struct Vec2 {
         };
     }
 
-    Vec2 rotateDegress(ep_f64 angle, ep_f64 length) const {
+    Vec2 rotateDegrees(ep_f64 angle, ep_f64 length) const {
         return rotate(angle / 180.0 * std::numbers::pi, length);
     }
 
@@ -390,7 +392,7 @@ struct Transform2D {
         return *this;
     }
 
-    Transform2D& rotateDegress(ep_f64 angle) {
+    Transform2D& rotateDegrees(ep_f64 angle) {
         rotate(angle / 180.0 * std::numbers::pi);
         return *this;
     }
@@ -482,7 +484,7 @@ ep_bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r
 ep_bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
     ep_f64 eps = 1.0;
     return (
-        (point.rotateDegress(deg + 90, -eps) - targetPoint).lengthSquared() -
+        (point.rotateDegrees(deg + 90, -eps) - targetPoint).lengthSquared() -
         (point - targetPoint).lengthSquared()
     ) > 0;
 }
@@ -1565,7 +1567,7 @@ struct PhiChart {
                 auto fatherLinePosition = getLinePositionRelOrigin(t, fatherLine, screenSize);
                 auto fatherLineRotation = animator.get(fatherLine, t, EnumPhiEventType::SelfRotation);
 
-                pos = fatherLinePosition.rotateDegress(
+                pos = fatherLinePosition.rotateDegrees(
                     fatherLineRotation + std::atan2(pos.y, pos.x) * 180.0 / std::numbers::pi,
                     pos.length()
                 );
@@ -1612,8 +1614,8 @@ struct PhiChart {
         
         Transform2D lineTransform {};
         lineTransform.translate(linePosition);
-        lineTransform.rotateDegress(lineRotation);
-        lineTransform.rotateDegress(noteAxisRotation);
+        lineTransform.rotateDegrees(lineRotation);
+        lineTransform.rotateDegrees(noteAxisRotation);
         lineTransform.scale(screenSize);
         lineTransform.scale(1.0, -1.0);
 
@@ -4446,6 +4448,7 @@ namespace GL {
         GLvec2 operator-(GLfloat o) const { return {x - o, y - o}; }
         GLvec2 operator*(GLfloat o) const { return {x * o, y * o}; }
         GLvec2 operator/(GLfloat o) const { return {x / o, y / o}; }
+        GLvec2 operator-() const { return {-x, -y}; }
         GLvec2& operator+=(const GLvec2& o) { x += o.x; y += o.y; return *this; }
         GLvec2& operator-=(const GLvec2& o) { x -= o.x; y -= o.y; return *this; }
         GLvec2& operator*=(const GLvec2& o) { x *= o.x; y *= o.y; return *this; }
@@ -4472,6 +4475,7 @@ namespace GL {
         GLvec3 operator-(GLfloat o) const { return {x - o, y - o, z - o}; }
         GLvec3 operator*(GLfloat o) const { return {x * o, y * o, z * o}; }
         GLvec3 operator/(GLfloat o) const { return {x / o, y / o, z / o}; }
+        GLvec3 operator-() const { return {-x, -y, -z}; }
         GLvec3& operator+=(const GLvec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
         GLvec3& operator-=(const GLvec3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
         GLvec3& operator*=(const GLvec3& o) { x *= o.x; y *= o.y; z *= o.z; return *this; }
@@ -4500,6 +4504,7 @@ namespace GL {
         GLvec4 operator-(GLfloat o) const { return {x - o, y - o, z - o, w - o}; }
         GLvec4 operator*(GLfloat o) const { return {x * o, y * o, z * o, w * o}; }
         GLvec4 operator/(GLfloat o) const { return {x / o, y / o, z / o, w / o}; }
+        GLvec4 operator-() const { return {-x, -y, -z, -w}; }
         GLvec4& operator+=(const GLvec4& o) { x += o.x; y += o.y; z += o.z; w += o.w; return *this; }
         GLvec4& operator-=(const GLvec4& o) { x -= o.x; y -= o.y; z -= o.z; w -= o.w; return *this; }
         GLvec4& operator*=(const GLvec4& o) { x *= o.x; y *= o.y; z *= o.z; w *= o.w; return *this; }
@@ -4554,6 +4559,15 @@ namespace GL {
 
         void addFullRect() {
             addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
+        }
+
+        void addPolygon(const std::vector<GLvec2>& points, const std::vector<GLvec2>& uvs) {
+            vertices.reserve(points.size() + 2);
+            for (ep_u64 i = 0; i < points.size() - 2; i++) {
+                vertices.push_back({ points[0], uvs[0] });
+                vertices.push_back({ points[i + 1], uvs[i + 1] });
+                vertices.push_back({ points[i + 2], uvs[i + 2] });
+            }
         }
     };
 
@@ -5027,6 +5041,8 @@ namespace GL {
                 ref->glRef->glTexImage2D(ref->target, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
                 ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
                 ref->width = width; ref->height = height;
             }
@@ -5752,9 +5768,16 @@ void main() {
         void rotate(ep_f64 angle) { transform.rotate(angle); }
         void rotateDegrees(ep_f64 angle) { rotate(angle / 180.0 * std::numbers::pi); }
 
+        void save() { transformHistory.push_back(transform); }
+        void restore() { transform = transformHistory.back(); transformHistory.pop_back(); }
+
+        void drawMesh(Mesh& mesh) {
+            normVertices(mesh.vertices);
+            glCtx->drawMesh(mesh);
+        }
+
         struct DrawRectConfig {
             GLvec2 position, size;
-            GLvec2 anchor = { 0.0, 0.0 };
             GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
             GLvec2 uvPosition = { 0.0, 0.0 };
             GLvec2 uvSize = { 1.0, 1.0 };
@@ -5765,16 +5788,18 @@ void main() {
             mesh.color = config.color;
             mesh.texture = config.texture;
             mesh.vertices.reserve(6);
-            mesh.addRect(config.position + config.anchor * config.size, config.size, config.uvPosition, config.uvSize);
-            normVertices(mesh.vertices);
-            glCtx->drawMesh(mesh);
+            mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
+            drawMesh(mesh);
         }
+
+        private:
+        std::vector<Transform2D> transformHistory;
     };
 
     GL33Context::Canvas GL33Context::getCanvas() {
-        return Canvas {
-            .glCtx = this
-        };
+        Canvas canvas {};
+        canvas.glCtx  = this;
+        return canvas;
     }
 };
 
@@ -5983,7 +6008,7 @@ struct CalculatedFrame {
 
                     auto decoded = textureDeocder(loadResult.encoded);
                     auto tex = loadTextureFromDecoded(decoded);
-                    if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding /= decoded.height;
+                    if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding *= decoded.height;
                     if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.height, (ep_f64)decoded.height } / 2;
 
                     if (!isSimul) noteTextures[type].first = tex;
@@ -5997,6 +6022,10 @@ struct CalculatedFrame {
                     if (!isSimul) calcConfig.noteTextureInfos[type].single = item;
                     else calcConfig.noteTextureInfos[type].simul = item;
                 }
+
+                auto& info = calcConfig.noteTextureInfos[type];
+                auto simulScale = (ep_f64)info.simul.textureSize.x / info.single.textureSize.x;
+                info.simul.scaling = { simulScale, simulScale };
             }
 
             auto hitEffectDatas = hitEffectDataReader();
@@ -6035,9 +6064,13 @@ struct CalculatedFrame {
             initer(chart);
         }
 
+        struct RenderConfig {
+            bool disableHitsound = false;
+        };
         void render(
-            const CalculateFrameConfig& calcConfig,
-            const CalculatedFrame& frame
+            CalculateFrameConfig& calcConfig,
+            const CalculatedFrame& frame,
+            const RenderConfig& renderConfig
         ) {
             using namespace GL;
 
@@ -6077,12 +6110,127 @@ struct CalculatedFrame {
                 .texture = illuTex.get()
             });
 
-
             cvs.drawRect({
                 .position = { frame.backgroundRect.x, frame.backgroundRect.y },
                 .size = { frame.backgroundRect.w, frame.backgroundRect.h },
                 .color = { 0.0, 0.0, 0.0, frame.backgroundDim },
             });
+
+            for (auto& obj : frame.objects) {
+                if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedNote>(obj)) {
+                    auto& note = std::get<easy_phi::CalculatedFrame::CalculatedNote>(obj);
+                    auto& img = note.isSimul ? noteTextures[note.type].second : noteTextures[note.type].first;
+                    auto& imgInfo = note.isSimul ? calcConfig.noteTextureInfos[note.type].simul : calcConfig.noteTextureInfos[note.type].single;
+
+                    cvs.save();
+                    cvs.translate(note.position);
+                    cvs.rotateDegrees(note.rotation);
+
+                    Mesh mesh {};
+                    mesh.color = note.color;
+                    mesh.texture = img.get();
+                    mesh.vertices.reserve(18);
+
+                    mesh.addRect(
+                        { -note.width / 2, 0.0 }, { note.width, note.head },
+                        GLvec2 { 0.0, imgInfo.textureSize.y - imgInfo.cutPadding.x } / imgInfo.textureSize,
+                        GLvec2 { imgInfo.textureSize.x, imgInfo.cutPadding.x } / imgInfo.textureSize
+                    );
+
+                    mesh.addRect(
+                        { -note.width / 2, -note.body },
+                        { note.width, note.body },
+                        GLvec2 { 0.0, imgInfo.cutPadding.y } / imgInfo.textureSize,
+                        GLvec2 { imgInfo.textureSize.x, imgInfo.textureSize.y - imgInfo.cutPadding.sum() } / imgInfo.textureSize
+                    );
+
+                    mesh.addRect(
+                        { -note.width / 2, -note.body - note.tail },
+                        { note.width, note.tail },
+                        GLvec2 { 0.0, 0.0 },
+                        GLvec2 { imgInfo.textureSize.x, imgInfo.cutPadding.y } / imgInfo.textureSize
+                    );
+
+                    cvs.drawMesh(mesh);
+                    cvs.restore();
+                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedText>(obj)) {
+                    auto& text = std::get<easy_phi::CalculatedFrame::CalculatedText>(obj);
+
+                    Vec2 anchor;
+
+                    if (text.align == EnumTextAlign::Left) anchor.x = 0.0;
+                    else if (text.align == EnumTextAlign::Center) anchor.x = 0.5;
+                    else if (text.align == EnumTextAlign::Right) anchor.x = 1.0;
+
+                    if (text.baseline == EnumTextBaseline::Top) anchor.y = 0.0;
+                    else if (text.baseline == EnumTextBaseline::Middle) anchor.y = 0.5;
+                    else if (text.baseline == EnumTextBaseline::Bottom) anchor.y = 1.0;
+
+                    drawText(cvs, {
+                        .text = text.text,
+                        .fontSize = text.fontSize,
+                        .pos = text.position,
+                        .anchor = anchor,
+                        .rotation = text.rotation,
+                        .color = text.color
+                    });
+                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedStoryboardTexture>(obj)) {
+                    auto& sbTexture = std::get<easy_phi::CalculatedFrame::CalculatedStoryboardTexture>(obj);
+                    auto& img = storyboardTextures[sbTexture.texture];
+
+                    cvs.save();
+                    cvs.translate(sbTexture.position);
+                    cvs.rotateDegrees(sbTexture.rotation);
+                    cvs.scale(sbTexture.scale);
+                    cvs.drawRect({
+                        .position = -sbTexture.size * sbTexture.anchor,
+                        .size = sbTexture.size,
+                        .texture = img.get()
+                    });
+                    cvs.restore();
+                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedHitEffectTexture>(obj)) {
+                    auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedHitEffectTexture>(obj);
+                    auto& img = hitEffectTextures[std::clamp<ep_u64>(effect.progress * hitEffectTextures.size(), 0, hitEffectTextures.size() - 1)];
+
+                    cvs.save();
+                    cvs.translate(effect.position);
+                    cvs.rotateDegrees(effect.rotation);
+                    cvs.drawRect({
+                        .position = -effect.size / 2,
+                        .size = effect.size,
+                        .color = effect.color,
+                        .texture = img.get()
+                    });
+                    cvs.restore();
+                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedRect>(obj)) {
+                    auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedRect>(obj);
+
+                    cvs.save();
+                    cvs.translate(effect.position);
+                    cvs.rotateDegrees(effect.rotation);
+                    cvs.drawRect({
+                        .position = -effect.size / 2,
+                        .size = effect.size,
+                        .color = effect.color
+                    });
+                    cvs.restore();
+                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedPoly>(obj)) {
+                    auto& poly = std::get<easy_phi::CalculatedFrame::CalculatedPoly>(obj);
+
+                    Mesh mesh {};
+                    mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
+                    mesh.color = poly.color;
+                    cvs.drawMesh(mesh);
+                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedShader>(obj)) {
+                    auto& shader = std::get<easy_phi::CalculatedFrame::CalculatedShader>(obj);
+                }
+            }
+
+            if (!renderConfig.disableHitsound) {
+                for (auto& i : frame.hitsounds) {
+                    hitsoundPlayer(i.first);
+                }
+            }
         }
 
         private:
@@ -6091,8 +6239,8 @@ struct CalculatedFrame {
         std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
         std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
         std::unordered_map<ep_u64, ep_sp<GL::TextureInfo>> storyboardTextures;
-        static constexpr ep_u64 maxTextTextures = 128;
-        std::unordered_map<std::string, ep_sp<GL::TextureInfo>> cachedTextTextures;
+        ep_u64 maxTextTextures = 128;
+        std::map<std::pair<std::string, ep_u64>, ep_sp<GL::TextureInfo>> cachedTextTextures;
 
         ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedRGBATexture& decoded) {
             if (!decoded.valid()) throw std::runtime_error("texture is invalid");
@@ -6108,8 +6256,10 @@ struct CalculatedFrame {
             storyboardTextures.clear();
         }
 
-        ep_sp<GL::TextureInfo> getTextTexture(const std::string& text, ep_u64 size) {
-            if (cachedTextTextures.find(text) == cachedTextTextures.end()) {
+        ep_sp<GL::TextureInfo> getTextTexture(const std::string& text, ep_u64 fontSize) {
+            auto key = std::make_pair(text, fontSize);
+
+            if (cachedTextTextures.find(key) == cachedTextTextures.end()) {
                 if (cachedTextTextures.size() >= maxTextTextures) {
                     static std::mt19937 rng { std::random_device {} () };
                     std::uniform_int_distribution<ep_u64> dist { 0, cachedTextTextures.size() - 1 };
@@ -6119,31 +6269,40 @@ struct CalculatedFrame {
                     cachedTextTextures.erase(it);
                 }
 
-                auto decoded = textRenderer(text, size);
+                auto decoded = textRenderer(text, fontSize);
                 auto tex = loadTextureFromDecoded(decoded);
-                cachedTextTextures[text] = tex;
+                cachedTextTextures[key] = tex;
             }
 
-            return cachedTextTextures[text];
+            return cachedTextTextures[key];
         }
 
+        struct DrawTextConfig {
+            std::string text; ep_f64 fontSize;
+            GL::GLvec2 pos, anchor;
+            ep_f64 rotation;
+            GL::GLvec4 color;
+        };
         void drawText(
             GL::GL33Context::Canvas& cvs,
-            const Vec2& pos, const Vec2& anchor,
-            const std::string& text, ep_f64 size,
-            const Color& color
+            const DrawTextConfig& config
         ) {
-            const ep_u64 isize = 100;
-            auto tex = getTextTexture(text, isize);
-            ep_f64 scale = size / isize;
+            ep_u64 isize = std::ceil(config.fontSize / 48) * 48;
+            auto tex = getTextTexture(config.text, isize);
+            ep_f64 scale = config.fontSize / isize;
 
+            auto size = tex->size() * scale;
+
+            cvs.save();
+            cvs.translate(config.pos);
+            cvs.rotateDegrees(config.rotation);
             cvs.drawRect({
-                .position = pos,
-                .size = tex->size() * scale,
-                .anchor = anchor,
-                .color = color,
+                .position = -size * config.anchor,
+                .size = size,
+                .color = config.color,
                 .texture = tex.get()
             });
+            cvs.restore();
         }
     };
 };
@@ -6347,7 +6506,7 @@ void calculateFrame(
                             lineColor.applyAlpha(lineAlpha),
                             Transform2D()
                                 .translate(lineScreenPosition)
-                                .rotateDegress(lineRotation)
+                                .rotateDegrees(lineRotation)
                         );
                     }
                 }
@@ -6384,7 +6543,7 @@ void calculateFrame(
 
                 Transform2D noteTransform;
                 noteTransform.translate(noteScreenHeadPosition);
-                noteTransform.rotateDegress(frameInfo.textureRotation);
+                noteTransform.rotateDegrees(frameInfo.textureRotation);
                 noteTransform.scale(1.0, -1.0);
 
                 Vec2 noteQuad[4] = {
@@ -6480,7 +6639,7 @@ void calculateFrame(
             auto size = standardNoteWidth / 5.3 * chart.options.hitEffectParticleSize * (((0.20783014 * progress - 1.65243926) * progress + 1.6398785) * progress + 0.49884492);
             auto distance = standardNoteWidth / 180 * chart.options.hitEffectParticleDistance * particle.size * (((850.3997391752 * progress + 6236.3848902154) * progress + 80.3542231806) * progress / ((6570.5817658876 * progress + 495.7977913926) * progress + 1.0));
 
-            auto particlePosition = toScreen(info.headPosition.rotateDegress(particle.rotation, distance));
+            auto particlePosition = toScreen(info.headPosition.rotateDegrees(particle.rotation, distance));
             frame.objects.push_back(CalculatedFrame::CalculatedRect {
                 .position = particlePosition,
                 .size = { size, size },
@@ -6530,7 +6689,7 @@ void calculateFrame(
             .translate(safeAreaPosition)
             .translate(progressBarAttachUIData.position)
             .scale(progressBarAttachUIData.scale)
-            .rotateDegress(progressBarAttachUIData.rotation)
+            .rotateDegrees(progressBarAttachUIData.rotation)
     );
 
     frame.addPoly(
@@ -6542,7 +6701,7 @@ void calculateFrame(
             .translate(progressBarWidth - progressBarPointWidth, 0.0)
             .translate(progressBarAttachUIData.position)
             .scale(progressBarAttachUIData.scale)
-            .rotateDegress(progressBarAttachUIData.rotation)
+            .rotateDegrees(progressBarAttachUIData.rotation)
     );
 
     auto pauseButtonPosition = Vec2 { 3.16669, 3.6065 } * progressBarHeight;
@@ -6560,7 +6719,7 @@ void calculateFrame(
             .translate(pauseButtonPosition)
             .translate(pauseButtonAttachUIData.position)
             .scale(pauseButtonAttachUIData.scale)
-            .rotateDegress(pauseButtonAttachUIData.rotation)
+            .rotateDegrees(pauseButtonAttachUIData.rotation)
     );
 
     frame.addPoly(
@@ -6572,7 +6731,7 @@ void calculateFrame(
             .translate(pauseButtonPosition)
             .translate(pauseButtonAttachUIData.position)
             .scale(pauseButtonAttachUIData.scale)
-            .rotateDegress(pauseButtonAttachUIData.rotation)
+            .rotateDegrees(pauseButtonAttachUIData.rotation)
     );
 
     if (combo >= 3) {
@@ -6725,13 +6884,11 @@ namespace easy_phi {
             }
 
             auto tex = DecodedRGBATexture::Make(iwidth, bottom - top);
-            std::cout << "texture size: " << tex.width << "x" << tex.height << std::endl;
             ep_f64 x = 0;
 
             for (auto& dc : chars) {
                 ep_i64 y = dc.yoff - top;
                 ep_i64 ix = std::floor(x);
-                std::cout << "paste: " << ix << "," << y << " " << dc.tex.width << "x" << dc.tex.height << std::endl;
                 tex.paste(dc.tex, ix, y);
                 x += dc.advance_width;
             }

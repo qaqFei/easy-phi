@@ -1334,7 +1334,9 @@ struct WindowWOSkia {
         }
 
         double renderSt = globalTimer();
-        renderer->render(calculateFrameConfig, calculatedFrame);
+        renderer->render(calculateFrameConfig, calculatedFrame, {
+            .disableHitsound = mainloopConfig.isRenderingVideo
+        });
 
         if (mainloopConfig.pccfi) {
             mainloopConfig.pccfi->screenSize = { (double)width, (double)height };
