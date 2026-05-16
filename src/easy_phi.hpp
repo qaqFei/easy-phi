@@ -3877,18 +3877,18 @@ struct DecodedRGBATexture {
     }
 
     void paste(const DecodedRGBATexture& other, ep_i64 x, ep_i64 y) {
-        if (x >= width || y >= height) return;
+        if (x >= (ep_i64)width || y >= (ep_i64)height) return;
         if (x + other.width < 0 || y + other.height < 0) return;
 
-        for (ep_i64 i = 0; i < other.width; i++) {
+        for (ep_i64 i = 0; i < (ep_i64)other.width; i++) {
             ep_i64 px = i + x;
             if (px < 0) continue;
-            if (px >= width) break;
+            if (px >= (ep_i64)width) break;
 
-            for (ep_i64 j = 0; j < other.height; j++) {
+            for (ep_i64 j = 0; j < (ep_i64)other.height; j++) {
                 ep_i64 py = j + y;
                 if (py < 0) continue;
-                if (py >= height) break;
+                if (py >= (ep_i64)height) break;
 
                 auto src_idx = (j * other.width + i) * 4;
                 auto dst_idx = (py * width + px) * 4;
@@ -6870,6 +6870,8 @@ namespace easy_phi {
                 dc.tex.fillWithGray(bitmap);
             }
 
+            if (chars.empty()) return DecodedRGBATexture::Make(2, 2);
+
             ep_i32 top = 0, bottom = 0;
             ep_f64 width = 0, real_right = 0;
 
@@ -6881,18 +6883,17 @@ namespace easy_phi {
                 real_right = std::max(real_right, width);
             }
 
-            ep_i32 iwidth = std::ceil(real_right);
+            ep_i32 padding = 2;
+            ep_i32 iwidth = std::ceil(real_right - chars.front().xoff + padding * 2);
 
-            if (top >= bottom) {
-                return DecodedRGBATexture::Make(2, 2);
-            }
+            if (top >= bottom || iwidth <= 0) return DecodedRGBATexture::Make(2, 2);
 
             auto tex = DecodedRGBATexture::Make(iwidth, bottom - top);
-            ep_f64 x = 0;
+            ep_f64 x = -chars.front().xoff + padding;
 
             for (auto& dc : chars) {
                 ep_i64 y = dc.yoff - top;
-                ep_i64 ix = std::floor(x);
+                ep_i64 ix = std::ceil(x + dc.xoff);
                 tex.paste(dc.tex, ix, y);
                 x += dc.advance_width;
             }
@@ -6934,6 +6935,6 @@ namespace easy_phi {
         return tex;
     }
 }
-#endif
+#endif // EASY_PHI_IMAGE_DECODER
 
 #endif // EASY_PHI_HPP

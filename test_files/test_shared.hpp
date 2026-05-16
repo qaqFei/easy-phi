@@ -677,7 +677,7 @@ struct VideoCap {
 
     bool writeAudio(const Pcm16& pcm) {
         if (wroteAudio) return false;
-        if (pcm.sampleRate != aCodecCtx->sample_rate || pcm.channels != aCodecCtx->ch_layout.nb_channels) return false;
+        if ((int)pcm.sampleRate != aCodecCtx->sample_rate || (int)pcm.channels != aCodecCtx->ch_layout.nb_channels) return false;
 
         const int frameSize = aCodecCtx->frame_size;
         for (uint64_t offset = 0; offset + frameSize * pcm.channels <= pcm.pcm.size(); offset += frameSize * pcm.channels) {
@@ -920,7 +920,7 @@ struct TelemetryDeckClient {
                     if ((unsigned)cpuInfo[0] >= 0x80000004) {
                         char brand[49] = {};
                         char* p = brand;
-                        for (int i = 0x80000002; i <= 0x80000004; ++i) {
+                        for (uint64_t i = 0x80000002; i <= 0x80000004; ++i) {
                             __cpuid(cpuInfo, i);
                             memcpy(p, cpuInfo, 16);
                             p += 16;
@@ -1813,7 +1813,7 @@ struct Window {
                 ), playingHitsounds.end()
             );
 
-            for (int i = std::max<int>(0, calculatedFrame.hitsounds.size() - hitsoundsBufferSize); i < calculatedFrame.hitsounds.size(); i++) {
+            for (int i = std::max<int>(0, calculatedFrame.hitsounds.size() - hitsoundsBufferSize); i < (int)calculatedFrame.hitsounds.size(); i++) {
                 auto& type = calculatedFrame.hitsounds[i].first;
                 
                 while (playingHitsounds.size() >= hitsoundsBufferSize) {
@@ -1902,7 +1902,7 @@ struct Window {
                 double t = note.time + chart.meta.offset;
                 if (config.sfxRandshake) t += sfxRandshakeDist(rng);
                 int64_t start = std::max<int64_t>(0, (int64_t)(t * PCM_FIXED_SAMPLE_RATE) * PCM_FIXED_CHANNELS);
-                if (start >= dst.pcm.size()) continue;
+                if (start >= (int64_t)dst.pcm.size()) continue;
 
                 auto& hitsoundPcm = noteHitsoundsPcm[note.type];
                 int64_t end = std::min<int64_t>(dst.pcm.size(), start + hitsoundPcm.pcm.size());
