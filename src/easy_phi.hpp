@@ -4059,6 +4059,8 @@ namespace GL {
 
         void (*glReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels);
         void (*glCopyTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height);
+        void (*glReadBuffer)(GLenum src);
+        void (*glDrawBuffer)(GLenum dst);
 
         void (*glGenQueries)(GLsizei n, GLuint* ids);
         void (*glDeleteQueries)(GLsizei n, const GLuint* ids);
@@ -4412,6 +4414,8 @@ namespace GL {
 
         LOAD_AND_CHECK(glReadPixels)
         LOAD_AND_CHECK(glCopyTexSubImage2D)
+        LOAD_AND_CHECK(glReadBuffer)
+        LOAD_AND_CHECK(glDrawBuffer)
 
         LOAD_AND_CHECK(glGenQueries)
         LOAD_AND_CHECK(glDeleteQueries)
@@ -4504,6 +4508,13 @@ namespace GL {
         GLvec4& operator-=(GLfloat o) { x -= o; y -= o; z -= o; w -= o; return *this; }
         GLvec4& operator*=(GLfloat o) { x *= o; y *= o; z *= o; w *= o; return *this; }
         GLvec4& operator/=(GLfloat o) { x /= o; y /= o; z /= o; w /= o; return *this; }
+
+        static GLvec4 White() { return { 1.0, 1.0, 1.0, 1.0 }; }
+        static GLvec4 Black() { return { 0.0, 0.0, 0.0, 1.0 }; }
+        static GLvec4 Red() { return { 1.0, 0.0, 0.0, 1.0 }; }
+        static GLvec4 Green() { return { 0.0, 1.0, 0.0, 1.0 }; }
+        static GLvec4 Blue() { return { 0.0, 0.0, 1.0, 1.0 }; }
+        static GLvec4 Transparent() { return { 0.0, 0.0, 0.0, 0.0 }; }
     };
     static_assert(offsetof(GLvec4, x) == 0, "GLvec4.x must be at offset 0");
     static_assert(offsetof(GLvec4, y) == sizeof(GLfloat), "GLvec4.y must be at offset 1");
@@ -4539,6 +4550,10 @@ namespace GL {
             vertices.push_back({ position, uvPosition });
             vertices.push_back({ position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y } });
             vertices.push_back({ position + size, uvPosition + uvSize });
+        }
+
+        void addFullRect() {
+            addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
         }
     };
 
@@ -4841,8 +4856,8 @@ namespace GL {
         using BufferFillerFunc = std::function<void(ProgramInfo*, std::vector<Vertex>*)>;
         BufferFillerFunc bufferFiller;
 
-        void attachShader(const ShaderInfo& shader) {
-            glRef->glAttachShader(id, shader.id);
+        void attachShader(ShaderInfo* shader) {
+            glRef->glAttachShader(id, shader->id);
         }
 
         bool link(std::string* outLog = nullptr) {
@@ -4888,23 +4903,23 @@ namespace GL {
 
             GLint location;
 
-            void set(GLfloat v0) { ref->glRef->glUniform1f(location, v0); }
-            void set(GLfloat v0, GLfloat v1) { ref->glRef->glUniform2f(location, v0, v1); }
-            void set(GLfloat v0, GLfloat v1, GLfloat v2) { ref->glRef->glUniform3f(location, v0, v1, v2); }
-            void set(GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3) { ref->glRef->glUniform4f(location, v0, v1, v2, v3); }
+            void setf(GLfloat v0) { ref->glRef->glUniform1f(location, v0); }
+            void setf(GLfloat v0, GLfloat v1) { ref->glRef->glUniform2f(location, v0, v1); }
+            void setf(GLfloat v0, GLfloat v1, GLfloat v2) { ref->glRef->glUniform3f(location, v0, v1, v2); }
+            void setf(GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3) { ref->glRef->glUniform4f(location, v0, v1, v2, v3); }
             
-            void set(GLint v0) { ref->glRef->glUniform1i(location, v0); }
-            void set(GLint v0, GLint v1) { ref->glRef->glUniform2i(location, v0, v1); }
-            void set(GLint v0, GLint v1, GLint v2) { ref->glRef->glUniform3i(location, v0, v1, v2); }
-            void set(GLint v0, GLint v1, GLint v2, GLint v3) { ref->glRef->glUniform4i(location, v0, v1, v2, v3); }
+            void seti(GLint v0) { ref->glRef->glUniform1i(location, v0); }
+            void seti(GLint v0, GLint v1) { ref->glRef->glUniform2i(location, v0, v1); }
+            void seti(GLint v0, GLint v1, GLint v2) { ref->glRef->glUniform3i(location, v0, v1, v2); }
+            void seti(GLint v0, GLint v1, GLint v2, GLint v3) { ref->glRef->glUniform4i(location, v0, v1, v2, v3); }
 
-            void set(const std::array<GLfloat, 2>& value) { set(value[0], value[1]); }
-            void set(const std::array<GLfloat, 3>& value) { set(value[0], value[1], value[2]); }
-            void set(const std::array<GLfloat, 4>& value) { set(value[0], value[1], value[2], value[3]); }
+            void setfa2(const std::array<GLfloat, 2>& value) { setf(value[0], value[1]); }
+            void setfa3(const std::array<GLfloat, 3>& value) { setf(value[0], value[1], value[2]); }
+            void setfa4(const std::array<GLfloat, 4>& value) { setf(value[0], value[1], value[2], value[3]); }
 
-            void set(const GLvec2& value) { set(value.x, value.y); }
-            void set(const GLvec3& value) { set(value.x, value.y, value.z); }
-            void set(const GLvec4& value) { set(value.x, value.y, value.z, value.w); }
+            void setv2(const GLvec2& value) { setf(value.x, value.y); }
+            void setv3(const GLvec3& value) { setf(value.x, value.y, value.z); }
+            void setv4(const GLvec4& value) { setf(value.x, value.y, value.z, value.w); }
 
             void set1fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform1fv(location, count, value); }
             void set2fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform2fv(location, count, value); }
@@ -4966,8 +4981,9 @@ namespace GL {
             : glRef(other.glRef)
             , target(other.target)
             , id(std::exchange(other.id, 0))
-            , cahcedRawData(std::move(other.cahcedRawData))
-            , cachedInternalFormat(other.cachedInternalFormat)
+            , width(other.width) , height(other.height)
+            , frameBuffer(std::move(other.frameBuffer))
+            , pingPong(std::move(other.pingPong))
         {}
 
         TextureInfo& operator=(TextureInfo&& other) noexcept {
@@ -4976,8 +4992,9 @@ namespace GL {
                 glRef = other.glRef;
                 target = other.target;
                 id = std::exchange(other.id, 0);
-                cahcedRawData = std::move(other.cahcedRawData);
-                cachedInternalFormat = other.cachedInternalFormat;
+                width = other.width; height = other.height;
+                frameBuffer = std::move(other.frameBuffer);
+                pingPong = std::move(other.pingPong);
             }
 
             return *this;
@@ -4988,8 +5005,9 @@ namespace GL {
         GLenum target;
         GLuint id;
         
-        DecodedRGBATexture cahcedRawData;
-        GLint cachedInternalFormat = GL_RGBA8;
+        GLsizei width, height;
+        ep_sp<FramebufferInfo> frameBuffer;
+        ep_sp<TextureInfo> pingPong;
 
         struct UsingGuard {
             TextureInfo* ref;
@@ -5003,41 +5021,22 @@ namespace GL {
             }
 
             // only GL_RGBA and GL_UNSIGNED_BYTE ;)
-            void image2D(GLint level, GLint internalformat, GLsizei width, GLsizei height, const void* pixels) {
+            void image2D(GLsizei width, GLsizei height, const void* pixels) {
                 if (width <= 0 || height <= 0) return;
 
-                ref->glRef->glTexImage2D(ref->target, level, internalformat, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-                setFilterRecommended();
+                ref->glRef->glTexImage2D(ref->target, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-                ref->cahcedRawData.data = std::vector<uint8_t>((uint8_t*)pixels, (uint8_t*)pixels + width * height * 4);
-                ref->cahcedRawData.width = width;
-                ref->cahcedRawData.height = height;
-                ref->cachedInternalFormat = internalformat;
+                ref->width = width; ref->height = height;
             }
 
-            void parameteri(GLenum pname, GLint param) {
-                ref->glRef->glTexParameteri(ref->target, pname, param);
-            }
-
-            void parameterf(GLenum pname, GLfloat param) {
-                ref->glRef->glTexParameterf(ref->target, pname, param);
-            }
-
-            void generateMipmap() {
-                ref->glRef->glGenerateMipmap(ref->target);
+            void image2D(const DecodedRGBATexture& decoded) {
+                image2D(decoded.width, decoded.height, (void*)decoded.data.data());
             }
 
             void storage2D(GLint levels, GLenum internalformat, GLsizei width, GLsizei height) {
                 ref->glRef->glTexStorage2D(ref->target, levels, internalformat, width, height);
-            }
-
-            void setFilter(GLenum minFilter, GLenum magFilter) {
-                parameteri(GL_TEXTURE_MIN_FILTER, minFilter);
-                parameteri(GL_TEXTURE_MAG_FILTER, magFilter);
-            }
-
-            void setFilterRecommended() {
-                setFilter(GL_LINEAR, GL_LINEAR);
             }
 
             ~UsingGuard() {
@@ -5049,142 +5048,13 @@ namespace GL {
             return UsingGuard(*this, index);
         }
 
-        using StaticEffector = std::function<void(TextureInfo*)>;
-        void applyStaticEffect(const StaticEffector& effector) {
-            if (cahcedRawData.width <= 0 || cahcedRawData.height <= 0) return;
-
-            effector(this);
-            use().image2D(
-                0, cachedInternalFormat,
-                cahcedRawData.width, cahcedRawData.height,
-                (void*)cahcedRawData.data.data()
-            );
+        bool sizeIsSame(TextureInfo* other) {
+            return other->width == width && other->height == height;
         }
 
-        struct StaticEffectorPresets {
-            static StaticEffector gaussianBlur(GLuint radius) { // by me and kimi ;)
-                return [radius](TextureInfo* texture) {
-                    const ep_i64 width = texture->cahcedRawData.width;
-                    const ep_i64 height = texture->cahcedRawData.height;
-                    ep_u8* srcData = texture->cahcedRawData.data.data();
-
-                    const ep_i64 q = std::min<ep_i64>(std::max<ep_i64>(radius / 16, 1), radius);
-                    const ep_i64 weightCount = radius / q + 2;
-                    std::vector<ep_f32> weights(weightCount);
-                    auto guassian = [](ep_f32 x) { return std::exp(-x * x / 0.18f); };
-                    for (ep_i64 i = 0; i < weightCount; i++) weights[i] = guassian((ep_f32)(i * q) / radius);
-
-                    std::vector<ep_f32> hBlur;
-                    hBlur.resize(width * height * 3);
-                    std::vector<ep_f32> transposed;
-                    transposed.resize(width * height * 3);
-
-                    auto threadCount = std::thread::hardware_concurrency();
-                    threadCount = threadCount ? threadCount : 4;
-                    std::vector<std::thread> threads;
-                    threads.reserve(threadCount);
-
-                    for (int t = 0; t < threadCount; t++) {
-                        threads.emplace_back(std::thread([&, t]() {
-                            const ep_i64 startY = t * height / threadCount;
-                            const ep_i64 endY = (t + 1) * height / threadCount;
-
-                            for (ep_i64 y = startY; y < endY; y++) {
-                                const ep_i64 rowOffset = y * width;
-                                const ep_u8* srcRow = srcData + rowOffset * 4;
-                                ep_f32* dstRow = hBlur.data() + rowOffset * 3;
-
-                                for (ep_i64 x = 0; x < width; x++) {
-                                    const ep_i64 pxs = std::max<ep_i64>(0, x - radius);
-                                    const ep_i64 pxe = std::min<ep_i64>(width, x + radius + 1);
-
-                                    ep_f64 sumR = 0, sumG = 0, sumB = 0, wsum = 0;
-
-                                    for (ep_i64 px = pxs; px < pxe; px += q) {
-                                        const ep_i64 offset = px - x;
-                                        const ep_f32 w = weights[std::abs(offset) / q];
-                                        const ep_u8* pixel = srcRow + px * 4;
-
-                                        sumR += pixel[0] * w;
-                                        sumG += pixel[1] * w;
-                                        sumB += pixel[2] * w;
-                                        wsum += w;
-                                    }
-
-                                    const ep_f32 invWsum = 1.0f / wsum;
-                                    dstRow[x * 3 + 0] = sumR * invWsum;
-                                    dstRow[x * 3 + 1] = sumG * invWsum;
-                                    dstRow[x * 3 + 2] = sumB * invWsum;
-                                }
-                            }
-                        }));
-                    }
-
-                    for (auto& thread : threads) thread.join();
-                    threads.clear();
-
-                    for (int t = 0; t < threadCount; t++) {
-                        threads.emplace_back(std::thread([&, t]() {
-                            const ep_i64 startX = t * width / threadCount;
-                            const ep_i64 endX = (t + 1) * width / threadCount;
-
-                            for (ep_i64 x = startX; x < endX; x++) {
-                                for (ep_i64 y = 0; y < height; y++) {
-                                    const ep_f32* srcPixel = hBlur.data() + (y * width + x) * 3;
-                                    ep_f32* dstPixel = transposed.data() + (x * height + y) * 3;
-                                    dstPixel[0] = srcPixel[0];
-                                    dstPixel[1] = srcPixel[1];
-                                    dstPixel[2] = srcPixel[2];
-                                }
-                            }
-                        }));
-                    }
-
-                    for (auto& thread : threads) thread.join();
-                    threads.clear();
-
-                    for (int t = 0; t < threadCount; t++) {
-                        threads.emplace_back(std::thread([&, t]() {
-                            const ep_i64 startX = t * width / threadCount;
-                            const ep_i64 endX = (t + 1) * width / threadCount;
-
-                            for (ep_i64 x = startX; x < endX; x++) {
-                                const ep_i64 colOffset = x * height;
-                                const ep_f32* srcCol = transposed.data() + colOffset * 3;
-                                ep_u8* dstCol = srcData + x * 4;
-
-                                for (ep_i64 y = 0; y < height; y++) {
-                                    const ep_i64 pys = std::max<ep_i64>(0, y - radius);
-                                    const ep_i64 pye = std::min<ep_i64>(height, y + radius + 1);
-
-                                    ep_f64 sumR = 0, sumG = 0, sumB = 0, wsum = 0;
-
-                                    for (ep_i64 py = pys; py < pye; py += q) {
-                                        const ep_i64 offset = py - y;
-                                        const ep_f32 w = weights[std::abs(offset) / q];
-                                        const ep_f32* pixel = srcCol + py * 3;
-
-                                        sumR += pixel[0] * w;
-                                        sumG += pixel[1] * w;
-                                        sumB += pixel[2] * w;
-                                        wsum += w;
-                                    }
-
-                                    const ep_f32 invWsum = 1.0f / wsum;
-                                    ep_u8* dstPixel = dstCol + y * width * 4;
-                                    dstPixel[0] = (ep_u8)std::clamp(sumR * invWsum, 0.0, 255.0);
-                                    dstPixel[1] = (ep_u8)std::clamp(sumG * invWsum, 0.0, 255.0);
-                                    dstPixel[2] = (ep_u8)std::clamp(sumB * invWsum, 0.0, 255.0);
-                                    dstPixel[3] = 255;
-                                }
-                            }
-                        }));
-                    }
-
-                    for (auto& thread : threads) thread.join();
-                };
-            }
-        };
+        GLvec2 size() {
+            return { width, height };
+        }
 
         ~TextureInfo() {
             reset();
@@ -5227,8 +5097,15 @@ namespace GL {
             FramebufferInfo* ref;
             GLenum target;
 
-            UsingGuard(FramebufferInfo& framebuffer, GLenum target) : ref(&framebuffer), target(target) {
+            UsingGuard(FramebufferInfo& framebuffer, TextureInfo* texture, GLenum target) : ref(&framebuffer), target(target) {
                 ref->glRef->glBindFramebuffer(target, ref->id);
+                ref->glRef->glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, texture->target, texture->id, 0);
+
+                if (target == GL_READ_FRAMEBUFFER) {
+                    ref->glRef->glReadBuffer(GL_COLOR_ATTACHMENT0);
+                } else if (target == GL_DRAW_FRAMEBUFFER) {
+                    ref->glRef->glDrawBuffer(GL_COLOR_ATTACHMENT0);
+                }
             }
 
             ~UsingGuard() {
@@ -5236,12 +5113,8 @@ namespace GL {
             }
         };
 
-        UsingGuard use(GLenum target = GL_FRAMEBUFFER) {
-            return UsingGuard(*this, target);
-        }
-
-        void texture2D(GLint attachment, const TextureInfo& texture, GLenum target = GL_FRAMEBUFFER, GLint level = 0) {
-            glRef->glFramebufferTexture2D(target, attachment, texture.target, texture.id, level);
+        UsingGuard use(TextureInfo* texture, GLenum target) {
+            return UsingGuard(*this, texture, target);
         }
 
         void blit(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter = GL_NEAREST) {
@@ -5494,8 +5367,30 @@ void main() {
         void disable(GLenum cap) { gl.glDisable(cap); }
         bool isEnabled(GLenum cap) const { return gl.glIsEnabled(cap); }
 
+        struct GLFeatureGuard {
+            GL33Context* glCtx;
+            GLenum cap; bool enable;
+
+            GLFeatureGuard(GL33Context* glCtx, GLenum cap, bool enable) : glCtx(glCtx), cap(cap), enable(enable) {}
+            GLFeatureGuard(const GLFeatureGuard&) = delete;
+            GLFeatureGuard& operator=(const GLFeatureGuard&) = delete;
+            GLFeatureGuard(GLFeatureGuard&& other) = delete;
+            GLFeatureGuard& operator=(GLFeatureGuard&& other) = delete;
+
+            ~GLFeatureGuard() {
+                if (enable && !glCtx->isEnabled(cap)) glCtx->enable(cap);
+                else if (!enable && glCtx->isEnabled(cap)) glCtx->disable(cap);
+            }
+        };
+
+        GLFeatureGuard getFeatureGuard(GLenum cap) {
+            return GLFeatureGuard(this, cap, isEnabled(cap));
+        }
+
         void setViewport(GLint x, GLint y, GLsizei width, GLsizei height) { gl.glViewport(x, y, width, height); }
         void setViewport(GLsizei width, GLsizei height) { gl.glViewport(0, 0, width, height); }
+        void setViewport(const GLvec2& xy, const GLvec2& wh) { gl.glViewport(xy.x, xy.y, wh.x, wh.y); }
+        void setViewport(const GLvec4& rect) { gl.glViewport(rect.x, rect.y, rect.z, rect.w); }
 
         void setScissor(GLint x, GLint y, GLsizei width, GLsizei height) { gl.glScissor(x, y, width, height); }
         void setScissor(GLsizei width, GLsizei height) { gl.glScissor(0, 0, width, height); }
@@ -5547,6 +5442,7 @@ void main() {
             info->glRef = &gl;
             info->target = target;
             gl.glGenTextures(1, &info->id);
+            info->frameBuffer = createFramebuffer();
             return ep_sp<TextureInfo>(info);
         }
 
@@ -5605,6 +5501,96 @@ void main() {
             return ep_sp<SyncInfo>(info);
         }
 
+        ep_sp<ProgramInfo> createConfiguredProgram(const std::string& fragCode) {
+            auto vert = createShader(GL_VERTEX_SHADER);
+            auto frag = createShader(GL_FRAGMENT_SHADER);
+            
+            vert->source(defaultVertexShaderSource);
+            frag->source(fragCode);
+
+            std::string log;
+            if (!vert->compile(&log)) throw std::runtime_error("vertex compile: " + log);
+            if (!frag->compile(&log)) throw std::runtime_error("fragment compile: " + log);
+
+            auto prog = createProgram();
+            prog->attachShader(vert.get());
+            prog->attachShader(frag.get());
+            if (!prog->link(&log)) throw std::runtime_error("program link: " + log);
+
+            prog->vbo = createBuffer();
+            prog->bufferFiller = [](ProgramInfo* prog, std::vector<Vertex>* vertices) {
+                auto vaoGuard = prog->vao->use();
+                auto vboGuard = prog->vbo->use();
+                vboGuard.data(
+                    vertices->size() * sizeof(Vertex),
+                    vertices->data(),
+                    GL_DYNAMIC_DRAW
+                );
+            };
+
+            prog->vao = createVertexArray();
+            
+            {
+                auto vaoGuard = prog->vao->use();
+                auto vboGuard = prog->vbo->use();
+                auto inPosition = prog->getAttribLocationPosition("inPosition");
+                auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
+                vaoGuard.enable(inPosition);
+                vaoGuard.enable(inTexCoord);
+                vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
+                vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
+            }
+
+            return prog;
+        }
+
+        struct ProgramPresets {
+            static ep_sp<ProgramInfo> gaussianBlur(GL33Context* glCtx) {
+                return glCtx->createConfiguredProgram(R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+
+uniform vec4 uColor;
+uniform sampler2D uTexture;
+
+uniform vec2 uDelta; // (0, 1) or (1, 0)
+uniform float uRadius; // 0.0 - 1.0
+uniform int uIterations;
+uniform bool uUseColor;
+
+out vec4 outColor;
+
+vec4 sampleTexture(vec2 texCoord) {
+    return texture(uTexture, texCoord);
+}
+
+float gaussian(float x) {
+    return exp(-(x * x) / 0.18);
+}
+
+void main() {
+    vec4 sum = vec4(0.0);
+    float wsum = 0.0;
+    
+    for (int i = -uIterations; i <= uIterations; i++) {
+        float offset = float(i) / float(uIterations);
+        float weight = gaussian(offset);
+        sum += sampleTexture(fragTexCoord + uDelta * offset * uRadius) * weight;
+        wsum += weight;
+    }
+
+    outColor = sum / wsum;
+    outColor.a = 1.0;
+
+    if (uUseColor) {
+        outColor *= uColor;
+    }
+}
+)");
+            }
+        };
+
         void drawMesh(Mesh& mesh) {
             auto* prog = mesh.program ? mesh.program : defaultProgram.get();
             auto* tex = mesh.texture ? mesh.texture : defaultWhiteTexture.get();
@@ -5615,8 +5601,8 @@ void main() {
             auto progGuard = prog->use();
             auto texGuard = tex->use();
             auto vaoGuard = prog->vao->use();
-            prog->getUniformLocation("uColor").set(mesh.color);
-            prog->getUniformLocation("uTexture").set((GLint)texGuard.index);
+            prog->getUniformLocation("uColor").setv4(mesh.color);
+            prog->getUniformLocation("uTexture").seti(texGuard.index);
             gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.size());
         }
 
@@ -5629,6 +5615,82 @@ void main() {
             return GLvec4(vp[0], vp[1], vp[2], vp[3]);
         }
 
+        struct ViewportGuard {
+            GL33Context* glCtx;
+            GLvec4 vp;
+
+            ViewportGuard(GL33Context* glCtx, GLvec4 vp) : glCtx(glCtx), vp(vp) {}
+            ViewportGuard(const ViewportGuard&) = delete;
+            ViewportGuard& operator=(const ViewportGuard&) = delete;
+            ViewportGuard(ViewportGuard&& other) = delete;
+            ViewportGuard& operator=(ViewportGuard&& other) = delete;
+            ~ViewportGuard() { glCtx->setViewport(vp); }
+        };
+
+        ViewportGuard getViewportGuard() {
+            return ViewportGuard(this, getViewport());
+        }
+
+        void copyTexture(TextureInfo* src, TextureInfo* dst) {
+            if (!dst->sizeIsSame(src)) {
+                dst->use().image2D(src->width, src->height, nullptr);
+            }
+
+            auto srcFbGuard = src->frameBuffer->use(src, GL_READ_FRAMEBUFFER);
+            auto dstGuard = dst->use();
+
+            gl.glCopyTexSubImage2D(
+                GL_TEXTURE_2D, 0,
+                0, 0,
+                0, 0,
+                src->width, src->height
+            );
+        }
+
+        ep_sp<TextureInfo> ensureTexturePingPong(TextureInfo* texture) {
+            if (!texture->pingPong) texture->pingPong = createTexture();
+            copyTexture(texture, texture->pingPong.get());
+            return texture->pingPong;
+        }
+
+        void renderIntoTexture(TextureInfo* texture, Mesh& descMesh) {
+            auto vpGuard = getViewportGuard();
+            auto pingPong = ensureTexturePingPong(texture);
+            auto fbGuard = texture->frameBuffer->use(texture, GL_DRAW_FRAMEBUFFER);
+            auto feGuard = getFeatureGuard(GL_BLEND);
+
+            setViewport(texture->width, texture->height);
+            disable(GL_BLEND);
+
+            descMesh.vertices.clear();
+            descMesh.addFullRect();
+            descMesh.texture = pingPong.get();
+            drawMesh(descMesh);
+        }
+
+        void gaussianBlurToTexture(TextureInfo* texture, ep_f64 radius) {
+            Mesh mesh {};
+            mesh.program = preloadedPrograms.gaussianBlur.get();
+            mesh.color = GLvec4::White();
+
+            auto progGuard = mesh.program->use();
+            mesh.program->getUniformLocation("uIterations").seti(std::ceil(radius / (1.0 + 0.15 * std::log2(radius + 1))));
+
+            mesh.program->getUniformLocation("uDelta").setv2({ 0.0, 1.0 });
+            mesh.program->getUniformLocation("uRadius").setf(radius / texture->height);
+            mesh.program->getUniformLocation("uUseColor").seti(false);
+            renderIntoTexture(texture, mesh);
+
+            mesh.program->getUniformLocation("uDelta").setv2({ 1.0, 0.0 });
+            mesh.program->getUniformLocation("uRadius").setf(radius / texture->width);
+            mesh.program->getUniformLocation("uUseColor").seti(true);
+            renderIntoTexture(texture, mesh);
+        }
+
+        struct {
+            ep_sp<ProgramInfo> gaussianBlur;
+        } preloadedPrograms;
+
         private:
         ep_sp<ProgramInfo> defaultProgram;
         ep_sp<TextureInfo> defaultWhiteTexture;
@@ -5638,45 +5700,8 @@ void main() {
             if (resourcesInitialized) return;
             resourcesInitialized = true;
             
-            auto vert = createShader(GL_VERTEX_SHADER);
-            auto frag = createShader(GL_FRAGMENT_SHADER);
-
-            vert->source(defaultVertexShaderSource);
-            frag->source(defaultFragmentShaderSource);
-
-            std::string log;
-            if (!vert->compile(&log)) throw std::runtime_error("vertex compile: " + log);
-            if (!frag->compile(&log)) throw std::runtime_error("fragment compile: " + log);
-
-            defaultProgram = createProgram();
-            defaultProgram->attachShader(*vert);
-            defaultProgram->attachShader(*frag);
-            if (!defaultProgram->link(&log)) throw std::runtime_error("program link: " + log);
-
-            defaultProgram->vbo = createBuffer();
-            defaultProgram->bufferFiller = [](ProgramInfo* prog, std::vector<Vertex>* vertices) {
-                auto vaoGuard = prog->vao->use();
-                auto vboGuard = prog->vbo->use();
-                vboGuard.data(
-                    vertices->size() * sizeof(Vertex),
-                    vertices->data(),
-                    GL_DYNAMIC_DRAW
-                );
-            };
-
-            defaultProgram->vao = createVertexArray();
-
-            {
-                auto vaoGuard = defaultProgram->vao->use();
-                auto vboGuard = defaultProgram->vbo->use();
-                auto inPosition = defaultProgram->getAttribLocationPosition("inPosition");
-                auto inTexCoord = defaultProgram->getAttribLocationPosition("inTexCoord");
-                vaoGuard.enable(inPosition);
-                vaoGuard.enable(inTexCoord);
-                vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
-                vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
-            }
-
+            defaultProgram = createConfiguredProgram(defaultFragmentShaderSource);
+            preloadedPrograms.gaussianBlur = ProgramPresets::gaussianBlur(this);
 
             unsigned char whiteTextureData[16] = {
                 255, 255, 255, 255,
@@ -5687,8 +5712,6 @@ void main() {
 
             defaultWhiteTexture = createTexture();
             defaultWhiteTexture->use().image2D(
-                0,
-                GL_RGBA8,
                 2, 2,
                 (void*)(&whiteTextureData[0])
             );
@@ -5936,9 +5959,10 @@ struct CalculatedFrame {
         }
 
         void loadIllustion(const Data& data, CalculateFrameConfig& calcConfig) {
-            rawIllustionTexture = textureDeocder(data);
+            auto decoded = textureDeocder(data);
+            rawIllustionTexture = loadTextureFromDecoded(decoded);
             bluredIllustionCache.key = -1.0;
-            calcConfig.backgroundTextureSize = { rawIllustionTexture.width, rawIllustionTexture.height };
+            calcConfig.backgroundTextureSize = { rawIllustionTexture->width, rawIllustionTexture->height };
         }
 
         void loadResources(CalculateFrameConfig& calcConfig) {
@@ -6023,13 +6047,8 @@ struct CalculatedFrame {
 
             auto illuTex = bluredIllustionCache.get(frame.backgroundImageBlurRadius, [&]() {
                 auto tex = glCtx->createTexture();
-                tex->use().image2D(
-                    0, GL::GL_RGBA8,
-                    rawIllustionTexture.width, rawIllustionTexture.height,
-                    rawIllustionTexture.data.data()
-                );
-
-                tex->applyStaticEffect(TextureInfo::StaticEffectorPresets::gaussianBlur(frame.backgroundImageBlurRadius));
+                glCtx->copyTexture(rawIllustionTexture.get(), tex.get());
+                glCtx->gaussianBlurToTexture(tex.get(), frame.backgroundImageBlurRadius);
                 return tex;
             });
 
@@ -6067,7 +6086,7 @@ struct CalculatedFrame {
         }
 
         private:
-        DecodedRGBATexture rawIllustionTexture;
+        ep_sp<GL::TextureInfo> rawIllustionTexture;
         SKVCache<ep_f64, ep_sp<GL::TextureInfo>> bluredIllustionCache;
         std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
         std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
@@ -6079,11 +6098,7 @@ struct CalculatedFrame {
             if (!decoded.valid()) throw std::runtime_error("texture is invalid");
 
             auto tex = glCtx->createTexture();
-            tex->use().image2D(
-                0, GL::GL_RGBA8,
-                decoded.width, decoded.height,
-                decoded.data.data()
-            );
+            tex->use().image2D(decoded);
             return tex;
         }
 
@@ -6124,7 +6139,7 @@ struct CalculatedFrame {
 
             cvs.drawRect({
                 .position = pos,
-                .size = tex->cahcedRawData.size() * scale,
+                .size = tex->size() * scale,
                 .anchor = anchor,
                 .color = color,
                 .texture = tex.get()
