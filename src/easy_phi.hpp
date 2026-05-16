@@ -4477,6 +4477,8 @@ namespace GL {
         GLvec2& operator-=(GLfloat o) { x -= o; y -= o; return *this; }
         GLvec2& operator*=(GLfloat o) { x *= o; y *= o; return *this; }
         GLvec2& operator/=(GLfloat o) { x /= o; y /= o; return *this; }
+        bool operator==(const GLvec2& o) const { return x == o.x && y == o.y; }
+        bool operator!=(const GLvec2& o) const { return x != o.x || y != o.y; }
     };
     static_assert(offsetof(GLvec2, x) == 0, "GLvec2.x must be at offset 0");
     static_assert(offsetof(GLvec2, y) == sizeof(GLfloat), "GLvec2.y must be at offset 1");
@@ -4504,6 +4506,8 @@ namespace GL {
         GLvec3& operator-=(GLfloat o) { x -= o; y -= o; z -= o; return *this; }
         GLvec3& operator*=(GLfloat o) { x *= o; y *= o; z *= o; return *this; }
         GLvec3& operator/=(GLfloat o) { x /= o; y /= o; z /= o; return *this; }
+        bool operator==(const GLvec3& o) const { return x == o.x && y == o.y && z == o.z; }
+        bool operator!=(const GLvec3& o) const { return x != o.x || y != o.y || z != o.z; }
     };
     static_assert(offsetof(GLvec3, x) == 0, "GLvec3.x must be at offset 0");
     static_assert(offsetof(GLvec3, y) == sizeof(GLfloat), "GLvec3.y must be at offset 1");
@@ -4533,6 +4537,8 @@ namespace GL {
         GLvec4& operator-=(GLfloat o) { x -= o; y -= o; z -= o; w -= o; return *this; }
         GLvec4& operator*=(GLfloat o) { x *= o; y *= o; z *= o; w *= o; return *this; }
         GLvec4& operator/=(GLfloat o) { x /= o; y /= o; z /= o; w /= o; return *this; }
+        bool operator==(const GLvec4& o) const { return x == o.x && y == o.y && z == o.z && w == o.w; }
+        bool operator!=(const GLvec4& o) const { return x != o.x || y != o.y || z != o.z || w != o.w; }
 
         static GLvec4 White() { return { 1.0, 1.0, 1.0, 1.0 }; }
         static GLvec4 Black() { return { 0.0, 0.0, 0.0, 1.0 }; }
