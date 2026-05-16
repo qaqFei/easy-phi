@@ -1,4 +1,5 @@
 #define EASY_PHI_TEXT_RENDERER
+#define EASY_PHI_IMAGE_DECODER
 #include <easy_phi.hpp>
 
 #include <miniaudio/miniaudio.h>
@@ -1134,18 +1135,7 @@ struct WindowWOSkia {
 
         renderer = easy_phi::CalculatedFrame::GLRenderer::Make();
 
-        renderer->textureDeocder = [](const easy_phi::Data& data) -> easy_phi::DecodedRGBATexture {
-            auto image = loadImage(data);
-            SkImageInfo dstInfo = SkImageInfo::Make(image->width(), image->height(), kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
-            std::vector<uint8_t> buffer(dstInfo.minRowBytes() * dstInfo.height());
-            SkPixmap dstPixmap(dstInfo, buffer.data(), dstInfo.minRowBytes());
-            image->readPixels(dstPixmap, 0, 0);
-            return {
-                .data = std::move(buffer),
-                .width = (uint64_t)image->width(),
-                .height = (uint64_t)image->height()
-            };
-        };
+        renderer->textureDeocder = easy_phi::decodeImage;
         
         renderer->textRenderer = [this](const std::string& text, easy_phi::ep_u64 size) -> easy_phi::DecodedRGBATexture {
             return textRenderer.render(text, size);

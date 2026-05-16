@@ -6907,4 +6907,33 @@ namespace easy_phi {
 }
 #endif // EASY_PHI_TEXT_RENDERER
 
+#ifdef EASY_PHI_IMAGE_DECODER
+#define STB_IMAGE_IMPLEMENTATION
+#include "helpers/stb_image.h"
+namespace easy_phi {
+    DecodedRGBATexture decodeImage(const Data& data) {
+        int width, height, channels;
+        ep_u8* pixels = stbi_load_from_memory (
+            data.data.data(),
+            data.data.size(),
+            &width, &height, &channels,
+            4
+        );
+
+        if (!pixels) {
+            throw std::runtime_error("failed to decode image");
+        }
+
+        DecodedRGBATexture tex {
+            .data = std::vector<ep_u8>(pixels, pixels + width * height * 4),
+            .width = (ep_u64)width,
+            .height = (ep_u64)height
+        };
+
+        stbi_image_free(pixels);
+        return tex;
+    }
+}
+#endif
+
 #endif // EASY_PHI_HPP

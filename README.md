@@ -36,6 +36,8 @@ If you want to use some extra features, you can define the following macros ([`h
 
 - `EASY_PHI_TEXT_RENDERER`: Enable internal text renderer, using [`stb_truetype`](https://github.com/nothings/stb/blob/master/stb_truetype.h).
 
+- `EASY_PHI_IMAGE_DECODER`: Enable internal image decoder, using [`stb_image`](https://github.com/nothings/stb/blob/master/stb_image.h).
+
 ### Tests
 
 Tests only supports Windows, and you need to install [python](https://www.python.org/downloads/) and  [mingw-w64](https://mingw-w64.org/doku.php/download) that supports C++20 or later to build the test programs.
