@@ -1472,7 +1472,7 @@ struct PhiChart {
 
         ep_f64 unsafeBackgroundDim = 0.8;
         ep_f64 backgroundDim = 0.6;
-        ep_f64 backgroundTextureBlurRadius = (ep_f64)1 / 50;
+        ep_f64 backgroundTextureBlurRadius = (ep_f64)1 / 20;
 
         Color lineDefaultColor = { (ep_f64)0xff / 0xff, (ep_f64)0xec / 0xff, (ep_f64)0x9f / 0xff, 1.0 };
 
@@ -4616,7 +4616,7 @@ namespace GL {
 
             template <typename T>
             void data(std::span<const T> data, GLenum usage) {
-                ref->glRef->glBufferData(ref->target, data.size() * sizeof(T), data.data(), usage);
+                data(ref->target, data.size() * sizeof(T), data.data(), usage);
             }
 
             void subData(GLintptr offset, GLsizeiptr size, const void* data) {
@@ -5403,10 +5403,14 @@ void main() {
             return GLFeatureGuard(this, cap, isEnabled(cap));
         }
 
-        void setViewport(GLint x, GLint y, GLsizei width, GLsizei height) { gl.glViewport(x, y, width, height); }
-        void setViewport(GLsizei width, GLsizei height) { gl.glViewport(0, 0, width, height); }
-        void setViewport(const GLvec2& xy, const GLvec2& wh) { gl.glViewport(xy.x, xy.y, wh.x, wh.y); }
-        void setViewport(const GLvec4& rect) { gl.glViewport(rect.x, rect.y, rect.z, rect.w); }
+        void setViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
+            currentViewport = { x, y, width, height };
+            gl.glViewport(x, y, width, height);
+        }
+
+        void setViewport(GLsizei width, GLsizei height) { setViewport(0, 0, width, height); }
+        void setViewport(const GLvec2& xy, const GLvec2& wh) { setViewport(xy.x, xy.y, wh.x, wh.y); }
+        void setViewport(const GLvec4& rect) { setViewport(rect.x, rect.y, rect.z, rect.w); }
 
         void setScissor(GLint x, GLint y, GLsizei width, GLsizei height) { gl.glScissor(x, y, width, height); }
         void setScissor(GLsizei width, GLsizei height) { gl.glScissor(0, 0, width, height); }
@@ -5582,7 +5586,7 @@ vec4 sampleTexture(vec2 texCoord) {
 }
 
 float gaussian(float x) {
-    return exp(-(x * x) / 0.18);
+    return exp(-x * x / 0.24);
 }
 
 void main() {
@@ -5625,11 +5629,7 @@ void main() {
         struct Canvas;
         Canvas getCanvas();
 
-        GLvec4 getViewport() const {
-            GLint vp[4];
-            gl.glGetIntegerv(GL_VIEWPORT, vp);
-            return GLvec4(vp[0], vp[1], vp[2], vp[3]);
-        }
+        GLvec4 getViewport() const { return currentViewport; }
 
         struct ViewportGuard {
             GL33Context* glCtx;
@@ -5711,6 +5711,7 @@ void main() {
         ep_sp<ProgramInfo> defaultProgram;
         ep_sp<TextureInfo> defaultWhiteTexture;
         bool resourcesInitialized = false;
+        GLvec4 currentViewport;
 
         void initDefaultResources() {
             if (resourcesInitialized) return;
@@ -6185,6 +6186,7 @@ struct CalculatedFrame {
                     cvs.drawRect({
                         .position = -sbTexture.size * sbTexture.anchor,
                         .size = sbTexture.size,
+                        .color = sbTexture.color,
                         .texture = img.get()
                     });
                     cvs.restore();

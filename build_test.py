@@ -67,6 +67,8 @@ build_cmds = [
     "-O3" if not debug else "-O0",
     "" if not debug else "-ggdb",
     
+    "-Wa,-mbig-obj",
+    
     f"-DBUILD_SHORT_COMMIT_HASH=\"{short_commit_hash}\"",
     f"-DBUILD_TIME={time.time()}",
     f"-DBUILD_IS_DEBUG={1 if debug else 0}",

@@ -1312,7 +1312,6 @@ struct WindowWOSkia {
         double t,
         const MainloopConfig& mainloopConfig
     ) {
-        std::cout << "mainloopFrame" << std::endl;
         double frameSt = globalTimer();
         if (!mainloopConfig.isRenderingVideo && glfwWindowShouldClose(window)) {
             glfwSetWindowShouldClose(window, GLFW_FALSE);
