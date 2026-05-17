@@ -3856,9 +3856,9 @@ struct DecodedRGBATexture {
     std::vector<ep_u8> data;
     ep_u64 width, height;
 
-    static DecodedRGBATexture Make(ep_u64 width, ep_u64 height) {
+    static DecodedRGBATexture Make(ep_u64 width, ep_u64 height, ep_u8 init = 0) {
         return {
-            .data = std::vector<ep_u8>(width * height * 4),
+            .data = std::vector<ep_u8>(width * height * 4, init),
             .width = width, .height = height
         };
     }
@@ -3875,6 +3875,12 @@ struct DecodedRGBATexture {
         for (ep_u64 i = 0; i < width * height; ++i) {
             data[i * 4 + 3] = gray[i];
         }
+    }
+
+    void fillRGBWhite() {
+        ensureDataSize();
+        std::fill(data.begin(), data.end(), 255);
+        for (ep_u64 i = 0; i < width * height; ++i) data[i * 4 + 3] = 0;
     }
 
     void paste(const DecodedRGBATexture& other, ep_i64 x, ep_i64 y) {
@@ -4567,32 +4573,126 @@ namespace GL {
     struct QueryInfo;
     struct SyncInfo;
 
+    struct VertexPool {
+        struct Chunk {
+            std::vector<Vertex> vertices;
+            ep_u64 offset;
+
+            static ep_sp<Chunk> Make(ep_u64 size) {
+                auto* ck = new Chunk();
+                ck->vertices.resize(size);
+                return ep_sp<Chunk>(ck);
+            }
+
+            Vertex* alloc(ep_u64 count) {
+                if (offset + count > vertices.size()) return nullptr;
+                auto* ret = &vertices[offset];
+                offset += count;
+                return ret;
+            }
+        };
+
+        static constexpr ep_u64 defaultChunkSize = 4096;
+        static constexpr ep_u64 defaultChunkCount = 4;
+
+        std::vector<ep_sp<Chunk>> chunks;
+        ep_u64 offset;
+
+        static ep_sp<VertexPool> Make() {
+            auto* vp = new VertexPool();
+            vp->chunks.resize(defaultChunkCount);
+            for (ep_u64 i = 0; i < defaultChunkCount; i++) {
+                vp->chunks[i] = Chunk::Make(defaultChunkSize);
+            }
+            return ep_sp<VertexPool>(vp);
+        }
+
+        struct AllocResult {
+            Vertex* vertices;
+            ep_u64 count;
+            ep_u64 sig;
+            ep_u64 offset;
+
+            Vertex* next() {
+                if (offset >= count) return nullptr;
+                return vertices + (offset++);
+            }
+
+            void reset() {
+                offset = 0;
+            }
+
+            Vertex* begin() { return vertices; }
+            Vertex* end() { return vertices + count; }
+            const Vertex* begin() const { return vertices; }
+            const Vertex* end() const { return vertices + count; }
+        };
+
+        AllocResult alloc(ep_u64 count) {
+            while (offset < chunks.size()) {
+                auto& chunk = chunks[offset];
+                auto* ptr = chunk->alloc(count);
+                if (ptr) return allocSuccess(ptr, count);
+                offset++;
+            }
+
+            chunks.push_back(Chunk::Make(std::max(defaultChunkSize, count)));
+            return allocSuccess(chunks[offset]->alloc(count), count);
+        }
+
+        void reset() {
+            offset = 0;
+            for (auto& chunk : chunks) chunk->offset = 0;
+            sig++;
+        }
+
+        bool valid(const AllocResult& result) {
+            return result.sig == sig;
+        }
+
+        private:
+        ep_u64 sig;
+
+        AllocResult allocSuccess(Vertex* ptr, ep_u64 count) {
+            return {
+                .vertices = ptr,
+                .count = count,
+                .sig = sig
+            };
+        }
+    };
+
     struct Mesh {
-        std::vector<Vertex> vertices;
+        VertexPool::AllocResult vertices;
         GLvec4 color;
         TextureInfo* texture;
         ProgramInfo* program;
 
         void addRect(const GLvec2& position, const GLvec2& size, const GLvec2& uvPosition, const GLvec2& uvSize) {
-            vertices.push_back({ position, uvPosition });
-            vertices.push_back({ position + GLvec2 { size.x, 0 }, uvPosition + GLvec2 { uvSize.x, 0 } });
-            vertices.push_back({ position + size, uvPosition + uvSize });
+            if (size.x <= 0 || size.y <= 0) return;
 
-            vertices.push_back({ position, uvPosition });
-            vertices.push_back({ position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y } });
-            vertices.push_back({ position + size, uvPosition + uvSize });
+            *vertices.next() = { position, uvPosition };
+            *vertices.next() = { position + GLvec2 { size.x, 0 }, uvPosition + GLvec2 { uvSize.x, 0 } };
+            *vertices.next() = { position + size, uvPosition + uvSize };
+
+            *vertices.next() = { position, uvPosition };
+            *vertices.next() = { position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y } };
+            *vertices.next() = { position + size, uvPosition + uvSize };
         }
 
         void addFullRect() {
             addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
         }
 
+        static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) {
+            return (pointsCount - 2) * 3;
+        }
+
         void addPolygon(const std::vector<GLvec2>& points, const std::vector<GLvec2>& uvs) {
-            vertices.reserve(points.size() + 2);
             for (ep_u64 i = 0; i < points.size() - 2; i++) {
-                vertices.push_back({ points[0], uvs[0] });
-                vertices.push_back({ points[i + 1], uvs[i + 1] });
-                vertices.push_back({ points[i + 2], uvs[i + 2] });
+                *vertices.next() = { points[0], uvs[0] };
+                *vertices.next() = { points[i + 1], uvs[i + 1] };
+                *vertices.next() = { points[i + 2], uvs[i + 2] };
             }
         }
     };
@@ -4871,6 +4971,9 @@ namespace GL {
             , vao(std::exchange(other.vao, nullptr))
             , vbo(std::exchange(other.vbo, nullptr))
             , bufferFiller(other.bufferFiller)
+            , fragConfig(std::move(other.fragConfig))
+            , attribLocations(std::move(other.attribLocations))
+            , uniformLocations(std::move(other.uniformLocations))
         {}
 
         ProgramInfo& operator=(ProgramInfo&& other) noexcept {
@@ -4881,6 +4984,9 @@ namespace GL {
                 vao = std::exchange(other.vao, nullptr);
                 vbo = std::exchange(other.vbo, nullptr);
                 bufferFiller = other.bufferFiller;
+                fragConfig = std::move(other.fragConfig);
+                attribLocations = std::move(other.attribLocations);
+                uniformLocations = std::move(other.uniformLocations);
             }
 
             return *this;
@@ -4893,11 +4999,18 @@ namespace GL {
         ep_sp<VertexArrayInfo> vao;
         ep_sp<BufferInfo> vbo;
 
-        using BufferFillerFunc = std::function<void(ProgramInfo*, std::vector<Vertex>*)>;
+        using BufferFillerFunc = std::function<void(ProgramInfo*, VertexPool::AllocResult&)>;
         BufferFillerFunc bufferFiller;
+
+        struct {
+            std::string textureUniformName = "uTexture";
+            std::optional<std::string> colorUniformName = "uColor";
+        } fragConfig;
 
         void attachShader(ShaderInfo* shader) {
             glRef->glAttachShader(id, shader->id);
+            attribLocations.clear();
+            uniformLocations.clear();
         }
 
         bool link(std::string* outLog = nullptr) {
@@ -4976,8 +5089,21 @@ namespace GL {
             void setMatrix4fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix4fv(location, count, transpose, value); }
         };
 
-        GLint getAttribLocationPosition(const std::string& name) { return glRef->glGetAttribLocation(id, (GLchar*)name.c_str()); }
-        GLint getUniformLocationPosition(const std::string& name) { return glRef->glGetUniformLocation(id, (GLchar*)name.c_str()); }
+        GLint getAttribLocationPosition(const std::string& name) {
+            if (attribLocations.find(name) == attribLocations.end()) {
+                attribLocations[name] = glRef->glGetAttribLocation(id, (GLchar*)name.c_str());
+            }
+
+            return attribLocations[name];
+        }
+
+        GLint getUniformLocationPosition(const std::string& name) {
+            if (uniformLocations.find(name) == uniformLocations.end()) {
+                uniformLocations[name] = glRef->glGetUniformLocation(id, (GLchar*)name.c_str());
+            }
+
+            return uniformLocations[name];
+        }
 
         Location getAttribLocation(const std::string& name) {
             Location result;
@@ -4993,10 +5119,10 @@ namespace GL {
             return result;
         }
 
-        void setVertices(std::vector<Vertex>& vertices) {
+        void setVertices(VertexPool::AllocResult& vertices) {
             if (!vao || !vbo) return;
             if (!bufferFiller) return;
-            bufferFiller(this, &vertices);
+            bufferFiller(this, vertices);
         }
 
         ~ProgramInfo() {
@@ -5004,6 +5130,9 @@ namespace GL {
         }
 
         private:
+        std::unordered_map<std::string, GLint> attribLocations;
+        std::unordered_map<std::string, GLint> uniformLocations;
+
         void reset() {
             if (id) {
                 glRef->glDeleteProgram(id);
@@ -5405,6 +5534,8 @@ void main() {
 
         GL33CoreInterface gl;
 
+        ep_u64 drawCallsCount = 0;
+
         static ep_sp<GL33Context> Make(const GL33CoreInterface& interface) {
             auto* ctx = new GL33Context();
             ctx->gl = interface;
@@ -5574,12 +5705,12 @@ void main() {
             if (!prog->link(&log)) throw std::runtime_error("program link: " + log);
 
             prog->vbo = createBuffer();
-            prog->bufferFiller = [](ProgramInfo* prog, std::vector<Vertex>* vertices) {
+            prog->bufferFiller = [](ProgramInfo* prog, VertexPool::AllocResult& vertices) {
                 auto vaoGuard = prog->vao->use();
                 auto vboGuard = prog->vbo->use();
                 vboGuard.data(
-                    vertices->size() * sizeof(Vertex),
-                    vertices->data(),
+                    vertices.count * sizeof(Vertex),
+                    vertices.vertices,
                     GL_DYNAMIC_DRAW
                 );
             };
@@ -5647,7 +5778,11 @@ void main() {
             }
         };
 
-        void drawMesh(Mesh& mesh) {
+        void drawMesh(Mesh& mesh) noexcept {
+            if (!vertexPool->valid(mesh.vertices)) {
+                std::abort();
+            }
+
             auto* prog = mesh.program ? mesh.program : defaultProgram.get();
             auto* tex = mesh.texture ? mesh.texture : defaultWhiteTexture.get();
             prog->setVertices(mesh.vertices);
@@ -5657,9 +5792,15 @@ void main() {
             auto progGuard = prog->use();
             auto texGuard = tex->use();
             auto vaoGuard = prog->vao->use();
-            prog->getUniformLocation("uColor").setv4(mesh.color);
-            prog->getUniformLocation("uTexture").seti(texGuard.index);
-            gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.size());
+
+            if (prog->fragConfig.colorUniformName.has_value()) {
+                prog->getUniformLocation(prog->fragConfig.colorUniformName.value()).setv4(mesh.color);
+            }
+
+            prog->getUniformLocation(prog->fragConfig.textureUniformName).seti(texGuard.index);
+
+            gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.count);
+            drawCallsCount++;
         }
 
         struct Canvas;
@@ -5714,14 +5855,14 @@ void main() {
             setViewport(texture->width, texture->height);
             disable(GL_BLEND);
 
-            descMesh.vertices.clear();
+            descMesh.vertices.reset();
             descMesh.addFullRect();
             descMesh.texture = pingPong.get();
             drawMesh(descMesh);
         }
 
         void gaussianBlurToTexture(TextureInfo* texture, ep_f64 radius) {
-            Mesh mesh {};
+            auto mesh = requestMesh(6);
             mesh.program = preloadedPrograms.gaussianBlur.get();
             mesh.color = GLvec4::White();
 
@@ -5743,9 +5884,20 @@ void main() {
             ep_sp<ProgramInfo> gaussianBlur;
         } preloadedPrograms;
 
+        void frameEnded() {
+            drawCallsCount = 0;
+        }
+
+        Mesh requestMesh(ep_u64 verticesCount) {
+            return {
+                .vertices = vertexPool->alloc(verticesCount)
+            };
+        }
+
         private:
         ep_sp<ProgramInfo> defaultProgram;
         ep_sp<TextureInfo> defaultWhiteTexture;
+        ep_sp<VertexPool> vertexPool;
         bool resourcesInitialized = false;
         GLvec4 currentViewport;
 
@@ -5771,6 +5923,8 @@ void main() {
 
             enable(GL_BLEND);
             blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            vertexPool = VertexPool::Make();
         }
     };
 
@@ -5791,7 +5945,7 @@ void main() {
             return { p.x, p.y };
         }
 
-        void normVertices(std::vector<Vertex>& vertices) {
+        void normVertices(VertexPool::AllocResult& vertices) {
             for (auto& v : vertices) {
                 v.position = toNDC(transformPoint(v.position));
             }
@@ -5821,10 +5975,9 @@ void main() {
             TextureInfo* texture;
         };
         void drawRect(const DrawRectConfig& config) {
-            Mesh mesh {};
+            auto mesh = glCtx->requestMesh(6);
             mesh.color = config.color;
             mesh.texture = config.texture;
-            mesh.vertices.reserve(6);
             mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
             drawMesh(mesh);
         }
@@ -6163,10 +6316,9 @@ struct CalculatedFrame {
                     cvs.translate(note.position);
                     cvs.rotateDegrees(note.rotation);
 
-                    Mesh mesh {};
+                    auto mesh = glCtx->requestMesh(6 * 3);
                     mesh.color = note.color;
                     mesh.texture = img.get();
-                    mesh.vertices.reserve(18);
 
                     mesh.addRect(
                         { -note.width / 2, 0.0 }, { note.width, note.head },
@@ -6256,7 +6408,7 @@ struct CalculatedFrame {
                 } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedPoly>(obj)) {
                     auto& poly = std::get<easy_phi::CalculatedFrame::CalculatedPoly>(obj);
 
-                    Mesh mesh {};
+                    auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
                     mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
                     mesh.color = poly.color;
                     cvs.drawMesh(mesh);
@@ -6925,6 +7077,8 @@ namespace easy_phi {
             if (top >= bottom || iwidth <= 0) return DecodedRGBATexture::Make(2, 2);
 
             auto tex = DecodedRGBATexture::Make(iwidth, bottom - top);
+            tex.fillRGBWhite();
+
             ep_f64 x = -chars.front().xoff + padding;
 
             for (auto& dc : chars) {

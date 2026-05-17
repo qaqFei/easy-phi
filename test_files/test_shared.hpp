@@ -1357,6 +1357,9 @@ struct WindowWOSkia {
         }
 
         std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
+        std::cout << "draw calls count: " << glCtx->drawCallsCount << std::endl;
+
+        glCtx->frameEnded();
 
         {
             size_t resourceBytes = 0;
