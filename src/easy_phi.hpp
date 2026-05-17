@@ -3979,6 +3979,7 @@ namespace GL {
     constexpr GLenum GL_PACK_ALIGNMENT = 0x0D05;
     constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
     constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
+    constexpr GLenum GL_RENDERBUFFER_BINDING = 0x8CA7;
     constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
     constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
     constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
@@ -5277,8 +5278,10 @@ namespace GL {
         struct UsingGuard {
             FramebufferInfo* ref;
             GLenum target;
+            GLint savedId;
 
             UsingGuard(FramebufferInfo& framebuffer, TextureInfo* texture, GLenum target) : ref(&framebuffer), target(target) {
+                ref->glRef->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &savedId);
                 ref->glRef->glBindFramebuffer(target, ref->id);
                 ref->glRef->glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, texture->target, texture->id, 0);
 
@@ -5290,7 +5293,7 @@ namespace GL {
             }
 
             ~UsingGuard() {
-                ref->glRef->glBindFramebuffer(target, 0);
+                ref->glRef->glBindFramebuffer(target, savedId);
             }
         };
 
@@ -5306,6 +5309,7 @@ namespace GL {
             reset();
         }
 
+        private:
         void reset() {
             if (id) {
                 glRef->glDeleteFramebuffers(1, &id);
@@ -5340,8 +5344,10 @@ namespace GL {
 
         struct UsingGuard {
             RenderbufferInfo* ref;
+            GLint savedId;
 
             UsingGuard(RenderbufferInfo& renderbuffer) : ref(&renderbuffer) {
+                ref->glRef->glGetIntegerv(GL_RENDERBUFFER_BINDING, &savedId);
                 ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, ref->id);
             }
 
@@ -5350,7 +5356,7 @@ namespace GL {
             }
 
             ~UsingGuard() {
-                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, 0);
+                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, savedId);
             }
         };
 
