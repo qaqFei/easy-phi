@@ -1112,8 +1112,8 @@ struct WindowWOSkia {
         glfwWindowHint(GLFW_SAMPLES, 4);
         if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
-        int32_t width = vm->width * 0.6;
-        int32_t height = vm->height * 0.6;
+        width = vm->width * 0.6;
+        height = vm->height * 0.6;
 
         if (fullscreen) {
             glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);

@@ -4153,6 +4153,8 @@ namespace GL {
     constexpr GLenum GL_WAIT_FAILED = 0x911D;
     constexpr GLenum GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001;
     constexpr GLuint64 GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFFull;
+    constexpr GLenum GL_SYNC_STATUS = 0x9114;
+    constexpr GLenum GL_SIGNALED = 0x9119;
 
     constexpr GLint GL_TRUE = 1;
     constexpr GLint GL_FALSE = 0;
@@ -4295,6 +4297,7 @@ namespace GL {
         GLsync (*glFenceSync)(GLenum condition, GLbitfield flags);
         void (*glDeleteSync)(GLsync sync);
         GLenum (*glClientWaitSync)(GLsync sync, GLbitfield flags, GLuint64 timeout);
+        void (*glGetSynciv)(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei* length, GLint* values);
 
         bool isExtensionSupported(const char* extension) {
             GLint num;
@@ -4456,6 +4459,7 @@ namespace GL {
         LOAD_AND_CHECK(glFenceSync)
         LOAD_AND_CHECK(glDeleteSync)
         LOAD_AND_CHECK(glClientWaitSync)
+        LOAD_AND_CHECK(glGetSynciv)
 
         return interface;
     }
@@ -4774,6 +4778,10 @@ namespace GL {
                 }
             };
 
+            MappingGuard map(GLbitfield access = GL_READ_WRITE) {
+                return MappingGuard(*this, access);
+            }
+
             struct MappingRangeGuard {
                 UsingGuard* ref;
                 void* data;
@@ -4791,6 +4799,10 @@ namespace GL {
                     ref->ref->glRef->glUnmapBuffer(ref->ref->target);
                 }
             };
+
+            MappingRangeGuard mapRange(GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) {
+                return MappingRangeGuard(*this, offset, length, access);
+            }
 
             ~UsingGuard() {
                 ref->glRef->glBindBuffer(ref->target, 0);
@@ -5505,6 +5517,12 @@ namespace GL {
             return glRef->glClientWaitSync(sync, flags, timeout);
         }
 
+        bool isSignaled() const {
+            GLint status;
+            glRef->glGetSynciv(sync, GL_SYNC_STATUS, 1, nullptr, &status);
+            return status == GL_SIGNALED;
+        }
+
         ~SyncInfo() {
             reset();
         }
@@ -5926,6 +5944,134 @@ void main() {
             return {
                 .vertices = vertexPool->alloc(verticesCount)
             };
+        }
+
+        struct AsyncFrameReader {
+            GL33Context* glCtx;
+            ep_u64 frameWidth, frameHeight;
+
+            AsyncFrameReader() = default;
+            AsyncFrameReader(const AsyncFrameReader&) = delete;
+            AsyncFrameReader& operator=(const AsyncFrameReader&) = delete;
+            AsyncFrameReader(AsyncFrameReader&& other) = default;
+            AsyncFrameReader& operator=(AsyncFrameReader&& other) = default;
+
+            void initBufferSlots(ep_u64 size) {
+                for (ep_u64 i = 0; i < size; i++) addBufferSlot();
+            }
+
+            struct ReadResult {
+                std::vector<ep_u8> data;
+                std::pair<ep_u64, ep_u64> frameSize;
+                ep_u64 frameIndex;
+
+                ReadResult() = default;
+                ReadResult(const ReadResult&) = delete;
+                ReadResult& operator=(const ReadResult&) = delete;
+                ReadResult(ReadResult&& other) = default;
+                ReadResult& operator=(ReadResult&& other) = default;
+
+                static ep_sp<ReadResult> Make(ep_u64 width, ep_u64 height, ep_u64 frameIndex) {
+                    auto* result = new ReadResult();
+                    result->data = std::vector<ep_u8>(width * height * 4);
+                    result->frameSize = { width, height };
+                    result->frameIndex = frameIndex;
+                    return ep_sp<ReadResult>(result);
+                }
+            };
+
+            void requestRead() {
+                flush();
+
+                for (auto& slot : bufferSlots) {
+                    if (!slot.sync) {
+                        readToSlot(slot);
+                        return;
+                    }
+                }
+
+                addBufferSlot();
+                readToSlot(bufferSlots.back());
+            }
+
+            using CallbackFunc = std::function<void(const ReadResult&)>;
+            CallbackFunc callback;
+
+            void flush() {
+                for (auto& slot : bufferSlots) {
+                    if (!slot.sync || !slot.sync->isSignaled()) continue;
+                    slot.sync = nullptr;
+
+                    auto bufGuard = slot.buffer->use();
+                    auto mapGuard = bufGuard.map(GL_READ_ONLY);
+                    auto result = ReadResult::Make(frameWidth, frameHeight, slot.frameIndex);
+                    memcpy(result->data.data(), mapGuard.data, frameWidth * frameHeight * 4);
+                    readResults.push_back(result);
+                }
+
+                emit();
+            }
+
+            void finish() {
+                glCtx->finish();
+
+                for (auto& slot : bufferSlots) {
+                    if (!slot.sync) continue;
+                    slot.sync->wait(GL_SYNC_FLUSH_COMMANDS_BIT);
+                    flush();
+                }
+            }
+
+            private:
+            struct BufferSlot {
+                ep_sp<BufferInfo> buffer;
+                ep_sp<SyncInfo> sync;
+                ep_u64 frameIndex;
+            };
+
+            std::vector<BufferSlot> bufferSlots;
+            std::vector<ep_sp<ReadResult>> readResults;
+            ep_u64 currentFrameIndex;
+            ep_u64 lastEmitFrameIndex;
+
+            void addBufferSlot() {
+                bufferSlots.push_back({
+                    .buffer = glCtx->createBuffer(GL_PIXEL_PACK_BUFFER)
+                });
+
+                auto& slot = bufferSlots.back();
+                slot.buffer->use().data(frameWidth * frameHeight * 4, nullptr, GL_STREAM_READ);
+            }
+
+            void readToSlot(BufferSlot& slot) {
+                auto pboGuard = slot.buffer->use();
+                glCtx->gl.glReadPixels(0, 0, frameWidth, frameHeight, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                slot.sync = glCtx->createSync();
+                slot.frameIndex = currentFrameIndex++;
+            }
+
+            void emit() {
+                while (readResults.size()) {
+                    for (ep_u64 i = 0; i < readResults.size(); i++) {
+                        auto& result = readResults[i];
+                        if (result->frameIndex == 0 || result->frameIndex == lastEmitFrameIndex + 1) {
+                            lastEmitFrameIndex = result->frameIndex;
+                            callback(*result);
+                            readResults.erase(readResults.begin() + i);
+                            break;
+                        }
+                    }
+                }
+            }
+        };
+
+        AsyncFrameReader createAsyncFrameReader(ep_u64 frameWidth, ep_u64 frameHeight) {
+            AsyncFrameReader reader {};
+            reader.glCtx = this;
+            reader.frameWidth = frameWidth;
+            reader.frameHeight = frameHeight;
+            reader.initBufferSlots(4);
+            return reader;
         }
 
         private:
