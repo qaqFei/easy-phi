@@ -4553,6 +4553,7 @@ namespace GL {
         static GLvec4 Green() { return { 0.0, 1.0, 0.0, 1.0 }; }
         static GLvec4 Blue() { return { 0.0, 0.0, 1.0, 1.0 }; }
         static GLvec4 Transparent() { return { 0.0, 0.0, 0.0, 0.0 }; }
+        static GLvec4 Gray(GLfloat v = 0.5) { return { v, v, v, 1.0 }; }
     };
     static_assert(offsetof(GLvec4, x) == 0, "GLvec4.x must be at offset 0");
     static_assert(offsetof(GLvec4, y) == sizeof(GLfloat), "GLvec4.y must be at offset 1");
@@ -6286,13 +6287,8 @@ struct CalculatedFrame {
             cvs.drawRect({
                 .position = { frame.unsafeBackgroundRect.x, frame.unsafeBackgroundRect.y },
                 .size = { frame.unsafeBackgroundRect.w, frame.unsafeBackgroundRect.h },
+                .color = GLvec4::Gray(1.0 - frame.unsafeAreaDim),
                 .texture = illuTex.get()
-            });
-
-            cvs.drawRect({
-                .position = { frame.unsafeBackgroundRect.x, frame.unsafeBackgroundRect.y },
-                .size = { frame.unsafeBackgroundRect.w, frame.unsafeBackgroundRect.h },
-                .color = { 0.0, 0.0, 0.0, frame.unsafeAreaDim },
             });
 
             glCtx->setViewport(
@@ -6303,13 +6299,8 @@ struct CalculatedFrame {
             cvs.drawRect({
                 .position = { frame.backgroundRect.x, frame.backgroundRect.y },
                 .size = { frame.backgroundRect.w, frame.backgroundRect.h },
+                .color = GLvec4::Gray(1.0 - frame.backgroundDim),
                 .texture = illuTex.get()
-            });
-
-            cvs.drawRect({
-                .position = { frame.backgroundRect.x, frame.backgroundRect.y },
-                .size = { frame.backgroundRect.w, frame.backgroundRect.h },
-                .color = { 0.0, 0.0, 0.0, frame.backgroundDim },
             });
 
             for (auto& obj : frame.objects) {
