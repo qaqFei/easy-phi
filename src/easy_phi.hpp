@@ -4962,6 +4962,41 @@ namespace GL {
         }
     };
 
+    struct VertexLayout {
+        ep_sp<VertexArrayInfo> vao;
+        ep_sp<BufferInfo> vbo;
+    };
+
+    struct VertexLayoutPool {
+        std::vector<VertexLayout> layouts;
+        ep_u64 currentIndex;
+        ep_u64 frameSig;
+
+        using LayoutCreator = std::function<VertexLayout()>;
+        void resize(ep_u64 size,const LayoutCreator& creator) {
+            layouts.resize(size);
+            for (auto& layout : layouts) layout = creator();
+        }
+
+        using ConfigureFunc = std::function<void(VertexArrayInfo*, BufferInfo*)>;
+        void configure(const ConfigureFunc& func) {
+            for (auto& layout : layouts) {
+                func(layout.vao.get(), layout.vbo.get());
+            }
+        }
+
+        void checkAndNext(ep_u64 newFrameSig) {
+            if (frameSig != newFrameSig) {
+                frameSig = newFrameSig;
+                currentIndex = (currentIndex + 1) % layouts.size();
+            }
+        }
+
+        VertexLayout& current() {
+            return layouts[currentIndex];
+        }
+    };
+
     struct ProgramInfo {
         ProgramInfo() = default;
         ProgramInfo(const ProgramInfo&) = delete;
@@ -4970,8 +5005,7 @@ namespace GL {
         ProgramInfo(ProgramInfo&& other) noexcept
             : glRef(other.glRef)
             , id(std::exchange(other.id, 0))
-            , vao(std::exchange(other.vao, nullptr))
-            , vbo(std::exchange(other.vbo, nullptr))
+            , vertexLayoutPool(std::move(other.vertexLayoutPool))
             , bufferFiller(other.bufferFiller)
             , fragConfig(std::move(other.fragConfig))
             , attribLocations(std::move(other.attribLocations))
@@ -4983,8 +5017,7 @@ namespace GL {
                 reset();
                 glRef = other.glRef;
                 id = std::exchange(other.id, 0);
-                vao = std::exchange(other.vao, nullptr);
-                vbo = std::exchange(other.vbo, nullptr);
+                vertexLayoutPool = std::move(other.vertexLayoutPool);
                 bufferFiller = other.bufferFiller;
                 fragConfig = std::move(other.fragConfig);
                 attribLocations = std::move(other.attribLocations);
@@ -4998,10 +5031,9 @@ namespace GL {
 
         GLuint id;
 
-        ep_sp<VertexArrayInfo> vao;
-        ep_sp<BufferInfo> vbo;
+        VertexLayoutPool vertexLayoutPool;
 
-        using BufferFillerFunc = std::function<void(ProgramInfo*, VertexPool::AllocResult&)>;
+        using BufferFillerFunc = std::function<void(ProgramInfo*, const VertexLayout&, VertexPool::AllocResult&)>;
         BufferFillerFunc bufferFiller;
 
         struct {
@@ -5122,9 +5154,9 @@ namespace GL {
         }
 
         void setVertices(VertexPool::AllocResult& vertices) {
-            if (!vao || !vbo) return;
             if (!bufferFiller) return;
-            bufferFiller(this, vertices);
+            auto& vertexLayout = vertexLayoutPool.current();
+            bufferFiller(this, vertexLayout, vertices);
         }
 
         ~ProgramInfo() {
@@ -5711,29 +5743,27 @@ void main() {
             prog->attachShader(frag.get());
             if (!prog->link(&log)) throw std::runtime_error("program link: " + log);
 
-            prog->vbo = createBuffer();
-            prog->bufferFiller = [](ProgramInfo* prog, VertexPool::AllocResult& vertices) {
-                auto vaoGuard = prog->vao->use();
-                auto vboGuard = prog->vbo->use();
-                vboGuard.data(
-                    vertices.count * sizeof(Vertex),
-                    vertices.vertices,
-                    GL_DYNAMIC_DRAW
-                );
-            };
-
-            prog->vao = createVertexArray();
-            
-            {
-                auto vaoGuard = prog->vao->use();
-                auto vboGuard = prog->vbo->use();
+            prog->vertexLayoutPool.resize(8, [&]() { return VertexLayout { .vao = createVertexArray(), .vbo = createBuffer() }; });
+            prog->vertexLayoutPool.configure([&](VertexArrayInfo* vao, BufferInfo* vbo) {
+                auto vaoGuard = vao->use();
+                auto vboGuard = vbo->use();
                 auto inPosition = prog->getAttribLocationPosition("inPosition");
                 auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
                 vaoGuard.enable(inPosition);
                 vaoGuard.enable(inTexCoord);
                 vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
                 vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
-            }
+            });
+
+            prog->bufferFiller = [](ProgramInfo* prog, const VertexLayout& vertexLayout, VertexPool::AllocResult& vertices) {
+                auto vaoGuard = vertexLayout.vao->use();
+                auto vboGuard = vertexLayout.vbo->use();
+                vboGuard.data(
+                    vertices.count * sizeof(Vertex),
+                    vertices.vertices,
+                    GL_DYNAMIC_DRAW
+                );
+            };
 
             return prog;
         }
@@ -5792,13 +5822,14 @@ void main() {
 
             auto* prog = mesh.program ? mesh.program : defaultProgram.get();
             auto* tex = mesh.texture ? mesh.texture : defaultWhiteTexture.get();
+
+            prog->vertexLayoutPool.checkAndNext(frameSig);
             prog->setVertices(mesh.vertices);
 
-            if (!prog->vao) return;
-
             auto progGuard = prog->use();
+            auto& vertexLayout = prog->vertexLayoutPool.current();
+            auto vaoGuard = vertexLayout.vao->use();
             auto texGuard = tex->use();
-            auto vaoGuard = prog->vao->use();
 
             if (prog->fragConfig.colorUniformName.has_value()) {
                 prog->getUniformLocation(prog->fragConfig.colorUniformName.value()).setv4(mesh.color);
@@ -5893,6 +5924,7 @@ void main() {
 
         void frameEnded() {
             drawCallsCount = 0;
+            frameSig++;
         }
 
         Mesh requestMesh(ep_u64 verticesCount) {
@@ -5907,6 +5939,7 @@ void main() {
         ep_sp<VertexPool> vertexPool;
         bool resourcesInitialized = false;
         GLvec4 currentViewport;
+        ep_u64 frameSig;
 
         void initDefaultResources() {
             if (resourcesInitialized) return;

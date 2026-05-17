@@ -1099,6 +1099,7 @@ struct WindowWOSkia {
     bool hidden;
     double frameBusyWaitPercentage;
     std::string chartDir;
+    bool fullscreen;
 
     ep_sp<GL33Context> glCtx;
     ep_sp<easy_phi::CalculatedFrame::GLRenderer> renderer;
@@ -1110,10 +1111,17 @@ struct WindowWOSkia {
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_SAMPLES, 4);
         if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-
         auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
         int32_t width = vm->width * 0.6;
         int32_t height = vm->height * 0.6;
+
+        if (fullscreen) {
+            glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+            glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+            glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+            width = vm->width; height = vm->height;
+        }
+
         window = glfwCreateWindow(width, height, "", nullptr, nullptr);
 
         glfwMakeContextCurrent(window);

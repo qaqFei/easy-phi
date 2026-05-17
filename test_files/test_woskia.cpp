@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
     }
 
     WindowWOSkia window {};
+    window.fullscreen = hasArg("--fullscreen");
     window.init();
     window.vsync = !hasArg("--disable-vsync");
     if (hasArg("--extend-scale")) window.globalScale = 0.25;
