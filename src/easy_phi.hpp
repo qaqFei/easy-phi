@@ -5229,11 +5229,6 @@ namespace GL {
 
                 ref->glRef->glTexImage2D(ref->target, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
-                if (ref->glRef->isExtensionSupported("GL_EXT_texture_filter_minmax")) {
-                    ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_REDUCTION_MODE_EXT, GL_MAX);
-                    ref->glRef->glGenerateMipmap(ref->target);
-                }
-                
                 GLfloat maxAniso = 0.0;
                 ref->glRef->glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
                 if (maxAniso > 0.0) ref->glRef->glTexParameterf(ref->target, GL_TEXTURE_MAX_ANISOTROPY_EXT, maxAniso);
