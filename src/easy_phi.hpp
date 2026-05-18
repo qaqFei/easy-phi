@@ -24,6 +24,7 @@
 #include <thread>
 #include <map>
 #include <cstring>
+#include <intrin.h>
 
 namespace easy_phi {
 
@@ -46,6 +47,16 @@ static ep_u64 globalCounter = 1;
 
 ep_u64 reqGlobalCounter() {
     return globalCounter++;
+}
+
+bool cpuHasSSE2() {
+    int cpuInfo[4];
+    __cpuid(cpuInfo, 1);
+    return (cpuInfo[3] & (1 << 26)) != 0;
+}
+
+bool ptrIsAligned16(void* ptr) {
+    return (ep_u64)ptr % 16 == 0;
 }
 
 struct HashBucket {
@@ -5978,6 +5989,9 @@ void main() {
                     result->frameIndex = frameIndex;
                     return ep_sp<ReadResult>(result);
                 }
+
+                ep_u64 width() const { return frameSize.first; }
+                ep_u64 height() const { return frameSize.second; }
             };
 
             void requestRead() {
@@ -6035,6 +6049,8 @@ void main() {
             ep_u64 lastEmitFrameIndex;
 
             void addBufferSlot() {
+                if (frameWidth % 2 != 0 || frameHeight % 2 != 0) throw std::runtime_error("Frame size must be even");
+
                 bufferSlots.push_back({
                     .buffer = glCtx->createBuffer(GL_PIXEL_PACK_BUFFER)
                 });
@@ -6172,6 +6188,25 @@ void main() {
         canvas.glCtx  = this;
         return canvas;
     }
+
+    struct YUV420Frame {
+        std::vector<ep_u8> y, u, v;
+        ep_u64 width, height;
+
+        void ensureSize() {
+            if (y.size() != width * height) y.resize(width * height);
+            if (u.size() != width * height / 4) u.resize(width * height / 4);
+            if (v.size() != width * height / 4) v.resize(width * height / 4);
+        }
+
+        static ep_sp<YUV420Frame> Make(ep_u64 width, ep_u64 height) {
+            auto* frame = new YUV420Frame();
+            frame->width = width;
+            frame->height = height;
+            frame->ensureSize();
+            return ep_sp<YUV420Frame>(frame);
+        }
+    };
 };
 
 struct PhiLineAttachUIData {
@@ -7297,5 +7332,66 @@ namespace easy_phi {
     }
 }
 #endif // EASY_PHI_IMAGE_DECODER
+
+#ifdef EASY_PHI_GL_READ_RGB2YUV
+extern "C" {
+    #include "helpers/yuv_rgb/yuv_rgb.c"
+}
+namespace easy_phi {
+    void rgba8ToYUV420(
+        ep_u32 width, ep_u32 height,
+        const ep_u8* rgba, ep_u32 rgba_stride,
+        ep_u8* y, ep_u8* u, ep_u8* v,
+        ep_u32 y_stride, ep_u32 uv_stride
+    ) {
+        #ifdef __SSE2__
+        #define FUNC_ALIGNED rgb32_yuv420_sse
+        #define FUNC_UNALIGNED rgb32_yuv420_sseu
+        #define FUNC_STD rgb32_yuv420_std
+        #else
+        #define FUNC_ALIGNED rgb32_yuv420_std
+        #define FUNC_UNALIGNED rgb32_yuv420_std
+        #define FUNC_STD rgb32_yuv420_std
+        #endif
+
+        #define CALL(func) (func(width, height, rgba, rgba_stride, y, u, v, y_stride, uv_stride, YCBCR_601))
+
+        if (cpuHasSSE2()) {
+            if (
+                ptrIsAligned16((void*)rgba) &&
+                ptrIsAligned16((void*)y) &&
+                ptrIsAligned16((void*)u) &&
+                ptrIsAligned16((void*)v)
+            ) {
+                return CALL(FUNC_ALIGNED);
+            } else {
+                return CALL(FUNC_UNALIGNED);
+            }
+        } else {
+            return CALL(FUNC_STD);
+        }
+
+        #undef FUNC_ALIGNED
+        #undef FUNC_UNALIGNED
+        #undef FUNC_STD
+        #undef CALL
+    }
+
+    namespace GL {
+        void frameToYUV420(
+            const GL33Context::AsyncFrameReader::ReadResult& rgbaFrame,
+            YUV420Frame& yuvFrame
+        ) {
+            yuvFrame.ensureSize();
+            rgba8ToYUV420(
+                rgbaFrame.width(), rgbaFrame.height(),
+                rgbaFrame.data.data(), rgbaFrame.width() * 4,
+                yuvFrame.y.data(), yuvFrame.u.data(), yuvFrame.v.data(),
+                rgbaFrame.width(), rgbaFrame.width() / 2
+            );
+        }
+    }
+}
+#endif // EASY_PHI_GL_READ_RGB2YUV
 
 #endif // EASY_PHI_HPP

@@ -1,5 +1,6 @@
 #define EASY_PHI_TEXT_RENDERER
 #define EASY_PHI_IMAGE_DECODER
+#define EASY_PHI_GL_READ_RGB2YUV
 #include <easy_phi.hpp>
 
 #include <miniaudio/miniaudio.h>
@@ -60,7 +61,6 @@ extern "C" {
 #include <regex>
 #include <map>
 #include <charconv>
-#include <intrin.h>
 
 using namespace easy_phi::GL;
 using easy_phi::ep_sp;
@@ -1085,7 +1085,6 @@ struct TelemetryDeckClient {
 
 struct WindowWOSkia {
     GLFWwindow* window;
-    bool vsync;
     ma_engine maeng;
     easy_phi::CalculateFrameConfig calculateFrameConfig;
     ma_sound* mainSound;
@@ -1122,16 +1121,15 @@ struct WindowWOSkia {
             width = vm->width; height = vm->height;
         }
 
+        width += width % 2;
+        height += height % 2;
+
         window = glfwCreateWindow(width, height, "", nullptr, nullptr);
 
         glfwMakeContextCurrent(window);
         glCtx = GL33Context::Make(MakeGL33CoreInterface(
             [](const char* name) { return (void*)glfwGetProcAddress(name); }
         ));
-
-        vsync = false;
-        
-        resetSurface();
 
         ma_engine_init(NULL, &maeng);
         noteHitsounds = loadNoteHitsounds(maeng);
@@ -1296,15 +1294,15 @@ struct WindowWOSkia {
         return std::nullopt;
     }
 
-    void resetSurface() {
-        if (vsync) glfwSwapInterval(1);
-        else glfwSwapInterval(0);
-        calculateFrameConfig.screenSize = { (double)width, (double)height };
+    void setVSync(bool enabled) {
+        glfwSwapInterval(enabled ? 1 : 0);
+        vsync = enabled;
     }
-    
+
     struct MainloopConfig {
-        bool isRenderingVideo = false;
-        TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi = nullptr;
+        bool isRenderingVideo;
+        TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi;
+        ep_sp<TextureInfo> renderTarget;
     };
 
     bool mainloopFrame(
@@ -1318,10 +1316,10 @@ struct WindowWOSkia {
         }
 
         if (!mainloopConfig.isRenderingVideo) {
-            int32_t last_w = width, last_h = height;
             glfwGetFramebufferSize(window, &width, &height);
-            if (width != last_w || height != last_h) resetSurface();
         }
+
+        calculateFrameConfig.screenSize = { (double)width, (double)height };
 
         {
             double st = globalTimer();
@@ -1345,8 +1343,9 @@ struct WindowWOSkia {
 
         std::cout << "frame took (without glfw operation) " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
 
+        glCtx->flush();
+
         if (!mainloopConfig.isRenderingVideo) {
-            glCtx->flush();
             glfwPollEvents();
 
             if (vsync) {
@@ -1379,6 +1378,53 @@ struct WindowWOSkia {
 
         return true;
     }
+
+    struct RenderHitSoundsConfig {
+        double musicVol, sfxVol;
+        bool sfxRandshake;
+    };
+
+    std::optional<std::wstring> renderHitsounds(Pcm16& dst, const RenderHitSoundsConfig& config) {
+        std::unordered_map<easy_phi::EnumPhiNoteType, Pcm16> noteHitsoundsPcm;
+
+        for (auto& [type, sound] : noteHitsounds) {
+            auto pcm = decodePcm16FromMaSound(sound[0]);
+            if (!pcm.second) return L"解码打击音效失败";
+            noteHitsoundsPcm[type] = std::move(pcm.first);
+        }
+
+        for (auto& v : dst.pcm) {
+            v = std::clamp<int32_t>((int32_t)v * config.musicVol, -32768, 32767);
+        }
+
+        std::mt19937 rng { std::random_device {} () };
+        std::uniform_real_distribution<double> sfxRandshakeDist { 0.0, 0.02 };
+
+        for (auto& line : chart.lines) {
+            for (auto& note : line.notes) {
+                if (note.isFake) continue;
+
+                double t = note.time + chart.meta.offset;
+                if (config.sfxRandshake) t += sfxRandshakeDist(rng);
+                int64_t start = std::max<int64_t>(0, (int64_t)(t * PCM_FIXED_SAMPLE_RATE) * PCM_FIXED_CHANNELS);
+                if (start >= (int64_t)dst.pcm.size()) continue;
+
+                auto& hitsoundPcm = noteHitsoundsPcm[note.type];
+                int64_t end = std::min<int64_t>(dst.pcm.size(), start + hitsoundPcm.pcm.size());
+
+                for (int64_t i = start; i < end; i += PCM_FIXED_CHANNELS) {
+                    for (int64_t j = 0; j < PCM_FIXED_CHANNELS; j++) {
+                        dst.pcm[i + j] = (int16_t)std::clamp<int32_t>((int32_t)dst.pcm[i + j] + (int32_t)hitsoundPcm.pcm[i + j - start] * config.sfxVol, -32768, 32767);
+                    }
+                }
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    private:
+    bool vsync;
 };
 
 struct Window {
