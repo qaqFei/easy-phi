@@ -18,6 +18,10 @@ easy-phi is a library written in C++ to rendering phigros chart with no dependen
 - **Cross Platform**: Works on any platform that supports C++.
 - **Zero Dependencies**: No external libraries are required.
 
+## Working On
+
+- **Rendering Takeover**: We're taking over the entire OpenGL pipeline — you don't write a single GL call. Just give us a `proc` (e.g. `glfwGetProcAddress`), and we handle context creation, buffer management, shader compilation, and all rendering operations from start to finish.
+
 ## Examples
 
 For the completed example, check out [here](./test_files/test.cpp).
