@@ -25,6 +25,8 @@
 #include <map>
 #include <cstring>
 #include <intrin.h>
+#include <cstdlib>
+#include <malloc.h>
 
 namespace easy_phi {
 
@@ -58,6 +60,14 @@ bool cpuHasSSE2() {
 bool ptrIsAligned16(void* ptr) {
     return (ep_u64)ptr % 16 == 0;
 }
+
+#ifdef _WIN32
+    inline void* ep_aligned_alloc(size_t alignment, size_t size) { return _aligned_malloc(size, alignment); }
+    inline void ep_aligned_free(void* ptr) { _aligned_free(ptr); }
+#else
+    inline void* ep_aligned_alloc(size_t alignment, size_t size) { return std::aligned_alloc(alignment, size); }
+    inline void ep_aligned_free(void* ptr) { free(ptr); }
+#endif
 
 struct HashBucket {
     ep_u64 hash = 0xcbf29ce484222325ULL;
@@ -3938,6 +3948,48 @@ struct DecodedRGBATexture {
     }
 };
 
+template <typename T, size_t Alignment>
+struct AlignedAllocator {
+    using value_type = T;
+
+    AlignedAllocator() = default;
+    template <typename U>
+    AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+
+    template <typename U>
+    struct rebind {
+        using other = AlignedAllocator<U, Alignment>;
+    };
+
+    T* allocate(std::size_t n) {
+        if (n > std::numeric_limits<std::size_t>::max() / sizeof(T))
+            throw std::bad_array_new_length();
+
+        std::size_t bytes = ((n * sizeof(T) + Alignment - 1) / Alignment) * Alignment;
+        void* ptr = ep_aligned_alloc(Alignment, bytes);
+        if (!ptr)
+            throw std::bad_alloc();
+        return static_cast<T*>(ptr);
+    }
+
+    void deallocate(T* ptr, std::size_t) noexcept { ep_aligned_free(ptr); }
+};
+
+template <typename T, size_t A1, typename U, size_t A2>
+bool operator==(const AlignedAllocator<T, A1>&, const AlignedAllocator<U, A2>&) noexcept { return A1 == A2; }
+template <typename T, size_t A1, typename U, size_t A2>
+bool operator!=(const AlignedAllocator<T, A1>&, const AlignedAllocator<U, A2>&) noexcept { return A1 != A2; }
+
+template <typename T, size_t Alignment>
+using aligned_vector = std::vector<T, AlignedAllocator<T, Alignment>>;
+
+ep_f64 globalTimer() {
+    return std::chrono::duration<ep_f64>(
+        std::chrono::system_clock::now()
+        .time_since_epoch()
+    ).count();
+}
+
 namespace GL {
     using GLboolean = unsigned char;
     using GLbitfield = unsigned int;
@@ -5352,6 +5404,11 @@ namespace GL {
             return UsingGuard(*this, texture, target);
         }
 
+        ep_sp<UsingGuard> useSp(TextureInfo* texture, GLenum target) {
+            auto* guard = new UsingGuard(*this, texture, target);
+            return ep_sp<UsingGuard>(guard);
+        }
+
         void blit(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter = GL_NEAREST) {
             glRef->glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
         }
@@ -5972,7 +6029,7 @@ void main() {
             }
 
             struct ReadResult {
-                std::vector<ep_u8> data;
+                aligned_vector<ep_u8, 16> data;
                 std::pair<ep_u64, ep_u64> frameSize;
                 ep_u64 frameIndex;
 
@@ -5984,7 +6041,7 @@ void main() {
 
                 static ep_sp<ReadResult> Make(ep_u64 width, ep_u64 height, ep_u64 frameIndex) {
                     auto* result = new ReadResult();
-                    result->data = std::vector<ep_u8>(width * height * 4);
+                    result->data = aligned_vector<ep_u8, 16>(width * height * 4);
                     result->frameSize = { width, height };
                     result->frameIndex = frameIndex;
                     return ep_sp<ReadResult>(result);
@@ -6190,7 +6247,7 @@ void main() {
     }
 
     struct YUV420Frame {
-        std::vector<ep_u8> y, u, v;
+        aligned_vector<ep_u8, 16> y, u, v;
         ep_u64 width, height;
 
         void ensureSize() {
@@ -6205,6 +6262,134 @@ void main() {
             frame->height = height;
             frame->ensureSize();
             return ep_sp<YUV420Frame>(frame);
+        }
+
+        ep_sp<YUV420Frame> move() {
+            auto* frame = new YUV420Frame();
+            frame->y = std::move(y);
+            frame->u = std::move(u);
+            frame->v = std::move(v);
+            frame->width = width;
+            frame->height = height;
+            return ep_sp<YUV420Frame>(frame);
+        }
+
+        ep_u64 rowBytesY() const { return width; }
+        ep_u64 rowBytesU() const { return width / 2; }
+        ep_u64 rowBytesV() const { return width / 2; }
+    };
+
+    struct VideoRecorder {
+        VideoRecorder() = default;
+        VideoRecorder(const VideoRecorder&) = delete;
+        VideoRecorder& operator=(const VideoRecorder&) = delete;
+        VideoRecorder(VideoRecorder&&) = delete;
+        VideoRecorder& operator=(VideoRecorder&&) = delete;
+
+        using CallbackFunc = std::function<void(YUV420Frame*)>;
+        using YUVConverterFunc = std::function<void(const GL33Context::AsyncFrameReader::ReadResult&, YUV420Frame&)>;
+        
+        struct Config {
+            ep_u64 nominalSize = 1920 * 1080 * 16;
+            bool callbackIsThreadSafe = false;
+        };
+
+        static ep_sp<VideoRecorder> Make(
+            const ep_sp<GL33Context>& glCtx,
+            ep_u64 width, ep_u64 height,
+            const CallbackFunc& callback,
+            const YUVConverterFunc& yuvConverter,
+            const Config& config
+        ) {
+            auto* recorder = new VideoRecorder();
+
+            recorder->glCtx = glCtx;
+            recorder->asyncFrameReader = glCtx->createAsyncFrameReader(width, height);
+            recorder->asyncFrameReader.callback = [=](const GL33Context::AsyncFrameReader::ReadResult& result) {
+                recorder->ensureCallbackIsDone();
+                recorder->yuvConverter(result, *recorder->yuvFrame);
+
+                if (!config.callbackIsThreadSafe) {
+                    recorder->runCallback();
+                } else {
+                    recorder->callbackThread = std::thread([=]() {
+                        recorder->runCallback();
+                    });
+                }
+            };
+
+            recorder->callback = callback;
+            recorder->yuvConverter = yuvConverter;
+
+            auto surfacesCount = std::clamp<ep_u64>(
+                config.nominalSize / (width * height),
+                1, 512
+            );
+
+            for (ep_u64 i = 0; i < surfacesCount; i++) {
+                auto surface = glCtx->createTexture();
+                surface->use().image2D(width, height, nullptr);
+                recorder->surfaces.push_back(surface);
+            }
+
+            recorder->yuvFrame = YUV420Frame::Make(width, height);
+
+            return ep_sp<VideoRecorder>(recorder);
+        }
+
+        struct FrameUsingGuard {
+            VideoRecorder* ref;
+
+            FrameUsingGuard(VideoRecorder& recorder) : ref(&recorder) {
+                auto& surface = ref->surfaces[ref->currentSurfaceIndex];
+                ref->currentSurfaceIndex = (ref->currentSurfaceIndex + 1) % ref->surfaces.size();
+                fboGuard = surface->frameBuffer->useSp(surface.get(), GL_FRAMEBUFFER);
+            }
+
+            FrameUsingGuard(const FrameUsingGuard&) = delete;
+            FrameUsingGuard& operator=(const FrameUsingGuard&) = delete;
+            FrameUsingGuard(FrameUsingGuard&&) = delete;
+            FrameUsingGuard& operator=(FrameUsingGuard&&) = delete;
+
+            ~FrameUsingGuard() {
+                ref->asyncFrameReader.requestRead();
+            }
+
+            private:
+            ep_sp<FramebufferInfo::UsingGuard> fboGuard;
+        };
+
+        FrameUsingGuard useFrame() {
+            return FrameUsingGuard(*this);
+        }
+
+        void finish() {
+            asyncFrameReader.finish();
+            ensureCallbackIsDone();
+        }
+
+        ~VideoRecorder() {
+            finish();
+        }
+
+        private:
+        ep_sp<GL33Context> glCtx;
+        GL33Context::AsyncFrameReader asyncFrameReader;
+        CallbackFunc callback;
+        YUVConverterFunc yuvConverter;
+
+        std::vector<ep_sp<TextureInfo>> surfaces;
+        ep_u64 currentSurfaceIndex = 0;
+
+        ep_sp<YUV420Frame> yuvFrame;
+        std::thread callbackThread;
+
+        void ensureCallbackIsDone() {
+            if (callbackThread.joinable()) callbackThread.join();
+        }
+
+        void runCallback() {
+            callback(yuvFrame.get());
         }
     };
 };

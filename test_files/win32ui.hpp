@@ -373,7 +373,7 @@ struct WidgetStatics {
             SendMessageW(widget.store.hWnd, WM_SETTEXT, 0, (LPARAM)text.c_str());
             int newLen = text.length();
 
-            if (selStart >= oldLen && selEnd >= oldLen) {
+            if ((int)selStart >= oldLen && (int)selEnd >= oldLen) {
                 selStart = selEnd = newLen;
             } else {
                 selStart = std::min<DWORD>(selStart, newLen);

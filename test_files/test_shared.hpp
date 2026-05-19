@@ -1237,7 +1237,13 @@ struct WindowWOSkia {
 
         renderer->loadResources(calculateFrameConfig);
     }
-    
+
+    void setHidden(bool newValue) {
+        hidden = newValue;
+        if (hidden) glfwHideWindow(window);
+        else glfwShowWindow(window);
+    }
+
     std::optional<std::string> loadBgImage(const std::string& path) {
         easy_phi::Data data;
         if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
