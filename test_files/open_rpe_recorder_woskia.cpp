@@ -574,7 +574,7 @@ int main() {
 
         VideoCap cap(videoPath.c_str(), settings.recordWidth, settings.recordHeight, settings.recordFPS);
         
-        using FrameType = ep_sp<YUV420Frame>;
+        using FrameType = std::optional<uint64_t>;
         using FrameQueueType = ThreadSafeQueue<FrameType>;
         struct UserData {
             VideoCap* cap;
@@ -583,33 +583,36 @@ int main() {
         };
 
         FrameQueueType frameQueue;
-        auto frameWriter = [&]() {
-            FrameType frame;
-            while (true) {
-                frameQueue.wait_dequeue(frame);
-                if (!frame) break;
-                
-                cap.writeVideoFrame(
-                    frame->y.data(),
-                    frame->u.data(),
-                    frame->v.data(),
-                    frame->rowBytesY(),
-                    frame->rowBytesU(),
-                    frame->rowBytesV()
-                );
-            }
-        };
 
         auto videoRecorder = VideoRecorder::Make(
             backendWin.glCtx,
             settings.recordWidth, settings.recordHeight,
-            [&](YUV420Frame* frame) {
-                frameQueue.enqueue(frame->move());
+            [&](uint64_t slotIndex) {
+                frameQueue.enqueue(slotIndex);
             },
             frameToYUV420, {
                 .callbackIsThreadSafe = true
             }
         );
+
+        auto frameWriter = [&]() {
+            FrameType frame;
+            while (true) {
+                frameQueue.wait_dequeue(frame);
+                if (!frame.has_value()) break;
+
+                auto* yuv = videoRecorder->referYUVFrame(frame.value());
+                cap.writeVideoFrame(
+                    yuv->y.data(),
+                    yuv->u.data(),
+                    yuv->v.data(),
+                    yuv->rowBytesY(),
+                    yuv->rowBytesU(),
+                    yuv->rowBytesV()
+                );
+                videoRecorder->returnYUVFrame(frame.value());
+            }
+        };
 
         backendWin.width = settings.recordWidth;
         backendWin.height = settings.recordHeight;
@@ -686,7 +689,7 @@ int main() {
 
         videoRecorder->finish();
 
-        frameQueue.enqueue(nullptr);
+        frameQueue.enqueue(std::nullopt);
         frameWriterThread.join();
 
         performanceInfo.frameCount = frameCut;

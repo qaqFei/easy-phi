@@ -4041,6 +4041,8 @@ namespace GL {
     constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
     constexpr GLenum GL_PACK_ALIGNMENT = 0x0D05;
     constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
+    constexpr GLenum GL_READ_FRAMEBUFFER_BINDING = 0x8CAA;
+    constexpr GLenum GL_DRAW_FRAMEBUFFER_BINDING = 0x8CA6;
     constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
     constexpr GLenum GL_RENDERBUFFER_BINDING = 0x8CA7;
     constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
@@ -4845,6 +4847,11 @@ namespace GL {
                 return MappingGuard(*this, access);
             }
 
+            ep_sp<MappingGuard> mapSp(GLbitfield access = GL_READ_WRITE) {
+                auto* guard = new MappingGuard(*this, access);
+                return ep_sp<MappingGuard>(guard);
+            }
+
             struct MappingRangeGuard {
                 UsingGuard* ref;
                 void* data;
@@ -4867,6 +4874,10 @@ namespace GL {
                 return MappingRangeGuard(*this, offset, length, access);
             }
 
+            ep_sp<MappingRangeGuard> mapRangeSp(GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) {                auto* guard = new MappingRangeGuard(*this, offset, length, access);
+                return ep_sp<MappingRangeGuard>(guard);
+            }
+
             ~UsingGuard() {
                 ref->glRef->glBindBuffer(ref->target, 0);
             }
@@ -4874,6 +4885,11 @@ namespace GL {
 
         UsingGuard use() {
             return UsingGuard(*this);
+        }
+
+        ep_sp<UsingGuard> useSp() {
+            auto* guard = new UsingGuard(*this);
+            return ep_sp<UsingGuard>(guard);
         }
 
         ~BufferInfo() {
@@ -5337,6 +5353,10 @@ namespace GL {
             return other->width == width && other->height == height;
         }
 
+        bool sizeIsSame(GLsizei width, GLsizei height) {
+            return this->width == width && this->height == height;
+        }
+
         GLvec2 size() {
             return { width, height };
         }
@@ -5384,7 +5404,7 @@ namespace GL {
             GLint savedId;
 
             UsingGuard(FramebufferInfo& framebuffer, TextureInfo* texture, GLenum target) : ref(&framebuffer), target(target) {
-                ref->glRef->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &savedId);
+                ref->glRef->glGetIntegerv(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING : (target == GL_DRAW_FRAMEBUFFER ? GL_DRAW_FRAMEBUFFER_BINDING : GL_FRAMEBUFFER_BINDING), &savedId);
                 ref->glRef->glBindFramebuffer(target, ref->id);
                 ref->glRef->glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, texture->target, texture->id, 0);
 
@@ -6029,7 +6049,6 @@ void main() {
             }
 
             struct ReadResult {
-                aligned_vector<ep_u8, 16> data;
                 std::pair<ep_u64, ep_u64> frameSize;
                 ep_u64 frameIndex;
 
@@ -6041,14 +6060,38 @@ void main() {
 
                 static ep_sp<ReadResult> Make(ep_u64 width, ep_u64 height, ep_u64 frameIndex) {
                     auto* result = new ReadResult();
-                    result->data = aligned_vector<ep_u8, 16>(width * height * 4);
                     result->frameSize = { width, height };
                     result->frameIndex = frameIndex;
                     return ep_sp<ReadResult>(result);
                 }
 
+                ep_sp<BufferInfo> pbo;
+
+                void initFromPbo(const ep_sp<BufferInfo>& pbo) {
+                    this->pbo = pbo;
+                }
+
                 ep_u64 width() const { return frameSize.first; }
                 ep_u64 height() const { return frameSize.second; }
+
+                struct UsingGuard {
+                    ep_sp<BufferInfo::UsingGuard> pboGuard;
+                    ep_sp<BufferInfo::UsingGuard::MappingGuard> mapGuard;
+
+                    UsingGuard(const ep_sp<BufferInfo>& pbo) : pboGuard(pbo->useSp()), mapGuard(pboGuard->mapSp(GL_READ_ONLY)) {}
+                    UsingGuard(const UsingGuard&) = delete;
+                    UsingGuard& operator=(const UsingGuard&) = delete;
+                    UsingGuard(UsingGuard&& other) = default;
+                    UsingGuard& operator=(UsingGuard&& other) = default;
+
+                    ep_u8* data() const {
+                        return (ep_u8*)mapGuard->data;
+                    }
+                };
+
+                UsingGuard use() {
+                    return UsingGuard(pbo);
+                }
             };
 
             void requestRead() {
@@ -6065,7 +6108,7 @@ void main() {
                 readToSlot(bufferSlots.back());
             }
 
-            using CallbackFunc = std::function<void(const ReadResult&)>;
+            using CallbackFunc = std::function<void(ReadResult&)>;
             CallbackFunc callback;
 
             void flush() {
@@ -6073,10 +6116,8 @@ void main() {
                     if (!slot.sync || !slot.sync->isSignaled()) continue;
                     slot.sync = nullptr;
 
-                    auto bufGuard = slot.buffer->use();
-                    auto mapGuard = bufGuard.map(GL_READ_ONLY);
-                    auto result = ReadResult::Make(frameWidth, frameHeight, slot.frameIndex);
-                    memcpy(result->data.data(), mapGuard.data, frameWidth * frameHeight * 4);
+                    auto result = allocResult(slot.frameIndex);
+                    result->pbo = std::move(slot.buffer);
                     readResults.push_back(result);
                 }
 
@@ -6101,22 +6142,22 @@ void main() {
             };
 
             std::vector<BufferSlot> bufferSlots;
+            std::vector<ep_sp<BufferInfo>> pendingBuffers;
             std::vector<ep_sp<ReadResult>> readResults;
+            std::vector<ep_sp<ReadResult>> pendingResults;
             ep_u64 currentFrameIndex;
             ep_u64 lastEmitFrameIndex;
 
             void addBufferSlot() {
                 if (frameWidth % 2 != 0 || frameHeight % 2 != 0) throw std::runtime_error("Frame size must be even");
 
-                bufferSlots.push_back({
-                    .buffer = glCtx->createBuffer(GL_PIXEL_PACK_BUFFER)
-                });
-
-                auto& slot = bufferSlots.back();
-                slot.buffer->use().data(frameWidth * frameHeight * 4, nullptr, GL_STREAM_READ);
+                auto& slot = bufferSlots.emplace_back();
+                slot.buffer = allocPbo();
             }
 
             void readToSlot(BufferSlot& slot) {
+                glCtx->flipY(frameWidth, frameHeight);
+                if (!slot.buffer) slot.buffer = allocPbo();
                 auto pboGuard = slot.buffer->use();
                 glCtx->gl.glReadPixels(0, 0, frameWidth, frameHeight, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
                 slot.sync = glCtx->createSync();
@@ -6130,11 +6171,36 @@ void main() {
                         if (result->frameIndex == 0 || result->frameIndex == lastEmitFrameIndex + 1) {
                             lastEmitFrameIndex = result->frameIndex;
                             callback(*result);
+                            pendingBuffers.push_back(std::move(result->pbo));
+                            pendingResults.push_back(std::move(result));
                             readResults.erase(readResults.begin() + i);
                             break;
                         }
                     }
                 }
+            }
+
+            ep_sp<ReadResult> allocResult(ep_u64 frameIndex) {
+                if (pendingResults.empty()) {
+                    return ReadResult::Make(frameWidth, frameHeight, frameIndex);
+                }
+
+                auto ret = std::move(pendingResults.back());
+                pendingResults.pop_back();
+                ret->frameIndex = frameIndex;
+                return ret;
+            }
+
+            ep_sp<BufferInfo> allocPbo() {
+                if (pendingBuffers.empty()) {
+                    auto pbo = glCtx->createBuffer(GL_PIXEL_PACK_BUFFER);
+                    pbo->use().data(frameWidth * frameHeight * 4, nullptr, GL_STREAM_READ);
+                    return pbo;
+                }
+
+                auto ret = std::move(pendingBuffers.back());
+                pendingBuffers.pop_back();
+                return ret;
             }
         };
 
@@ -6147,6 +6213,53 @@ void main() {
             return reader;
         }
 
+        struct FBOGuard {
+            GL33Context* glCtx;
+            GLint readFbo, drawFbo;
+
+            FBOGuard(GL33Context* glCtx) : glCtx(glCtx) {
+                glCtx->gl.glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFbo);
+                glCtx->gl.glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
+            }
+
+            FBOGuard(const FBOGuard&) = delete;
+            FBOGuard& operator=(const FBOGuard&) = delete;
+            FBOGuard(FBOGuard&& other) = delete;
+            FBOGuard& operator=(FBOGuard&& other) = delete;
+
+            ~FBOGuard() {
+                glCtx->gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
+                glCtx->gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFbo);
+            }
+        };
+
+        FBOGuard getFBOGuard() {
+            return FBOGuard(this);
+        }
+
+        void flipY(ep_u64 width, ep_u64 height) {
+            auto tempTexGuard = allocTempTexture(width, height);
+            auto tempTex = tempTexGuard.get();
+
+            {
+                auto fboGuard = getFBOGuard();
+                auto texGuard = tempTex->use();
+                gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, fboGuard.drawFbo);
+                gl.glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
+            }
+
+            {
+                auto fboGuard = getFBOGuard();
+                auto texFboGuard = tempTex->frameBuffer->use(tempTex.get(), GL_READ_FRAMEBUFFER);
+                gl.glBlitFramebuffer(
+                    0, 0, width, height,
+                    0, height, width, 0,
+                    GL_COLOR_BUFFER_BIT,
+                    GL_NEAREST
+                );
+            }
+        }
+
         private:
         ep_sp<ProgramInfo> defaultProgram;
         ep_sp<TextureInfo> defaultWhiteTexture;
@@ -6154,6 +6267,13 @@ void main() {
         bool resourcesInitialized = false;
         GLvec4 currentViewport;
         ep_u64 frameSig;
+
+        struct TempTextureSlot {
+            ep_sp<TextureInfo> tex;
+            bool isUsing;
+        };
+
+        std::vector<TempTextureSlot> tempTextureSlots;
 
         void initDefaultResources() {
             if (resourcesInitialized) return;
@@ -6179,6 +6299,43 @@ void main() {
             blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
             vertexPool = VertexPool::Make();
+        }
+
+        struct TempTextureGuard {
+            GL33Context* glCtx;
+            ep_u64 index;
+
+            TempTextureGuard(GL33Context* glCtx, ep_u64 index, ep_u64 width, ep_u64 height) : glCtx(glCtx), index(index) {
+                glCtx->tempTextureSlots[index].isUsing = true;
+
+                auto tex = get();
+                if (!tex->sizeIsSame(width, height)) {
+                    tex->use().image2D(width, height, nullptr);
+                }
+            }
+
+            ep_sp<TextureInfo> get() {
+                return glCtx->tempTextureSlots[index].tex;
+            }
+
+            TempTextureGuard(const TempTextureGuard&) = delete;
+            TempTextureGuard& operator=(const TempTextureGuard&) = delete;
+            TempTextureGuard(TempTextureGuard&& other) = delete;
+            TempTextureGuard& operator=(TempTextureGuard&& other) = delete;
+
+            ~TempTextureGuard() {
+                glCtx->tempTextureSlots[index].isUsing = false;
+            }
+        };
+
+        TempTextureGuard allocTempTexture(ep_u64 width, ep_u64 height) {
+            for (auto& slot : tempTextureSlots) {
+                if (!slot.isUsing) return TempTextureGuard(this, &slot - &tempTextureSlots[0], width, height);
+            }
+
+            auto& slot = tempTextureSlots.emplace_back();
+            slot.tex = createTexture();
+            return TempTextureGuard(this, &slot - &tempTextureSlots[0], width, height);
         }
     };
 
@@ -6286,8 +6443,8 @@ void main() {
         VideoRecorder(VideoRecorder&&) = delete;
         VideoRecorder& operator=(VideoRecorder&&) = delete;
 
-        using CallbackFunc = std::function<void(YUV420Frame*)>;
-        using YUVConverterFunc = std::function<void(const GL33Context::AsyncFrameReader::ReadResult&, YUV420Frame&)>;
+        using CallbackFunc = std::function<void(ep_u64)>;
+        using YUVConverterFunc = std::function<void(GL33Context::AsyncFrameReader::ReadResult&, YUV420Frame&)>;
         
         struct Config {
             ep_u64 nominalSize = 1920 * 1080 * 16;
@@ -6305,15 +6462,18 @@ void main() {
 
             recorder->glCtx = glCtx;
             recorder->asyncFrameReader = glCtx->createAsyncFrameReader(width, height);
-            recorder->asyncFrameReader.callback = [=](const GL33Context::AsyncFrameReader::ReadResult& result) {
+            recorder->asyncFrameReader.callback = [=](GL33Context::AsyncFrameReader::ReadResult& result) {
                 recorder->ensureCallbackIsDone();
-                recorder->yuvConverter(result, *recorder->yuvFrame);
+                auto slotIndex = recorder->allocYUVFrameSlot();
+                auto& slot = recorder->yuvFrameSlots[slotIndex];
+
+                recorder->yuvConverter(result, *slot.frame.get());
 
                 if (!config.callbackIsThreadSafe) {
-                    recorder->runCallback();
+                    recorder->callback(slotIndex);
                 } else {
                     recorder->callbackThread = std::thread([=]() {
-                        recorder->runCallback();
+                        recorder->callback(slotIndex);
                     });
                 }
             };
@@ -6331,8 +6491,6 @@ void main() {
                 surface->use().image2D(width, height, nullptr);
                 recorder->surfaces.push_back(surface);
             }
-
-            recorder->yuvFrame = YUV420Frame::Make(width, height);
 
             return ep_sp<VideoRecorder>(recorder);
         }
@@ -6363,6 +6521,16 @@ void main() {
             return FrameUsingGuard(*this);
         }
 
+        YUV420Frame* referYUVFrame(ep_u64 index) {
+            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
+            return yuvFrameSlots[index].frame.get();
+        }
+
+        void returnYUVFrame(ep_u64 index) {
+            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
+            yuvFrameSlots[index].isUsing = false;
+        }
+
         void finish() {
             asyncFrameReader.finish();
             ensureCallbackIsDone();
@@ -6381,15 +6549,34 @@ void main() {
         std::vector<ep_sp<TextureInfo>> surfaces;
         ep_u64 currentSurfaceIndex = 0;
 
-        ep_sp<YUV420Frame> yuvFrame;
+        struct YUVFrameSlot {
+            ep_sp<YUV420Frame> frame;
+            bool isUsing;
+        };
+
+        std::vector<YUVFrameSlot> yuvFrameSlots;
+        std::mutex yuvFrameSlotsMutex;
         std::thread callbackThread;
 
         void ensureCallbackIsDone() {
             if (callbackThread.joinable()) callbackThread.join();
         }
 
-        void runCallback() {
-            callback(yuvFrame.get());
+        ep_u64 allocYUVFrameSlot() {
+            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
+
+            for (ep_u64 i = 0; i < yuvFrameSlots.size(); i++) {
+                auto& slot = yuvFrameSlots[i];
+                if (!slot.isUsing) {
+                    slot.isUsing = true;
+                    return i;
+                }
+            }
+
+            auto& slot = yuvFrameSlots.emplace_back();
+            slot.frame = YUV420Frame::Make(asyncFrameReader.frameWidth, asyncFrameReader.frameHeight);
+            slot.isUsing = true;
+            return yuvFrameSlots.size() - 1;
         }
     };
 };
@@ -7564,13 +7751,15 @@ namespace easy_phi {
 
     namespace GL {
         void frameToYUV420(
-            const GL33Context::AsyncFrameReader::ReadResult& rgbaFrame,
+            GL33Context::AsyncFrameReader::ReadResult& rgbaFrame,
             YUV420Frame& yuvFrame
         ) {
             yuvFrame.ensureSize();
+            auto guard = rgbaFrame.use();
+
             rgba8ToYUV420(
                 rgbaFrame.width(), rgbaFrame.height(),
-                rgbaFrame.data.data(), rgbaFrame.width() * 4,
+                guard.data(), rgbaFrame.width() * 4,
                 yuvFrame.y.data(), yuvFrame.u.data(), yuvFrame.v.data(),
                 rgbaFrame.width(), rgbaFrame.width() / 2
             );
