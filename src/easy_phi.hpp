@@ -4070,6 +4070,13 @@ namespace GL {
     constexpr GLenum GL_WRITE_ONLY = 0x88B9;
     constexpr GLenum GL_READ_WRITE = 0x88BA;
 
+    constexpr GLbitfield GL_MAP_READ_BIT = 0x0001;
+    constexpr GLbitfield GL_MAP_WRITE_BIT = 0x0002;
+    constexpr GLbitfield GL_MAP_INVALIDATE_RANGE_BIT = 0x0004;
+    constexpr GLbitfield GL_MAP_INVALIDATE_BUFFER_BIT = 0x0008;
+    constexpr GLbitfield GL_MAP_FLUSH_EXPLICIT_BIT = 0x0010;
+    constexpr GLbitfield GL_MAP_UNSYNCHRONIZED_BIT = 0x0020;
+
     constexpr GLenum GL_BYTE = 0x1400;
     constexpr GLenum GL_SHORT = 0x1402;
     constexpr GLenum GL_INT = 0x1404;
@@ -4843,39 +4850,40 @@ namespace GL {
                 }
             };
 
-            MappingGuard map(GLbitfield access = GL_READ_WRITE) {
-                return MappingGuard(*this, access);
-            }
-
-            ep_sp<MappingGuard> mapSp(GLbitfield access = GL_READ_WRITE) {
-                auto* guard = new MappingGuard(*this, access);
-                return ep_sp<MappingGuard>(guard);
-            }
-
-            struct MappingRangeGuard {
+            struct RangeMappingGuard {
                 UsingGuard* ref;
                 void* data;
 
-                MappingRangeGuard(UsingGuard& buffer, GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
+                RangeMappingGuard(UsingGuard& buffer, GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
                     data = ref->ref->glRef->glMapBufferRange(ref->ref->target, offset, length, access);
                 }
 
-                MappingRangeGuard(const MappingRangeGuard&) = delete;
-                MappingRangeGuard& operator=(const MappingRangeGuard&) = delete;
-                MappingRangeGuard(MappingRangeGuard&&) = delete;
-                MappingRangeGuard& operator=(MappingRangeGuard&&) = delete;
+                RangeMappingGuard(const RangeMappingGuard&) = delete;
+                RangeMappingGuard& operator=(const RangeMappingGuard&) = delete;
+                RangeMappingGuard(RangeMappingGuard&&) = delete;
+                RangeMappingGuard& operator=(RangeMappingGuard&&) = delete;
 
-                ~MappingRangeGuard() {
+                ~RangeMappingGuard() {
                     ref->ref->glRef->glUnmapBuffer(ref->ref->target);
                 }
             };
 
-            MappingRangeGuard mapRange(GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) {
-                return MappingRangeGuard(*this, offset, length, access);
+            MappingGuard map(GLbitfield access) {
+                return MappingGuard(*this, access);
             }
 
-            ep_sp<MappingRangeGuard> mapRangeSp(GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) {                auto* guard = new MappingRangeGuard(*this, offset, length, access);
-                return ep_sp<MappingRangeGuard>(guard);
+            ep_sp<MappingGuard> mapSp(GLbitfield access) {
+                auto* guard = new MappingGuard(*this, access);
+                return ep_sp<MappingGuard>(guard);
+            }
+
+            RangeMappingGuard mapRange(GLintptr offset, GLsizeiptr length, GLbitfield access) {
+                return RangeMappingGuard(*this, offset, length, access);
+            }
+
+            ep_sp<RangeMappingGuard> mapRangeSp(GLintptr offset, GLsizeiptr length, GLbitfield access) {
+                auto* guard = new RangeMappingGuard(*this, offset, length, access);
+                return ep_sp<RangeMappingGuard>(guard);
             }
 
             ~UsingGuard() {
@@ -6190,7 +6198,11 @@ void main() {
                     ep_sp<BufferInfo::UsingGuard> pboGuard;
                     ep_sp<BufferInfo::UsingGuard::MappingGuard> mapGuard;
 
-                    UsingGuard(const ep_sp<BufferInfo>& pbo) : pboGuard(pbo->useSp()), mapGuard(pboGuard->mapSp(GL_READ_ONLY)) {}
+                    UsingGuard(const ep_sp<BufferInfo>& pbo)
+                        : pboGuard(pbo->useSp())
+                        , mapGuard(pboGuard->mapSp(GL_READ_ONLY))
+                    {}
+                    
                     UsingGuard(const UsingGuard&) = delete;
                     UsingGuard& operator=(const UsingGuard&) = delete;
                     UsingGuard(UsingGuard&& other) = default;
@@ -6218,7 +6230,6 @@ void main() {
 
                 addBufferSlot();
                 readToSlot(bufferSlots.back());
-                glCtx->flush();
             }
 
             using CallbackFunc = std::function<void(ReadResult&)>;
@@ -6229,7 +6240,7 @@ void main() {
                     if (!slot.sync || !slot.sync->isSignaled()) continue;
                     slot.sync = nullptr;
 
-                    auto result = allocResult(slot.frameIndex);
+                    auto result = ReadResult::Make(frameWidth, frameHeight, slot.frameIndex);
                     result->pbo = std::move(slot.buffer);
                     readResults.push_back(result);
                 }
@@ -6257,7 +6268,6 @@ void main() {
             std::vector<BufferSlot> bufferSlots;
             std::vector<ep_sp<BufferInfo>> pendingBuffers;
             std::vector<ep_sp<ReadResult>> readResults;
-            std::vector<ep_sp<ReadResult>> pendingResults;
             ep_u64 currentFrameIndex;
             ep_u64 lastEmitFrameIndex;
 
@@ -6286,23 +6296,11 @@ void main() {
                             lastEmitFrameIndex = result->frameIndex;
                             callback(*result);
                             pendingBuffers.push_back(std::move(result->pbo));
-                            pendingResults.push_back(std::move(result));
                             readResults.erase(readResults.begin() + i);
                             break;
                         }
                     }
                 }
-            }
-
-            ep_sp<ReadResult> allocResult(ep_u64 frameIndex) {
-                if (pendingResults.empty()) {
-                    return ReadResult::Make(frameWidth, frameHeight, frameIndex);
-                }
-
-                auto ret = std::move(pendingResults.back());
-                pendingResults.pop_back();
-                ret->frameIndex = frameIndex;
-                return ret;
             }
 
             ep_sp<BufferInfo> allocPbo() {
@@ -6590,11 +6588,7 @@ void main() {
                 recorder->ensureCallbackIsDone();
                 auto slotIndex = recorder->allocYUVFrameSlot();
                 auto& slot = recorder->yuvFrameSlots[slotIndex];
-
-                auto s = globalTimer();
                 slot.frame->fromPtr(result.use().data());
-                auto e = ((globalTimer() - s) * 1000) ;
-                std::cout << e<< std::endl;
 
                 if (!config.callbackIsThreadSafe) {
                     recorder->callback(slotIndex);
@@ -6695,7 +6689,7 @@ void main() {
 
         ep_u64 allocYUVFrameSlot() {
             while (getYUVFrameSlotsInUse() > maxConcurrentYuvSlots) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
             }
 
             std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
