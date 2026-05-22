@@ -473,7 +473,6 @@ std::string av_error_string(int errnum) {
     return std::string(buf.data());
 }
 
-static bool DISABLE_H264_QSV = false;
 struct VideoCap {
     const char* path;
     int width; int height; double fps;
@@ -501,7 +500,17 @@ struct VideoCap {
     int aFramePts = 0;
     bool wroteAudio = false;
 
-    VideoCap(const char* path, int width, int height, double fps) {
+    struct Config {
+        bool disableH264QSV = false;
+    };
+
+    VideoCap(
+        const char* path,
+        int width, int height, double fps,
+        const std::optional<Config>& cfg = std::nullopt
+    ) {
+        auto actual_cfg = cfg.value_or({});
+
         int err;
         this->path = path;
         this->width = width; this->height = height; this->fps = fps;
@@ -512,7 +521,7 @@ struct VideoCap {
         };
 
         AVCodec* vCodec = nullptr;        
-        if (!DISABLE_H264_QSV && !vCodec && (vCodec = (AVCodec*)avcodec_find_encoder_by_name("h264_qsv"))) {
+        if (!actual_cfg.disableH264QSV && !vCodec && (vCodec = (AVCodec*)avcodec_find_encoder_by_name("h264_qsv"))) {
             init();
             vStream = avformat_new_stream(fmtCtx, vCodec);
             vCodecCtx = avcodec_alloc_context3(vCodec);
