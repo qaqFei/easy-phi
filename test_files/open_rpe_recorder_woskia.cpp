@@ -579,7 +579,6 @@ int main() {
         struct UserData {
             VideoCap* cap;
             FrameQueueType* frameQueue;
-            uint64_t queueMaxSize;
         };
 
         FrameQueueType frameQueue;
@@ -590,7 +589,7 @@ int main() {
             [&](uint64_t slotIndex) {
                 frameQueue.enqueue(slotIndex);
             },
-            frameToYUV420, {
+            {
                 .callbackIsThreadSafe = true
             }
         );
@@ -603,9 +602,9 @@ int main() {
 
                 auto* yuv = videoRecorder->referYUVFrame(frame.value());
                 cap.writeVideoFrame(
-                    yuv->y.data(),
-                    yuv->u.data(),
-                    yuv->v.data(),
+                    yuv->y(),
+                    yuv->u(),
+                    yuv->v(),
                     yuv->rowBytesY(),
                     yuv->rowBytesU(),
                     yuv->rowBytesV()
@@ -658,7 +657,6 @@ int main() {
         UserData ud {};
         ud.cap = &cap;
         ud.frameQueue = &frameQueue;
-        ud.queueMaxSize = std::max<uint64_t>(1, std::min<uint64_t>(512, 1920 * 1080 * 8 / (settings.recordWidth * settings.recordHeight)));
         std::thread frameWriterThread(frameWriter);
         uint64_t surfaceIndex = 0;
         FPSCalc fpsCalc;
