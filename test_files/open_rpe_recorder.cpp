@@ -191,6 +191,8 @@ struct Settings {
     double recordFPS = 60.0;
     bool recordSfxRandshake = false;
 
+    bool disableH264QSV = false;
+
     void fromRegistry() {
         RegAPI api(appKey);
         
@@ -212,6 +214,8 @@ struct Settings {
         api.readDouble(L"recordFPS", recordFPS);
         api.readBool(L"recordSfxRandshake", recordSfxRandshake);
 
+        api.readBool(L"disableH264QSV", disableH264QSV);
+
         clampValues();
     }
 
@@ -227,6 +231,8 @@ struct Settings {
         api.writeDword(L"recordHeight", recordHeight);
         api.writeDouble(L"recordFPS", recordFPS);
         api.writeBool(L"recordSfxRandshake", recordSfxRandshake);
+
+        api.writeBool(L"disableH264QSV", disableH264QSV);
     }
 
     void clampValues() {
@@ -271,6 +277,7 @@ int main() {
     int noteScalingInput;
     int recordWidthInput, recordHeightInput, recordFPSInput;
     int recordSfxRandshakeCheckBox;
+    int disableH264QSVCheckBox;
 
     Settings settings {};
     settings.fromRegistry();
@@ -402,6 +409,8 @@ int main() {
         doubleInput(recordFPSInput, settings.recordFPS);
         checkbox(recordSfxRandshakeCheckBox, settings.recordSfxRandshake);
 
+        checkbox(disableH264QSVCheckBox, settings.disableH264QSV);
+
         isSyncingSettings = false;
     };
 
@@ -449,7 +458,7 @@ int main() {
 
     win->nextRow();
 
-    win->registerWidget(Widgets::Label({ .text = L"设置 (录制)" }));
+    win->registerWidget(Widgets::Label({ .text = L"设置 (视频参数)" }));
     win->nextRow();
 
     win->registerWidget(Widgets::Label({ .text = L"分辨率: " }));
@@ -484,6 +493,18 @@ int main() {
     } }));
     win->registerWidget(Widgets::Button({ .text = L"?", .onClick = [&]() {
         showInfoMsg(win.get(), L"由于本家即使同时打击音符, 打击音效也并不是在同一时刻播放, 启用该选项后, 打击音效会在一定范围内随机延迟播放, 以模拟本家多押的神秘听感。");
+    } }));
+    win->nextRow();
+
+    win->nextRow();
+
+    win->registerWidget(Widgets::Label({ .text = L"设置 (视频编码器)" }));
+    win->nextRow();
+
+    disableH264QSVCheckBox = win->registerWidget(Widgets::CheckBox({ .text = L"禁用 H.264 QSV 编码器", .onChange = [&](bool checked) {
+        if (isSyncingSettings) return;
+        settings.disableH264QSV = checked;
+        settingsChanged();
     } }));
     win->nextRow();
 
@@ -534,8 +555,7 @@ int main() {
         };
 
         backendWin.setHidden(false);
-        backendWin.vsync = true;
-        backendWin.resetSurface();
+        backendWin.setVSync(true);
         backendWin.startMainSound();
 
         ma_sound_set_volume(backendWin.mainSound, settings.musicVol);
@@ -573,66 +593,51 @@ int main() {
         pd.setLine(1, L"初始化...");
         WinHiddenGuard whguard(win.get());
 
-        backendWin.width = settings.recordWidth;
-        backendWin.height = settings.recordHeight;
-        backendWin.resetSurface();
-
-        VideoCap cap(videoPath.c_str(), settings.recordWidth, settings.recordHeight, settings.recordFPS);
+        VideoCap cap(videoPath.c_str(), settings.recordWidth, settings.recordHeight, settings.recordFPS, VideoCap::Config {
+            .disableH264QSV = settings.disableH264QSV
+        });
         
-        using FrameType = std::unique_ptr<const SkImage::AsyncReadResult>;
+        using FrameType = std::optional<uint64_t>;
         using FrameQueueType = ThreadSafeQueue<FrameType>;
         struct UserData {
             VideoCap* cap;
             FrameQueueType* frameQueue;
-            uint64_t queueMaxSize;
-        };
-
-        auto readPixelsCallback = [](void* user, FrameType result) {
-            auto& ud = *(UserData*)user;
-            if (!result) {
-                std::cerr << "Failed to read pixels from SkSurface" << std::endl;
-                TerminateProcess(GetCurrentProcess(), EXIT_FAILURE);
-            }
-
-            if (result->count() != 3) {
-                std::cerr << "Unexpected number of planes: " << result->count() << std::endl;
-                TerminateProcess(GetCurrentProcess(), EXIT_FAILURE);
-            }
-
-            while (ud.frameQueue->size_approx() >= ud.queueMaxSize) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            }
-            ud.frameQueue->enqueue(std::move(result));
         };
 
         FrameQueueType frameQueue;
+
+        auto videoRecorder = VideoRecorder::Make(
+            backendWin.glCtx,
+            settings.recordWidth, settings.recordHeight,
+            [&](uint64_t slotIndex) {
+                frameQueue.enqueue(slotIndex);
+            },
+            {
+                .callbackIsThreadSafe = true
+            }
+        );
+
         auto frameWriter = [&]() {
             FrameType frame;
             while (true) {
                 frameQueue.wait_dequeue(frame);
-                if (!frame) break;
-                
+                if (!frame.has_value()) break;
+
+                auto* yuv = videoRecorder->referYUVFrame(frame.value());
                 cap.writeVideoFrame(
-                    (void*)frame->data(0),
-                    (void*)frame->data(1),
-                    (void*)frame->data(2),
-                    frame->rowBytes(0),
-                    frame->rowBytes(1),
-                    frame->rowBytes(2)
+                    yuv->y(),
+                    yuv->u(),
+                    yuv->v(),
+                    yuv->rowBytesY(),
+                    yuv->rowBytesU(),
+                    yuv->rowBytesV()
                 );
+                videoRecorder->returnYUVFrame(frame.value());
             }
         };
 
-        uint64_t surfacePoolSize = std::max<uint64_t>(1, std::min<uint64_t>(512, 1920 * 1080 / (settings.recordWidth * settings.recordHeight)));
-        std::vector<sk_sp<SkSurface>> surfacePool(surfacePoolSize);
-        auto masterSurfaceRef = backendWin.skSurface;
-        for (uint64_t i = 0; i < surfacePoolSize; i++) {
-            surfacePool[i] = masterSurfaceRef->makeSurface(settings.recordWidth, settings.recordHeight);
-            if (!surfacePool[i]) {
-                std::cerr << "Failed to create SkSurface" << std::endl;
-                return;
-            }
-        }
+        backendWin.width = settings.recordWidth;
+        backendWin.height = settings.recordHeight;
 
         pd.setLine(1, L"加载...");
         if (!load()) return;
@@ -675,7 +680,6 @@ int main() {
         UserData ud {};
         ud.cap = &cap;
         ud.frameQueue = &frameQueue;
-        ud.queueMaxSize = std::max<uint64_t>(1, std::min<uint64_t>(512, 1920 * 1080 * 8 / (settings.recordWidth * settings.recordHeight)));
         std::thread frameWriterThread(frameWriter);
         uint64_t surfaceIndex = 0;
         FPSCalc fpsCalc;
@@ -684,25 +688,11 @@ int main() {
             double t = frameCut / cap.fps;
             if (t > backendWin.calculateFrameConfig.songLength) break;
 
-            backendWin.skSurface = surfacePool[surfaceIndex];
-            backendWin.skCanvas = backendWin.skSurface->getCanvas();
+            auto reGuard = videoRecorder->useFrame();
             backendWin.mainloopFrame(t, {
                 .isRenderingVideo = true
             });
-            
-            backendWin.skSurface->asyncRescaleAndReadPixelsYUV420(
-                SkYUVColorSpace::kJPEG_Full_SkYUVColorSpace,
-                backendWin.skSurfaceColorSpace,
-                SkIRect{0, 0, (int32_t)settings.recordWidth, (int32_t)settings.recordHeight},
-                SkISize{(int32_t)settings.recordWidth, (int32_t)settings.recordHeight},
-                SkImage::RescaleGamma::kLinear,
-                SkImage::RescaleMode::kNearest,
-                readPixelsCallback,
-                &ud
-            );
 
-            if (surfaceIndex == surfacePoolSize - 1) backendWin.skGrCtx->flushAndSubmit();
-            surfaceIndex = (surfaceIndex + 1) % surfacePoolSize;
             frameCut++;
             fpsCalc.frame();
 
@@ -718,12 +708,9 @@ int main() {
             }
         }
 
-        while (cap.writtenVideoFrameCount != frameCut) {
-            backendWin.skGrCtx->flushAndSubmit();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
+        videoRecorder->finish();
 
-        frameQueue.enqueue(nullptr);
+        frameQueue.enqueue(std::nullopt);
         frameWriterThread.join();
 
         performanceInfo.frameCount = frameCut;
@@ -735,7 +722,6 @@ int main() {
                 TelemetryDeckClient::Performance::VideoRender::completed(performanceInfo);
             }).detach();
         }
-        backendWin.resetSurface();
 
         std::wstring msg(L"渲染完成, 已保存到 ");
         msg += Win32Utils::stringToWstring(videoPath);

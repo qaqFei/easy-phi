@@ -7268,7 +7268,7 @@ struct PhiCalculatedFrame {
                     else if (text.baseline == EnumTextBaseline::Middle) anchor.y = 0.5;
                     else if (text.baseline == EnumTextBaseline::Bottom) anchor.y = 1.0;
 
-                    drawText(cvs, {
+                    DrawTextConfig config {
                         .text = text.text,
                         .fontSize = text.fontSize,
                         .pos = text.position,
@@ -7276,7 +7276,9 @@ struct PhiCalculatedFrame {
                         .rotation = text.rotation,
                         .scale = text.scale,
                         .color = text.color
-                    });
+                    };
+
+                    drawText(cvs, config);
                 } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj)) {
                     auto& sbTexture = std::get<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj);
                     auto& img = storyboardTextures[sbTexture.texture];
@@ -7387,11 +7389,23 @@ struct PhiCalculatedFrame {
             ep_f64 rotation;
             GL::GLvec2 scale;
             GL::GLvec4 color;
+
+            void normScale() {
+                auto wScale = std::min<ep_f64>(std::max(scale.x, scale.y), 16.0);
+
+                if (wScale > 1.0) {
+                    scale /= wScale;
+                    fontSize *= wScale;
+                }
+            }
         };
+
         void drawText(
             GL::GL33Context::Canvas& cvs,
-            const DrawTextConfig& config
+            DrawTextConfig& config
         ) {
+            config.normScale();
+
             ep_u64 isize = std::ceil(config.fontSize / 48) * 48;
             auto tex = getTextTexture(config.text, isize);
             ep_f64 scale = config.fontSize / isize;
@@ -7562,23 +7576,13 @@ void calculatePhiFrame(
         } else {
             if (lineAlpha * lineColor.a > 0) {
                 if (lineText.has_value()) {
-                    ep_f64 fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum();
-
-                    auto maxScale = std::min(lineScale.max(), maxFontSizeNormScale);
-                    auto realScale = lineScale;
-
-                    if (maxScale > 1.0) {
-                        fontSize *= maxScale;
-                        realScale /= maxScale;
-                    }
-
                     frame.objects.push_back(PhiCalculatedFrame::CalculatedText {
                         .text = lineText.value(),
                         .position = lineScreenPosition,
-                        .scale = realScale,
+                        .scale = lineScale,
                         .align = EnumTextAlign::Center,
                         .baseline = EnumTextBaseline::Middle,
-                        .fontSize = fontSize,
+                        .fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum(),
                         .rotation = lineRotation,
                         .color = lineColor.applyAlpha(lineAlpha)
                     });

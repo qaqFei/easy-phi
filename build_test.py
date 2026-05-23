@@ -21,12 +21,6 @@ libraries = {
         "./test_files/externals/miniaudio/lib/miniaudio.o",
     ],
     
-    "skia": [
-        "-I./test_files/externals/skia/include",
-        "-L./test_files/externals/skia/lib",
-        "-lskia",
-    ],
-    
     "glfw3": [
         "-I./test_files/externals/glfw3/include",
         "-L./test_files/externals/glfw3/lib",
