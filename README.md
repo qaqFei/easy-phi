@@ -2,17 +2,20 @@
 
 <h4 align="center">
 
-![easy-phi](https://socialify.git.ci/qaqFei/easy-phi/image?description=1&descriptionEditable=A%20simple,%20high-performance,%20and%20cross-platform%20library%20for%20rendering%20Phigros%20charts.&font=Jost&forks=1&issues=1&name=1&owner=1&pattern=Charlie%20Brown&pulls=1&stargazers=1&theme=Auto)
+![easy-phi](https://socialify.git.ci/qaqFei/easy-phi/image?description=1&descriptionEditable=A%20simple,%20high-performance,%20and%20cross-platform%20library%20for%20rendering%20rhythm%20charts.&font=Jost&forks=1&issues=1&name=1&owner=1&pattern=Charlie%20Brown&pulls=1&stargazers=1&theme=Auto)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Language](https://img.shields.io/badge/language-C++-blue.svg)
 </h4>
 
-easy-phi is a library written in C++ to rendering phigros chart with no dependencies and all the platforms are supported.
+easy-phi is a library written in C++ to rendering rhythm chart with no dependencies and all the platforms are supported.
+
+## Games Supported
+
+- Phigros
 
 ## Features
 
-- **Chart Loading**: Supports loading official Phigros and charts created by Re:PhiEdit.
 - **High Performance**: Optimized for performance, suitable for real-time rendering.
 - **Simple API**: Easy to use and understand.
 - **Cross Platform**: Works on any platform that supports C++.

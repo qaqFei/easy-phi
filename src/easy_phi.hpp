@@ -203,6 +203,14 @@ struct Vec2 {
     }
 };
 
+enum class EnumTextAlign {
+    Left, Center, Right
+};
+
+enum class EnumTextBaseline {
+    Top, Middle, Bottom
+};
+
 static const ep_f64 INF_TIME = 99999.0;
 static const Vec2 INF_TZ = { -INF_TIME, INF_TIME };
 static const ep_f64 INF_EV = 1e9;
@@ -670,20 +678,21 @@ enum class EnumPhiEventType : ep_u64 {
     ScaleX, ScaleY,
     Speed, SpeedCoefficient,
     Text,
-    ShaderUniform,
-    MAX = ShaderUniform + 1
+    PhiShaderUniform,
+    MAX = PhiShaderUniform + 1
 };
+
+ep_bool phiEventTypeIsMultiply(EnumPhiEventType type) {
+    return (
+        type == EnumPhiEventType::MultiplyAlpha ||
+        type == EnumPhiEventType::ScaleX ||
+        type == EnumPhiEventType::ScaleY ||
+        type == EnumPhiEventType::SpeedCoefficient
+    );
+}
 
 enum class EnumPhiNoteType {
     Tap, Drag, Flick, Hold
-};
-
-enum class EnumTextAlign {
-    Left, Center, Right
-};
-
-enum class EnumTextBaseline {
-    Top, Middle, Bottom
 };
 
 enum class EnumPhiLineAttachUI {
@@ -731,15 +740,6 @@ struct PhiLineAttachUIHelper {
         return EnumPhiLineAttachUI::None;
     }
 };
-
-ep_bool isMultiplyEventType(EnumPhiEventType type) {
-    return (
-        type == EnumPhiEventType::MultiplyAlpha ||
-        type == EnumPhiEventType::ScaleX ||
-        type == EnumPhiEventType::ScaleY ||
-        type == EnumPhiEventType::SpeedCoefficient
-    );
-}
 
 struct PhiMeta {
     ep_f64 offset;
@@ -814,7 +814,7 @@ struct PhiEvent {
             }
         }
 
-        if (type == EnumPhiEventType::Color || type == EnumPhiEventType::Text || type == EnumPhiEventType::ShaderUniform) {
+        if (type == EnumPhiEventType::Color || type == EnumPhiEventType::Text || type == EnumPhiEventType::PhiShaderUniform) {
             p = std::clamp(p, 0.0, 1.0);
         }
 
@@ -822,7 +822,7 @@ struct PhiEvent {
     }
 
     static ep_f64 GetDefaultValue(EnumPhiEventType type) {
-        return isMultiplyEventType(type) ? 1.0 : 0.0;
+        return phiEventTypeIsMultiply(type) ? 1.0 : 0.0;
     }
 };
 
@@ -966,7 +966,7 @@ struct PhiAnimGroup {
         ep_f64 value = baseValue;
 
         for (auto& layer : layers) {
-            if (isMultiplyEventType(type)) value *= layer.get(type);
+            if (phiEventTypeIsMultiply(type)) value *= layer.get(type);
             else value += layer.get(type);
         }
 
@@ -979,7 +979,7 @@ struct PhiAnimGroup {
         for (auto& layer : layers) {
             auto v = layer.getAlwaysValue(type);
             if (!v.has_value()) return std::nullopt;
-            if (isMultiplyEventType(type)) result *= v.value();
+            if (phiEventTypeIsMultiply(type)) result *= v.value();
             else result += v.value();
         }
 
@@ -1326,30 +1326,30 @@ struct PhiExtra {
     }
 };
 
-struct ShaderUniform {
+struct PhiShaderUniform {
     ep_u8 used;
     ep_f64 value[4];
 
-    ShaderUniform(ep_f64 v0, ep_f64 v1, ep_f64 v2, ep_f64 v3) : used(4), value{ v0, v1, v2, v3 } {}
-    ShaderUniform(ep_f64 v0, ep_f64 v1, ep_f64 v2) : used(3), value{ v0, v1, v2, 0.0 } {}
-    ShaderUniform(ep_f64 v0, ep_f64 v1) : used(2), value{ v0, v1, 0.0, 0.0 } {}
-    ShaderUniform(ep_f64 v0) : used(1), value{ v0, 0.0, 0.0, 0.0 } {}
-    ShaderUniform() : used(0) {}
+    PhiShaderUniform(ep_f64 v0, ep_f64 v1, ep_f64 v2, ep_f64 v3) : used(4), value{ v0, v1, v2, v3 } {}
+    PhiShaderUniform(ep_f64 v0, ep_f64 v1, ep_f64 v2) : used(3), value{ v0, v1, v2, 0.0 } {}
+    PhiShaderUniform(ep_f64 v0, ep_f64 v1) : used(2), value{ v0, v1, 0.0, 0.0 } {}
+    PhiShaderUniform(ep_f64 v0) : used(1), value{ v0, 0.0, 0.0, 0.0 } {}
+    PhiShaderUniform() : used(0) {}
 
-    static ShaderUniform Interpolate(const ShaderUniform& a, const ShaderUniform& b, ep_f64 t) {
-        ShaderUniform result;
+    static PhiShaderUniform Interpolate(const PhiShaderUniform& a, const PhiShaderUniform& b, ep_f64 t) {
+        PhiShaderUniform result;
         result.used = std::max(a.used, b.used);
         for (ep_u8 i = 0; i < 4; i++) result.value[i] = a.value[i] + (b.value[i] - a.value[i]) * t;
         return result;
     }
 
-    ep_bool operator==(const ShaderUniform& other) const {
+    ep_bool operator==(const PhiShaderUniform& other) const {
         if (used != other.used) return false;
         for (ep_u8 i = 0; i < 4; i++) if (value[i] != other.value[i]) return false;
         return true;
     }
 
-    ep_bool operator!=(const ShaderUniform& other) const { return !(*this == other); }
+    ep_bool operator!=(const PhiShaderUniform& other) const { return !(*this == other); }
 };
 
 struct PhiStoryboardAssets {
@@ -1361,7 +1361,7 @@ struct PhiStoryboardAssets {
     std::vector<std::string> texts;
     std::unordered_map<std::string, std::pair<ep_u64, Vec2>> textures; // name, (id, size)
     std::vector<Color> colors;
-    std::vector<ShaderUniform> shaderUniforms;
+    std::vector<PhiShaderUniform> shaderUniforms;
 
     std::function<std::optional<std::pair<ep_u64, Vec2>>(std::string)> textureLoader;
     std::function<void(ep_u64)> textureDestroyer;
@@ -1385,7 +1385,7 @@ struct PhiStoryboardAssets {
         return valueZone + kColorIndexOffset;
     }
 
-    Vec2 requestShaderUniformPair(const ShaderUniform& start, const ShaderUniform& end) {
+    Vec2 requestShaderUniformPair(const PhiShaderUniform& start, const PhiShaderUniform& end) {
         Vec2 valueZone;
         if (shaderUniforms.empty() || shaderUniforms[shaderUniforms.size() - 1] != start) shaderUniforms.push_back(start);
         valueZone.x = shaderUniforms.size() - 1;
@@ -1395,7 +1395,7 @@ struct PhiStoryboardAssets {
     }
 
     Vec2 requestShaderUniformPair(ep_f64 start, ep_f64 end) {
-        return requestShaderUniformPair(ShaderUniform(start), ShaderUniform(end));
+        return requestShaderUniformPair(PhiShaderUniform(start), PhiShaderUniform(end));
     }
 
     std::optional<std::string> getText(ep_f64 index) noexcept {
@@ -1419,7 +1419,7 @@ struct PhiStoryboardAssets {
         return start * (1.0 - p) + end * p;
     }
 
-    ShaderUniform getShaderUniform(ep_f64 index, const ShaderUniform& defaultValue) noexcept {
+    PhiShaderUniform getShaderUniform(ep_f64 index, const PhiShaderUniform& defaultValue) noexcept {
         if (index < kShaderUniformIndexOffset) return defaultValue;
         index -= kShaderUniformIndexOffset;
 
@@ -1429,7 +1429,7 @@ struct PhiStoryboardAssets {
         auto end = shaderUniforms[(ep_u64)std::ceil(index)];
         auto p = std::fmod(index, 1.0);
         
-        return ShaderUniform::Interpolate(start, end, p);
+        return PhiShaderUniform::Interpolate(start, end, p);
     }
 
     ep_bool requestLoadTexture(const std::string& name) {
@@ -2386,37 +2386,6 @@ struct PhiChartLoadResult {
     PhiChart chart;
 };
 
-struct TokenStringReader {
-    std::string str;
-    ep_u64 pos = 0;
-
-    TokenStringReader(const std::string& str) : str(str) {}
-
-    ep_bool nextToken(std::string& dst) {
-        jumpToNextNonWhiteSpace();
-        if (pos >= str.size()) return false;
-        ep_u64 start = pos;
-        jumpToNextWhiteSpace();
-        if (pos == start) return false;
-        dst = str.substr(start, pos - start);
-        jumpToNextNonWhiteSpace();
-        return true;
-    }
-
-    private:
-    ep_bool currentIsWhiteSpace() const {
-        return str[pos] == ' ' || str[pos] == '\t' || str[pos] == '\n' || str[pos] == '\r' || str[pos] == '\f' || str[pos] == '\v';
-    }
-
-    void jumpToNextWhiteSpace() {
-        while (pos < str.size() && !currentIsWhiteSpace()) pos++;
-    }
-
-    void jumpToNextNonWhiteSpace() {
-        while (pos < str.size() && currentIsWhiteSpace()) pos++;
-    }
-};
-
 #define CHART_LOAD_FAILED(prefix, err) \
     { \
         return PhiChartLoadResult { \
@@ -2425,7 +2394,7 @@ struct TokenStringReader {
         }; \
     }
 
-PhiChartLoadResult loadChartFromOfficialJson(const Data& data) {
+PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) CHART_LOAD_FAILED("official", std::string("failed to parse json: ") + err);
@@ -2631,7 +2600,7 @@ PhiChartLoadResult loadChartFromOfficialJson(const Data& data) {
     };
 }
 
-PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
+PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) CHART_LOAD_FAILED("rpe", std::string("failed to parse json: ") + err);
@@ -3087,8 +3056,39 @@ PhiChartLoadResult loadChartFromRpeJson(const Data& data) {
     };
 }
 
-PhiChartLoadResult loadChartFromPec(const Data& data) {
-    TokenStringReader reader(std::string((char*)data.data.data(), data.data.size()));
+PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
+    struct TokenReader {
+        std::string str;
+        ep_u64 pos = 0;
+
+        TokenReader(const std::string& str) : str(str) {}
+
+        ep_bool nextToken(std::string& dst) {
+            jumpToNextNonWhiteSpace();
+            if (pos >= str.size()) return false;
+            ep_u64 start = pos;
+            jumpToNextWhiteSpace();
+            if (pos == start) return false;
+            dst = str.substr(start, pos - start);
+            jumpToNextNonWhiteSpace();
+            return true;
+        }
+
+        private:
+        ep_bool currentIsWhiteSpace() const {
+            return str[pos] == ' ' || str[pos] == '\t' || str[pos] == '\n' || str[pos] == '\r' || str[pos] == '\f' || str[pos] == '\v';
+        }
+
+        void jumpToNextWhiteSpace() {
+            while (pos < str.size() && !currentIsWhiteSpace()) pos++;
+        }
+
+        void jumpToNextNonWhiteSpace() {
+            while (pos < str.size() && currentIsWhiteSpace()) pos++;
+        }
+    };
+
+    TokenReader reader(std::string((char*)data.data.data(), data.data.size()));
     std::string token;
 
     auto readNumber = [&](ep_f64* dst) {
@@ -3446,7 +3446,7 @@ PhiChartLoadResult loadChartFromPec(const Data& data) {
     };
 }
 
-PhiChartLoadResult loadChartFromData(const Data& data) {
+PhiChartLoadResult loadPhiChartFromData(const Data& data) {
     PhiChartLoadResult result{};
     result.success = false;
 
@@ -3457,9 +3457,9 @@ PhiChartLoadResult loadChartFromData(const Data& data) {
             result.errors.insert(result.errors.end(), res.errors.begin(), res.errors.end()); \
         }
     
-    TRY_LOAD_FUNC(loadChartFromOfficialJson);
-    TRY_LOAD_FUNC(loadChartFromRpeJson);
-    TRY_LOAD_FUNC(loadChartFromPec);
+    TRY_LOAD_FUNC(loadPhiChartFromOfficialJson);
+    TRY_LOAD_FUNC(loadPhiChartFromRpeJson);
+    TRY_LOAD_FUNC(loadPhiChartFromPec);
 
     return result;
 
@@ -3468,7 +3468,7 @@ PhiChartLoadResult loadChartFromData(const Data& data) {
 
 #undef CHART_LOAD_FAILED
 
-std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
+std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) return std::string("failed to parse json: ") + err;
@@ -3528,7 +3528,7 @@ std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiS
         return true;
     };
 
-    auto parseVectorUniform = [&](JsonNode& node, ShaderUniform* dst) {
+    auto parseVectorUniform = [&](JsonNode& node, PhiShaderUniform* dst) {
         if (!node.isArray()) return false;
         auto& arr = node.getArray();
         for (auto& i : arr) {
@@ -3619,7 +3619,7 @@ std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiS
                             if (eventNode["start"].isNumber()) {
                                 valueZone = assets.requestShaderUniformPair(eventNode["start"].getNumber(), eventNode["end"].getNumber());
                             } else if (eventNode["start"].isArray()) {
-                                ShaderUniform startUniform, endUniform;
+                                PhiShaderUniform startUniform, endUniform;
                                 if (!parseVectorUniform(eventNode["start"], &startUniform)) return "start is not a valid vector uniform";
                                 if (!parseVectorUniform(eventNode["end"], &endUniform)) return "end is not a valid vector uniform";
                                 valueZone = assets.requestShaderUniformPair(startUniform, endUniform);
@@ -3634,7 +3634,7 @@ std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiS
                             PhiEvent e {};
                             e.timeZone = { startTime, endTime };
                             e.valueZone = valueZone;
-                            e.type = EnumPhiEventType::ShaderUniform;
+                            e.type = EnumPhiEventType::PhiShaderUniform;
                             e.layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT;
 
                             if (easingType > 1) {
@@ -3645,12 +3645,12 @@ std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiS
                             layer.addEvent(e);
                         }
                     } else if (eventItemNodeType == JsonNode::EnumType::Number) {
-                        ShaderUniform uniform;
+                        PhiShaderUniform uniform;
                         if (!parseVectorUniform(eventsNode, &uniform)) return "events item is not a valid vector uniform";
                         layer.addEvent({
                             .timeZone = INF_TZ,
                             .valueZone = assets.requestShaderUniformPair(uniform, uniform),
-                            .type = EnumPhiEventType::ShaderUniform,
+                            .type = EnumPhiEventType::PhiShaderUniform,
                             .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
                         });
                     } else return "events array item is not an object or number";
@@ -3658,7 +3658,7 @@ std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiS
                     layer.addEvent({
                         .timeZone = INF_TZ,
                         .valueZone = assets.requestShaderUniformPair(eventsNode.getNumber(), eventsNode.getNumber()),
-                        .type = EnumPhiEventType::ShaderUniform,
+                        .type = EnumPhiEventType::PhiShaderUniform,
                         .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
                     });
                 } else return "event(s) is not an array or number";
@@ -3669,7 +3669,7 @@ std::variant<PhiExtra, std::string> loadExtraFromJsonData(const Data& data, PhiS
     return extra;
 }
 
-struct StoryboardHelpers {
+struct PhiStoryboardHelpers {
     static std::string textureNameToPath(const std::string& dir, const std::string& name) {
         return std::filesystem::path(dir + "/" + name)
             .lexically_normal()
@@ -3767,7 +3767,6 @@ std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
 
     return infos;
 }
-
 
 template <typename T>
 class ep_sp {
@@ -6756,7 +6755,7 @@ struct PhiLineAttachUIData {
     Color color = { 1.0, 1.0, 1.0, 1.0 };
 };
 
-struct CalculateFrameConfig {
+struct PhiCalculateFrameConfig {
     struct NoteTextureInfo {
         struct Item {
             Vec2 textureSize;
@@ -6775,7 +6774,7 @@ struct CalculateFrameConfig {
     ep_f64 maxNoteBodyLength = 8192.0;
 };
 
-struct CalculatedFrame {
+struct PhiCalculatedFrame {
     struct CalculatedNote {
         Vec2 position;
         ep_f64 rotation;
@@ -6820,7 +6819,7 @@ struct CalculatedFrame {
 
     struct CalculatedShader {
         std::string name;
-        std::unordered_map<std::string, ShaderUniform> uniforms;
+        std::unordered_map<std::string, PhiShaderUniform> uniforms;
     };
 
     using CalculatedObject = std::variant<
@@ -6930,14 +6929,14 @@ struct CalculatedFrame {
             checkBool(!!glCtx, "glCtx is not set");
         }
 
-        void loadIllustion(const Data& data, CalculateFrameConfig& calcConfig) {
+        void loadIllustion(const Data& data, PhiCalculateFrameConfig& calcConfig) {
             auto decoded = textureDeocder(data);
             rawIllustionTexture = loadTextureFromDecoded(decoded);
             bluredIllustionCache.key = -1.0;
             calcConfig.backgroundTextureSize = { rawIllustionTexture->width, rawIllustionTexture->height };
         }
 
-        void loadResources(CalculateFrameConfig& calcConfig) {
+        void loadResources(PhiCalculateFrameConfig& calcConfig) {
             clearResources();
 
             for (const auto type : {
@@ -6961,7 +6960,7 @@ struct CalculatedFrame {
                     if (!isSimul) noteTextures[type].first = tex;
                     else noteTextures[type].second = tex;
 
-                    CalculateFrameConfig::NoteTextureInfo::Item item {
+                    PhiCalculateFrameConfig::NoteTextureInfo::Item item {
                         .textureSize = Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height },
                         .cutPadding = loadResult.cutPadding
                     };
@@ -7015,8 +7014,8 @@ struct CalculatedFrame {
             bool disableHitsound = false;
         };
         void render(
-            CalculateFrameConfig& calcConfig,
-            const CalculatedFrame& frame,
+            PhiCalculateFrameConfig& calcConfig,
+            const PhiCalculatedFrame& frame,
             const RenderConfig& renderConfig
         ) {
             using namespace GL;
@@ -7054,8 +7053,8 @@ struct CalculatedFrame {
             });
 
             for (auto& obj : frame.objects) {
-                if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedNote>(obj)) {
-                    auto& note = std::get<easy_phi::CalculatedFrame::CalculatedNote>(obj);
+                if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedNote>(obj)) {
+                    auto& note = std::get<easy_phi::PhiCalculatedFrame::CalculatedNote>(obj);
                     auto& img = note.isSimul ? noteTextures[note.type].second : noteTextures[note.type].first;
                     auto& imgInfo = note.isSimul ? calcConfig.noteTextureInfos[note.type].simul : calcConfig.noteTextureInfos[note.type].single;
 
@@ -7089,8 +7088,8 @@ struct CalculatedFrame {
 
                     cvs.drawMesh(mesh);
                     cvs.restore();
-                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedText>(obj)) {
-                    auto& text = std::get<easy_phi::CalculatedFrame::CalculatedText>(obj);
+                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedText>(obj)) {
+                    auto& text = std::get<easy_phi::PhiCalculatedFrame::CalculatedText>(obj);
 
                     Vec2 anchor;
 
@@ -7111,8 +7110,8 @@ struct CalculatedFrame {
                         .scale = text.scale,
                         .color = text.color
                     });
-                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedStoryboardTexture>(obj)) {
-                    auto& sbTexture = std::get<easy_phi::CalculatedFrame::CalculatedStoryboardTexture>(obj);
+                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj)) {
+                    auto& sbTexture = std::get<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj);
                     auto& img = storyboardTextures[sbTexture.texture];
 
                     cvs.save();
@@ -7126,8 +7125,8 @@ struct CalculatedFrame {
                         .texture = img.get()
                     });
                     cvs.restore();
-                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedHitEffectTexture>(obj)) {
-                    auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedHitEffectTexture>(obj);
+                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedHitEffectTexture>(obj)) {
+                    auto& effect = std::get<easy_phi::PhiCalculatedFrame::CalculatedHitEffectTexture>(obj);
                     auto& img = hitEffectTextures[std::clamp<ep_u64>(effect.progress * hitEffectTextures.size(), 0, hitEffectTextures.size() - 1)];
 
                     cvs.save();
@@ -7140,8 +7139,8 @@ struct CalculatedFrame {
                         .texture = img.get()
                     });
                     cvs.restore();
-                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedRect>(obj)) {
-                    auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedRect>(obj);
+                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedRect>(obj)) {
+                    auto& effect = std::get<easy_phi::PhiCalculatedFrame::CalculatedRect>(obj);
 
                     cvs.save();
                     cvs.translate(effect.position);
@@ -7152,15 +7151,15 @@ struct CalculatedFrame {
                         .color = effect.color
                     });
                     cvs.restore();
-                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedPoly>(obj)) {
-                    auto& poly = std::get<easy_phi::CalculatedFrame::CalculatedPoly>(obj);
+                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedPoly>(obj)) {
+                    auto& poly = std::get<easy_phi::PhiCalculatedFrame::CalculatedPoly>(obj);
 
                     auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
                     mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
                     mesh.color = poly.color;
                     cvs.drawMesh(mesh);
-                } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedShader>(obj)) {
-                    auto& shader = std::get<easy_phi::CalculatedFrame::CalculatedShader>(obj);
+                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedShader>(obj)) {
+                    auto& shader = std::get<easy_phi::PhiCalculatedFrame::CalculatedShader>(obj);
                 }
             }
 
@@ -7246,10 +7245,10 @@ struct CalculatedFrame {
     };
 };
 
-void calculateFrame(
+void calculatePhiFrame(
     PhiChart& chart, ep_f64 time,
-    const CalculateFrameConfig& config,
-    CalculatedFrame& frame
+    const PhiCalculateFrameConfig& config,
+    PhiCalculatedFrame& frame
 ) {
     frame.objects.clear();
     frame.hitsounds.clear();
@@ -7300,7 +7299,7 @@ void calculateFrame(
 
     frame.objectsClipRect = safeArea;
 
-    auto processAttachUIText = [&](CalculatedFrame::CalculatedText rawText, EnumPhiLineAttachUI attachUIType) {
+    auto processAttachUIText = [&](PhiCalculatedFrame::CalculatedText rawText, EnumPhiLineAttachUI attachUIType) {
         auto& data = frame.cache.attachUIDatas[attachUIType];
         rawText.position += data.position;
         rawText.scale *= data.scale;
@@ -7396,7 +7395,7 @@ void calculateFrame(
         } else {
             if (lineAlpha * lineColor.a > 0) {
                 if (lineText.has_value()) {
-                    frame.objects.push_back(CalculatedFrame::CalculatedText {
+                    frame.objects.push_back(PhiCalculatedFrame::CalculatedText {
                         .text = lineText.value(),
                         .position = lineScreenPosition,
                         .scale = lineScale,
@@ -7428,7 +7427,7 @@ void calculateFrame(
                             textureWidth *= chart.options.storyboardTextureScaling.x;
                             textureHeight *= chart.options.storyboardTextureScaling.y;
 
-                            frame.objects.push_back(CalculatedFrame::CalculatedStoryboardTexture {
+                            frame.objects.push_back(PhiCalculatedFrame::CalculatedStoryboardTexture {
                                 .texture = texture.first,
                                 .position = lineScreenPosition,
                                 .size = Vec2 { textureWidth, textureHeight },
@@ -7498,7 +7497,7 @@ void calculateFrame(
 
                 if (noteInsideScreen) {
                     if (frameInfo.isVisible) {
-                        frame.cache.noteObjects[note.type].push_back(CalculatedFrame::CalculatedNote {
+                        frame.cache.noteObjects[note.type].push_back(PhiCalculatedFrame::CalculatedNote {
                             .position = noteScreenHeadPosition,
                             .rotation = frameInfo.textureRotation,
                             .width = sizeInfo.width,
@@ -7558,7 +7557,7 @@ void calculateFrame(
         auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
 
         if (progress <= 1.0) {
-            frame.objects.push_back(CalculatedFrame::CalculatedHitEffectTexture {
+            frame.objects.push_back(PhiCalculatedFrame::CalculatedHitEffectTexture {
                 .position = effectScreenPosition,
                 .size = { hitEffectTextureSize, hitEffectTextureSize },
                 .progress = progress,
@@ -7579,7 +7578,7 @@ void calculateFrame(
             auto distance = standardNoteWidth / 180 * chart.options.hitEffectParticleDistance * particle.size * (((850.3997391752 * progress + 6236.3848902154) * progress + 80.3542231806) * progress / ((6570.5817658876 * progress + 495.7977913926) * progress + 1.0));
 
             auto particlePosition = toScreen(info.headPosition.rotateDegrees(particle.rotation, distance));
-            frame.objects.push_back(CalculatedFrame::CalculatedRect {
+            frame.objects.push_back(PhiCalculatedFrame::CalculatedRect {
                 .position = particlePosition,
                 .size = { size, size },
                 .rotation = 0.0,
@@ -7594,12 +7593,12 @@ void calculateFrame(
             if (effect.isGlobal != isGlobal) continue;
             if (!effect.timeZone.include(time)) continue;
 
-            CalculatedFrame::CalculatedShader shader { .name = effect.shaderName };
+            PhiCalculatedFrame::CalculatedShader shader { .name = effect.shaderName };
 
             for (auto& [uniformName, layer] : effect.uniforms) {
-                layer.updateType(EnumPhiEventType::ShaderUniform, time);
-                auto uniformIndex = layer.get(EnumPhiEventType::ShaderUniform);
-                auto uniformValue = chart.storyboardAssets.getShaderUniform(uniformIndex, ShaderUniform());
+                layer.updateType(EnumPhiEventType::PhiShaderUniform, time);
+                auto uniformIndex = layer.get(EnumPhiEventType::PhiShaderUniform);
+                auto uniformValue = chart.storyboardAssets.getShaderUniform(uniformIndex, PhiShaderUniform());
                 shader.uniforms[uniformName] = uniformValue;
             }
 
@@ -7674,7 +7673,7 @@ void calculateFrame(
     );
 
     if (combo >= 3) {
-        frame.objects.push_back(processAttachUIText(CalculatedFrame::CalculatedText {
+        frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
             .text = std::to_string(combo),
             .position = toScreen({ safeAreaSize.x / 2, safeAreaSize.x * 0.027083 }),
             .scale = { 1.0, 1.0 },
@@ -7685,7 +7684,7 @@ void calculateFrame(
             .color = Color::White()
         }, EnumPhiLineAttachUI::ComboNumber));
 
-        frame.objects.push_back(processAttachUIText(CalculatedFrame::CalculatedText {
+        frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
             .text = "AUTOPLAY",
             .position = toScreen({ safeAreaSize.x / 2, safeAreaSize.x * 0.0478125 }),
             .scale = { 1.0, 1.0 },
@@ -7698,7 +7697,7 @@ void calculateFrame(
     }
 
     ep_u64 score = chart.comboTimes.size() ? std::clamp<ep_f64>(std::ceil((ep_f64)1000000 / chart.comboTimes.size() * combo), 0, 1000000) : 1000000;
-    frame.objects.push_back(processAttachUIText(CalculatedFrame::CalculatedText {
+    frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
         .text = formatToStdString("%07llu", score),
         .position = toScreen({ safeAreaSize.x * (1 - ((ep_f64)40 / 1920)), safeAreaSize.x * 0.01614583 }),
         .scale = { 1.0, 1.0 },
@@ -7709,7 +7708,7 @@ void calculateFrame(
         .color = Color::White()
     }, EnumPhiLineAttachUI::Score));
     
-    frame.objects.push_back(processAttachUIText(CalculatedFrame::CalculatedText {
+    frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
         .text = chart.meta.title,
         .position = toScreen({ safeAreaSize.x * 0.0225, safeAreaSize.y - safeAreaSize.x * 0.0196875 }),
         .scale = { 1.0, 1.0 },
@@ -7720,7 +7719,7 @@ void calculateFrame(
         .color = Color::White()
     }, EnumPhiLineAttachUI::Name));
     
-    frame.objects.push_back(processAttachUIText(CalculatedFrame::CalculatedText {
+    frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
         .text = chart.meta.difficulty,
         .position = toScreen({ safeAreaSize.x * 0.9775, safeAreaSize.y - safeAreaSize.x * 0.0196875 }),
         .scale = { 1.0, 1.0 },

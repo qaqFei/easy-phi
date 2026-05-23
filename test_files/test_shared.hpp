@@ -298,7 +298,7 @@ void attachTextureLoader(
     static easy_phi::ep_u64 currentStoryboardTextureId = 0;
     StoryboardTexturesType* loadedStoryboardTexturesPtr = &loadedStoryboardTextures;
 
-    easy_phi::StoryboardHelpers::attachTextureLoader(
+    easy_phi::PhiStoryboardHelpers::attachTextureLoader(
         chart.storyboardAssets,
         assetsPath,
         [=](std::string path) -> std::optional<std::pair<easy_phi::ep_u64, easy_phi::Vec2>> {
@@ -318,7 +318,7 @@ void attachTextureLoader(
 }
 
 using NoteImagesType = std::unordered_map<easy_phi::EnumPhiNoteType, std::pair<sk_sp<SkImage>, sk_sp<SkImage>>>;
-NoteImagesType loadNoteImages(easy_phi::CalculateFrameConfig& config) {
+NoteImagesType loadNoteImages(easy_phi::PhiCalculateFrameConfig& config) {
     NoteImagesType noteImages;
 
     const double nonHoldCP = 0.499;
@@ -335,12 +335,12 @@ NoteImagesType loadNoteImages(easy_phi::CalculateFrameConfig& config) {
 
         auto simulScale = (double)noteImages[type].second->width() / noteImages[type].first->width();
 
-        config.noteTextureInfos[type] = easy_phi::CalculateFrameConfig::NoteTextureInfo {
-            .single = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
+        config.noteTextureInfos[type] = easy_phi::PhiCalculateFrameConfig::NoteTextureInfo {
+            .single = easy_phi::PhiCalculateFrameConfig::NoteTextureInfo::Item {
                 .textureSize = easy_phi::Vec2 { (double)noteImages[type].first->width(), (double)noteImages[type].first->height() },
                 .cutPadding = name == "hold" ? easy_phi::Vec2 { 50.0, 50.0 } : easy_phi::Vec2 { (double)noteImages[type].first->height() * nonHoldCP, (double)noteImages[type].first->height() * nonHoldCP }
             },
-            .simul = easy_phi::CalculateFrameConfig::NoteTextureInfo::Item {
+            .simul = easy_phi::PhiCalculateFrameConfig::NoteTextureInfo::Item {
                 .textureSize = easy_phi::Vec2 { (double)noteImages[type].second->width(), (double)noteImages[type].second->height() },
                 .cutPadding = name == "hold" ? easy_phi::Vec2 { 100.0, 100.0 } : easy_phi::Vec2 { (double)noteImages[type].second->height() * nonHoldCP, (double)noteImages[type].second->height() * nonHoldCP },
                 .scaling = easy_phi::Vec2 { simulScale, simulScale }
@@ -1095,13 +1095,13 @@ struct TelemetryDeckClient {
 struct WindowWOSkia {
     GLFWwindow* window;
     ma_engine maeng;
-    easy_phi::CalculateFrameConfig calculateFrameConfig;
+    easy_phi::PhiCalculateFrameConfig calculateFrameConfig;
     ma_sound* mainSound;
     easy_phi::TextRenderer textRenderer;
     std::vector<ma_sound*> playingHitsounds;
     NoteHitsoundsType noteHitsounds;
     double globalScale;
-    easy_phi::CalculatedFrame calculatedFrame;
+    easy_phi::PhiCalculatedFrame calculatedFrame;
     easy_phi::PhiChart chart;
     int width, height;
     bool hidden;
@@ -1110,7 +1110,7 @@ struct WindowWOSkia {
     bool fullscreen;
 
     ep_sp<GL33Context> glCtx;
-    ep_sp<easy_phi::CalculatedFrame::GLRenderer> renderer;
+    ep_sp<easy_phi::PhiCalculatedFrame::GLRenderer> renderer;
 
     void init() {
         glfwInit();
@@ -1148,7 +1148,7 @@ struct WindowWOSkia {
 
         textRenderer.loadFont(StaticResource::get("/font.ttf"));
 
-        renderer = easy_phi::CalculatedFrame::GLRenderer::Make();
+        renderer = easy_phi::PhiCalculatedFrame::GLRenderer::Make();
 
         renderer->textureDeocder = easy_phi::decodeImage;
         
@@ -1156,7 +1156,7 @@ struct WindowWOSkia {
             return textRenderer.render(text, size);
         };
 
-        renderer->noteTextureDataReader = [](const easy_phi::CalculatedFrame::GLRenderer::NoteTextureDataReaderConfig config) -> easy_phi::CalculatedFrame::GLRenderer::NoteTextureDataReaderResult {
+        renderer->noteTextureDataReader = [](const easy_phi::PhiCalculatedFrame::GLRenderer::NoteTextureDataReaderConfig config) -> easy_phi::PhiCalculatedFrame::GLRenderer::NoteTextureDataReaderResult {
             static const std::unordered_map<easy_phi::EnumPhiNoteType, std::string> nameMap = {
                 { easy_phi::EnumPhiNoteType::Tap, "click" },
                 { easy_phi::EnumPhiNoteType::Drag, "drag" },
@@ -1190,7 +1190,7 @@ struct WindowWOSkia {
         };
 
         renderer->storyboardDataReader = [this](const std::string& name) -> easy_phi::Data {
-            auto path = easy_phi::StoryboardHelpers::textureNameToPath(chartDir, name);
+            auto path = easy_phi::PhiStoryboardHelpers::textureNameToPath(chartDir, name);
             easy_phi::Data data;
             easy_phi::Data::FromFile(&data, path);
             return data;
@@ -1283,9 +1283,9 @@ struct WindowWOSkia {
         if (!easy_phi::Data::FromFile(&data, path)) return "failed to read chart file";
 
         double load_st = globalTimer();
-        auto chartLoadResult = easy_phi::loadChartFromData(data);
+        auto chartLoadResult = easy_phi::loadPhiChartFromData(data);
         if (loadingTook) *loadingTook = globalTimer() - load_st;
-        std::cout << "loadChartFromData took: " << globalTimer() - load_st << " s" << std::endl;
+        std::cout << "loadPhiChartFromData took: " << globalTimer() - load_st << " s" << std::endl;
         std::cout << "chartLoadResult.success: " << chartLoadResult.success << std::endl;
         std::cout << "chartLoadResult.erros: " << std::endl;
         for (const auto& e : chartLoadResult.errors) std::cout << e << std::endl;
@@ -1296,7 +1296,7 @@ struct WindowWOSkia {
 
         easy_phi::Data extraData;
         if (easy_phi::Data::FromFile(&extraData, chartDir + "extra.json")) {
-            auto extraLoadResult = easy_phi::loadExtraFromJsonData(extraData, chart.storyboardAssets);
+            auto extraLoadResult = easy_phi::loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
             if (std::holds_alternative<easy_phi::PhiExtra>(extraLoadResult)) {
                 chart.extra = std::move(std::get<easy_phi::PhiExtra>(extraLoadResult));
                 std::cout << "loaded extra" << std::endl;
@@ -1338,10 +1338,10 @@ struct WindowWOSkia {
 
         {
             double st = globalTimer();
-            easy_phi::calculateFrame(chart, t, calculateFrameConfig, calculatedFrame);
+            easy_phi::calculatePhiFrame(chart, t, calculateFrameConfig, calculatedFrame);
             double took = (globalTimer() - st) * 1000;
             if (mainloopConfig.pccfi) mainloopConfig.pccfi->calculationTook = took;
-            std::cout << "calculateFrame took " << took << " ms" << std::endl;
+            std::cout << "calculatePhiFrame took " << took << " ms" << std::endl;
         }
 
         double renderSt = globalTimer();
@@ -1453,7 +1453,7 @@ struct Window {
     SkCanvas* skCanvas;
     bool vsync;
     ma_engine maeng;
-    easy_phi::CalculateFrameConfig calculateFrameConfig;
+    easy_phi::PhiCalculateFrameConfig calculateFrameConfig;
     ma_sound* mainSound;
     NoteImagesType noteImages;
     NoteHitsoundsType noteHitsounds;
@@ -1465,7 +1465,7 @@ struct Window {
     sk_sp<SkImage> bgImage;
     sk_sp<SkSurface> bluredImageTempSurface;
     double globalScale;
-    easy_phi::CalculatedFrame calculatedFrame;
+    easy_phi::PhiCalculatedFrame calculatedFrame;
     easy_phi::PhiChart chart;
     StoryboardTexturesType loadedStoryboardTextures;
     int width, height;
@@ -1553,9 +1553,9 @@ struct Window {
         if (!easy_phi::Data::FromFile(&data, path)) return "failed to read chart file";
 
         double load_st = globalTimer();
-        auto chartLoadResult = easy_phi::loadChartFromData(data);
+        auto chartLoadResult = easy_phi::loadPhiChartFromData(data);
         if (loadingTook) *loadingTook = globalTimer() - load_st;
-        std::cout << "loadChartFromData took: " << globalTimer() - load_st << " s" << std::endl;
+        std::cout << "loadPhiChartFromData took: " << globalTimer() - load_st << " s" << std::endl;
         std::cout << "chartLoadResult.success: " << chartLoadResult.success << std::endl;
         std::cout << "chartLoadResult.erros: " << std::endl;
         for (const auto& e : chartLoadResult.errors) std::cout << e << std::endl;
@@ -1566,7 +1566,7 @@ struct Window {
 
         easy_phi::Data extraData;
         if (easy_phi::Data::FromFile(&extraData, chartDir + "extra.json")) {
-            auto extraLoadResult = easy_phi::loadExtraFromJsonData(extraData, chart.storyboardAssets);
+            auto extraLoadResult = easy_phi::loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
             if (std::holds_alternative<easy_phi::PhiExtra>(extraLoadResult)) {
                 chart.extra = std::move(std::get<easy_phi::PhiExtra>(extraLoadResult));
                 std::cout << "loaded extra" << std::endl;
@@ -1664,7 +1664,7 @@ struct Window {
         drawTextBase(text, x, y, paint, fontsize, align, baseline);
     }
 
-    void drawEPText(const easy_phi::CalculatedFrame::CalculatedText& text) {
+    void drawEPText(const easy_phi::PhiCalculatedFrame::CalculatedText& text) {
         skCanvas->save();
         skCanvas->translate(text.position.x, text.position.y);
         skCanvas->rotate(text.rotation);
@@ -1696,10 +1696,10 @@ struct Window {
 
         {
             double st = globalTimer();
-            easy_phi::calculateFrame(chart, t, calculateFrameConfig, calculatedFrame);
+            easy_phi::calculatePhiFrame(chart, t, calculateFrameConfig, calculatedFrame);
             double took = (globalTimer() - st) * 1000;
             if (mainloopConfig.pccfi) mainloopConfig.pccfi->calculationTook = took;
-            std::cout << "calculateFrame took " << took << " ms" << std::endl;
+            std::cout << "calculatePhiFrame took " << took << " ms" << std::endl;
         }
 
         double renderSt = globalTimer();
@@ -1758,8 +1758,8 @@ struct Window {
         }
 
         for (auto& obj : calculatedFrame.objects) {
-            if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedNote>(obj)) {
-                auto& note = std::get<easy_phi::CalculatedFrame::CalculatedNote>(obj);
+            if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedNote>(obj)) {
+                auto& note = std::get<easy_phi::PhiCalculatedFrame::CalculatedNote>(obj);
                 
                 auto& img = note.isSimul ? noteImages[note.type].second : noteImages[note.type].first;
                 auto& imgInfo = note.isSimul ? calculateFrameConfig.noteTextureInfos[note.type].simul : calculateFrameConfig.noteTextureInfos[note.type].single;
@@ -1798,12 +1798,12 @@ struct Window {
                 );
 
                 skCanvas->restore();
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedText>(obj)) {
-                auto& text = std::get<easy_phi::CalculatedFrame::CalculatedText>(obj);
+            } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedText>(obj)) {
+                auto& text = std::get<easy_phi::PhiCalculatedFrame::CalculatedText>(obj);
 
                 drawEPText(text);
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedStoryboardTexture>(obj)) {
-                auto& sbTexture = std::get<easy_phi::CalculatedFrame::CalculatedStoryboardTexture>(obj);
+            } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj)) {
+                auto& sbTexture = std::get<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj);
 
                 auto& img = loadedStoryboardTextures[sbTexture.texture];
 
@@ -1824,8 +1824,8 @@ struct Window {
                     kImSO, &pt
                 );
                 skCanvas->restore();
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedHitEffectTexture>(obj)) {
-                auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedHitEffectTexture>(obj);
+            } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedHitEffectTexture>(obj)) {
+                auto& effect = std::get<easy_phi::PhiCalculatedFrame::CalculatedHitEffectTexture>(obj);
                 
                 auto& img = hitEffectImages[std::min<int>((int)(effect.progress * hitEffectImages.size()), hitEffectImages.size() - 1)];
 
@@ -1841,8 +1841,8 @@ struct Window {
                     kImSO, &pt
                 );
                 skCanvas->restore();
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedRect>(obj)) {
-                auto& effect = std::get<easy_phi::CalculatedFrame::CalculatedRect>(obj);
+            } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedRect>(obj)) {
+                auto& effect = std::get<easy_phi::PhiCalculatedFrame::CalculatedRect>(obj);
                 
                 static SkPaint pt;
                 pt.setStyle(SkPaint::kFill_Style);
@@ -1854,8 +1854,8 @@ struct Window {
                 skCanvas->rotate(effect.rotation);
                 skCanvas->drawRect(SkRect::MakeXYWH(-effect.size.x / 2, -effect.size.y / 2, effect.size.x, effect.size.y), pt);
                 skCanvas->restore();
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedPoly>(obj)) {
-                auto& poly = std::get<easy_phi::CalculatedFrame::CalculatedPoly>(obj);
+            } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedPoly>(obj)) {
+                auto& poly = std::get<easy_phi::PhiCalculatedFrame::CalculatedPoly>(obj);
 
                 static SkPaint pt;
                 pt.setColor(cvtColor(poly.color));
@@ -1870,8 +1870,8 @@ struct Window {
                 path.close();
 
                 skCanvas->drawPath(path, pt);
-            } else if (std::holds_alternative<easy_phi::CalculatedFrame::CalculatedShader>(obj)) {
-                auto& shader = std::get<easy_phi::CalculatedFrame::CalculatedShader>(obj);
+            } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedShader>(obj)) {
+                auto& shader = std::get<easy_phi::PhiCalculatedFrame::CalculatedShader>(obj);
             }
         }
 
