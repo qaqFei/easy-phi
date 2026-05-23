@@ -27,6 +27,7 @@
 #include <intrin.h>
 #include <cstdlib>
 #include <malloc.h>
+#include <list>
 
 namespace easy_phi {
 
@@ -59,6 +60,11 @@ bool cpuHasSSE2() {
 
 bool ptrIsAligned16(void* ptr) {
     return (ep_u64)ptr % 16 == 0;
+}
+
+template <typename T1, typename T2>
+T1 typed_clamp(T2 v) {
+    return (T1)std::clamp(v, (T2)std::numeric_limits<T1>::min(), (T2)std::numeric_limits<T1>::max());
 }
 
 #ifdef _WIN32
@@ -6915,6 +6921,119 @@ void main() {
     };
 };
 
+struct DecodedAudio {
+    std::vector<ep_i16> data;
+    ep_u64 channels;
+    ep_u64 sampleRate;
+
+    static ep_sp<DecodedAudio> Make() {
+        auto* audio = new DecodedAudio();
+        return ep_sp<DecodedAudio>(audio);
+    }
+
+    ep_u64 getSampleCount() const {
+        return data.size() / channels;
+    }
+
+    ep_u64 getSampleCount(ep_u64 sampleRate) const {
+        return (ep_f64)getSampleCount() * sampleRate / this->sampleRate;
+    }
+
+    ep_i16 sampleAt(ep_f64 index, ep_u64 channel_index, ep_u64 channels) const {
+        if (channels == this->channels) {
+            ep_f64 v1 = data[ep_i64(index) * channels + channel_index];
+            ep_f64 v2 = data[ep_i64(std::ceil(index)) * channels + channel_index];
+            return typed_clamp<ep_i16, ep_f64>(v1 + (v2 - v1) * (index - ep_i64(index)));
+        } else {
+            ep_f64 sum = 0;
+            for (ep_u64 i = 0; i < this->channels; i++) {
+                sum += data[ep_i64(index) * this->channels + i];
+            }
+
+            return typed_clamp<ep_i16, ep_f64>(sum / this->channels);
+        }
+    }
+
+    ep_i16 sampleAt(ep_i64 index, ep_u64 channel_index, ep_u64 channels, ep_u64 sampleRate) const {
+        return sampleAt((ep_f64)index / sampleRate * this->sampleRate, channel_index, channels);
+    }
+};
+
+struct AudioEngine {
+    AudioEngine() = default;
+    AudioEngine(const AudioEngine&) = delete;
+    AudioEngine& operator=(const AudioEngine&) = delete;
+    AudioEngine(AudioEngine&&) = delete;
+    AudioEngine& operator=(AudioEngine&&) = delete;
+
+    void* audioContext;
+    std::function<void(void*)> audioContextDestructor;
+
+    ep_u64 channels;
+    ep_u64 sampleRate;
+
+    struct Task {
+        ep_sp<DecodedAudio> audio;
+        ep_i64 offset;
+    };
+
+    ep_i64 currentOffset;
+    std::list<Task> tasks;
+
+    static ep_sp<AudioEngine> Make() {
+        auto* eng = new AudioEngine();
+        return ep_sp<AudioEngine>(eng);
+    }
+
+    void createTask(const ep_sp<DecodedAudio>& audio) {
+        std::lock_guard<std::mutex> guard(mtx);
+
+        auto& task = tasks.emplace_back();
+        task.audio = audio;
+        task.offset = currentOffset;
+    }
+
+    void callback(ep_i16* buffer, ep_i64 frameCount) {
+        std::lock_guard<std::mutex> guard(mtx);
+
+        memset(buffer, 0, frameCount * channels * sizeof(ep_i16));
+
+        tasks.remove_if([&](const auto& task) {
+            return task.offset + (ep_i64)task.audio->getSampleCount(sampleRate) <= currentOffset;
+        });
+
+        for (const auto& task : tasks) {
+            ep_i64 startSample = currentOffset - task.offset;
+            ep_i64 endSample = startSample + frameCount;
+
+            if (startSample > (ep_i64)task.audio->getSampleCount(sampleRate)) continue;
+            if (endSample <= 0) continue;
+
+            startSample = std::max<ep_i64>(0, startSample);
+            endSample = std::min<ep_i64>(task.audio->getSampleCount(), endSample);
+
+            for (ep_i64 i = startSample; i < endSample; i++) {
+                for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
+                    ep_i16 sample = task.audio->sampleAt(i, j, channels, sampleRate);
+                    auto* ptr = buffer + (i - startSample) * channels + j;
+                    *ptr = typed_clamp<ep_i16, ep_i32>(*ptr + sample);
+                }
+            }
+        }
+
+        currentOffset += frameCount;
+    }
+
+    ~AudioEngine() {
+        if (audioContextDestructor) {
+            audioContextDestructor(audioContext);
+        }
+    }
+
+    private:
+    std::mutex mtx;
+};
+
 struct PhiLineAttachUIData {
     Vec2 position, scale = { 1.0, 1.0 };
     ep_f64 rotation;
@@ -7034,16 +7153,16 @@ struct PhiCalculatedFrame {
     Cache cache;
     Vec2 frameTimeRange;
 
-    struct GLRenderer {
-        GLRenderer() = default;
-        GLRenderer(const GLRenderer&) = delete;
-        GLRenderer(GLRenderer&&) = delete;
-        GLRenderer& operator=(const GLRenderer&) = delete;
-        GLRenderer& operator=(GLRenderer&&) = delete;
+    struct TakeOverer {
+        TakeOverer() = default;
+        TakeOverer(const TakeOverer&) = delete;
+        TakeOverer(TakeOverer&&) = delete;
+        TakeOverer& operator=(const TakeOverer&) = delete;
+        TakeOverer& operator=(TakeOverer&&) = delete;
 
-        static ep_sp<GLRenderer> Make() {
-            auto* renderer = new GLRenderer();
-            return ep_sp<GLRenderer>(renderer);
+        static ep_sp<TakeOverer> Make() {
+            auto* renderer = new TakeOverer();
+            return ep_sp<TakeOverer>(renderer);
         }
         
         using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
@@ -7917,7 +8036,9 @@ void calculatePhiFrame(
 } // namespace easy_phi
 
 #ifdef EASY_PHI_TEXT_RENDERER
+#ifndef EASY_PHI_TEXT_RENDERER_NO_STB_TRUETYPE_IMPL
 #define STB_TRUETYPE_IMPLEMENTATION
+#endif // EASY_PHI_TEXT_RENDERER_NO_STB_TRUETYPE_IMPL
 #include "helpers/stb_truetype.h"
 namespace easy_phi {
     struct TextRenderer {
@@ -8026,7 +8147,9 @@ namespace easy_phi {
 #endif // EASY_PHI_TEXT_RENDERER
 
 #ifdef EASY_PHI_IMAGE_DECODER
+#ifndef EASY_PHI_IMAGE_DECODER_NO_STB_IMAGE_IMPL
 #define STB_IMAGE_IMPLEMENTATION
+#endif // EASY_PHI_IMAGE_DECODER_NO_STB_IMAGE_IMPL
 #include "helpers/stb_image.h"
 namespace easy_phi {
     DecodedRGBATexture decodeImage(const Data& data) {
@@ -8053,5 +8176,92 @@ namespace easy_phi {
     }
 }
 #endif // EASY_PHI_IMAGE_DECODER
+
+#ifdef EASY_PHI_MINIAUDIO_AUDIO_ENGINE
+#ifndef EASY_PHI_MINIAUDIO_AUDIO_ENGINE_NO_MINIAUDIO_IMPL
+#define MA_NO_ENCODING
+#define MA_NO_GENERATION
+#define MA_NO_ENGINE
+#define MA_NO_NODE_GRAPH
+#define MA_NO_RESOURCE_MANAGER
+#define MINIAUDIO_IMPLEMENTATION
+#endif // EASY_PHI_MINIAUDIO_AUDIO_ENGINE_NO_MINIAUDIO_IMPL
+#include "helpers/miniaudio.h"
+namespace easy_phi {
+    ep_sp<DecodedAudio> decodeAudioMiniaudio(const Data& data) {
+        ma_decoder_config config = ma_decoder_config_init(ma_format_s16, 0, 0);
+
+        ma_decoder decoder;
+        ma_result result = ma_decoder_init_memory(data.data.data(), data.data.size(), &config, &decoder);
+        if (result != MA_SUCCESS) {
+            throw std::runtime_error("failed to decode audio");
+        }
+
+        auto decoded = DecodedAudio::Make();
+        decoded->channels = decoder.outputChannels;
+        decoded->sampleRate = decoder.outputSampleRate;
+
+        const ep_u64 chunk_size = 4096;
+        std::vector<ep_i16> buffer(chunk_size * decoder.outputChannels);
+
+        while (true) {
+            ma_uint64 framesRead = 0;
+
+            ma_result result = ma_decoder_read_pcm_frames(
+                &decoder, buffer.data(),
+                chunk_size, &framesRead
+            );
+
+            decoded->data.insert(decoded->data.end(), buffer.begin(), buffer.begin() + framesRead * decoder.outputChannels);
+            if (framesRead < chunk_size) break;
+        }
+
+        ma_decoder_uninit(&decoder);
+        return decoded;
+    }
+
+    ep_sp<AudioEngine> makeAudioEngineMiniaudio() {
+        auto engine = AudioEngine::Make();
+
+        struct AudioContext {
+            ma_device device;
+            AudioEngine* engine;
+        };
+
+        auto* ctx = new AudioContext();
+
+        ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
+        deviceConfig.playback.format = ma_format_s16;
+        deviceConfig.playback.channels = 0;
+        deviceConfig.sampleRate = 0;
+        deviceConfig.dataCallback = [](ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+            auto* ctx = (AudioContext*)pDevice->pUserData;
+            ctx->engine->callback((ep_i16*)pOutput, frameCount);
+        };
+        deviceConfig.pUserData = ctx;
+
+        if (ma_device_init(NULL, &deviceConfig, &ctx->device) != MA_SUCCESS) {
+            delete ctx;
+            throw std::runtime_error("failed to initialize audio device");
+        }
+
+        engine->audioContext = ctx;
+        engine->audioContextDestructor = [](void* userdata) {
+            auto* ctx = (AudioContext*)userdata;
+            ma_device_uninit(&ctx->device);
+            delete ctx;
+        };
+
+        engine->channels = ctx->device.playback.channels;
+        engine->sampleRate = ctx->device.sampleRate;
+
+        ctx->engine = engine.get();
+
+        ma_device_start(&ctx->device);
+
+        return engine;
+    }
+}
+#endif // EASY_PHI_MINIAUDIO_AUDIO_ENGINE
 
 #endif // EASY_PHI_HPP

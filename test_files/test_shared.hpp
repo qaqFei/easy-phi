@@ -1,6 +1,5 @@
 #define EASY_PHI_TEXT_RENDERER
 #define EASY_PHI_IMAGE_DECODER
-#define EASY_PHI_GL_READ_RGB2YUV
 #include <easy_phi.hpp>
 
 #include <miniaudio/miniaudio.h>
@@ -864,7 +863,7 @@ struct Window {
     bool fullscreen;
 
     ep_sp<GL33Context> glCtx;
-    ep_sp<easy_phi::PhiCalculatedFrame::GLRenderer> renderer;
+    ep_sp<easy_phi::PhiCalculatedFrame::TakeOverer> renderer;
 
     void init() {
         glfwInit();
@@ -902,7 +901,7 @@ struct Window {
 
         textRenderer.loadFont(StaticResource::get("/font.ttf"));
 
-        renderer = easy_phi::PhiCalculatedFrame::GLRenderer::Make();
+        renderer = easy_phi::PhiCalculatedFrame::TakeOverer::Make();
 
         renderer->textureDeocder = easy_phi::decodeImage;
         
@@ -910,7 +909,7 @@ struct Window {
             return textRenderer.render(text, size);
         };
 
-        renderer->noteTextureDataReader = [](const easy_phi::PhiCalculatedFrame::GLRenderer::NoteTextureDataReaderConfig config) -> easy_phi::PhiCalculatedFrame::GLRenderer::NoteTextureDataReaderResult {
+        renderer->noteTextureDataReader = [](const easy_phi::PhiCalculatedFrame::TakeOverer::NoteTextureDataReaderConfig config) -> easy_phi::PhiCalculatedFrame::TakeOverer::NoteTextureDataReaderResult {
             static const std::unordered_map<easy_phi::EnumPhiNoteType, std::string> nameMap = {
                 { easy_phi::EnumPhiNoteType::Tap, "click" },
                 { easy_phi::EnumPhiNoteType::Drag, "drag" },
