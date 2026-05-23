@@ -70,6 +70,10 @@ bool ptrIsAligned16(void* ptr) {
 #endif
 
 struct HashBucket {
+    /* !docs
+    A FNV-1a hash bucket, used to generate a hash from a sequence of numbers and booleans.
+    */
+
     ep_u64 hash = 0xcbf29ce484222325ULL;
     
     static constexpr ep_u64 FNV_PRIME = 0x100000001b3ULL;
@@ -111,6 +115,10 @@ struct HashBucket {
 };
 
 struct Data {
+    /* !docs
+    A simple byte array, used to store data.
+    */
+
     std::vector<ep_u8> data;
 
     static Data FromPtr(ep_u8* ptr, ep_u64 size) {
@@ -138,6 +146,10 @@ struct Data {
     }
 
     ep_u64 getHash() const {
+        /* !docs
+        Returns a hash of the data, by submitting each byte to a `@HashBucket`.
+        */
+
         HashBucket bucket;
         for (ep_u8 byte : data) bucket.submitNumber(byte);
         return bucket.getHash();
@@ -230,6 +242,10 @@ struct Rect {
     }
 
     Rect extend(ep_f64 padding) const {
+        /* !docs
+        Returns a new `@Rect` with the padding applied to all sides.
+        */
+
         return Rect {
             .x = x - padding,
             .y = y - padding,
@@ -271,91 +287,40 @@ struct Color {
     }
 
     Color applyAlpha(ep_f64 alpha) {
+        /* !docs
+        Returns a new `@Color` with the alpha multiplied by `alpha`.
+        */
+
         return Color { r, g, b, a * alpha };
     }
 
-    Color operator*(const Color& c) const {
-        return Color { r * c.r, g * c.g, b * c.b, a * c.a };
-    }
+    Color operator*(const Color& c) const { return Color { r * c.r, g * c.g, b * c.b, a * c.a }; }
+    Color operator*(ep_f64 v) const { return Color { r * v, g * v, b * v, a * v }; }
+    Color operator+(const Color& c) const { return Color { r + c.r, g + c.g, b + c.b, a + c.a }; }
+    Color operator+(ep_f64 v) const { return Color { r + v, g + v, b + v, a + v }; }
+    Color operator-(const Color& c) const { return Color { r - c.r, g - c.g, b - c.b, a - c.a }; }
+    Color operator-(ep_f64 v) const { return Color { r - v, g - v, b - v, a - v }; }
+    Color operator/(const Color& c) const { return Color { r / c.r, g / c.g, b / c.b, a / c.a }; }
+    Color operator/(ep_f64 v) const { return Color { r / v, g / v, b / v, a / v }; }
 
-    Color operator*(ep_f64 v) const {
-        return Color { r * v, g * v, b * v, a * v };
-    }
+    Color& operator*=(const Color& c) { r *= c.r; g *= c.g; b *= c.b; a *= c.a; return *this; }
+    Color& operator*=(ep_f64 v) { r *= v; g *= v; b *= v; a *= v; return *this; }
+    Color& operator+=(const Color& c) { r += c.r; g += c.g; b += c.b; a += c.a; return *this; }
+    Color& operator+=(ep_f64 v) { r += v; g += v; b += v; a += v; return *this; }
+    Color& operator-=(const Color& c) { r -= c.r; g -= c.g; b -= c.b; a -= c.a; return *this; }
+    Color& operator-=(ep_f64 v) { r -= v; g -= v; b -= v; a -= v; return *this; }
+    Color& operator/=(const Color& c) { r /= c.r; g /= c.g; b /= c.b; a /= c.a; return *this; }
+    Color& operator/=(ep_f64 v) { r /= v; g /= v; b /= v; a /= v; return *this; }
 
-    Color operator+(const Color& c) const {
-        return Color { r + c.r, g + c.g, b + c.b, a + c.a };
-    }
-
-    Color operator+(ep_f64 v) const {
-        return Color { r + v, g + v, b + v, a + v };
-    }
-
-    Color operator-(const Color& c) const {
-        return Color { r - c.r, g - c.g, b - c.b, a - c.a };
-    }
-
-    Color operator-(ep_f64 v) const {
-        return Color { r - v, g - v, b - v, a - v };
-    }
-
-    Color operator/(const Color& c) const {
-        return Color { r / c.r, g / c.g, b / c.b, a / c.a };
-    }
-
-    Color operator/(ep_f64 v) const {
-        return Color { r / v, g / v, b / v, a / v };
-    }
-
-    Color& operator*=(const Color& c) {
-        r *= c.r; g *= c.g; b *= c.b; a *= c.a;
-        return *this;
-    }
-
-    Color& operator*=(ep_f64 v) {
-        r *= v; g *= v; b *= v; a *= v;
-        return *this;
-    }
-
-    Color& operator+=(const Color& c) {
-        r += c.r; g += c.g; b += c.b; a += c.a;
-        return *this;
-    }
-
-    Color& operator+=(ep_f64 v) {
-        r += v; g += v; b += v; a += v;
-        return *this;
-    }
-
-    Color& operator-=(const Color& c) {
-        r -= c.r; g -= c.g; b -= c.b; a -= c.a;
-        return *this;
-    }
-
-    Color& operator-=(ep_f64 v) {
-        r -= v; g -= v; b -= v; a -= v;
-        return *this;
-    }
-
-    Color& operator/=(const Color& c) {
-        r /= c.r; g /= c.g; b /= c.b; a /= c.a;
-        return *this;
-    }
-
-    Color& operator/=(ep_f64 v) {
-        r /= v; g /= v; b /= v; a /= v;
-        return *this;
-    }
-
-    ep_bool operator==(const Color& c) const {
-        return r == c.r && g == c.g && b == c.b && a == c.a;
-    }
-
-    ep_bool operator!=(const Color& c) const {
-        return !(*this == c);
-    }
+    ep_bool operator==(const Color& c) const { return r == c.r && g == c.g && b == c.b && a == c.a; }
+    ep_bool operator!=(const Color& c) const { return !(*this == c); }
 };
 
 struct Transform2D {
+    /* !docs
+    A 2D transformation by a 3x3 matrix.
+    */
+
     ep_f64 matrix[6];
 
     Transform2D(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) {
@@ -454,6 +419,10 @@ struct Transform2D {
 };
 
 ep_bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
+    /* !docs
+    Checks if a point is strictly inside a convex quad.
+    */
+
     auto cross = [](ep_f64 ax, ep_f64 ay, ep_f64 bx, ep_f64 by) {
         return ax * by - ay * bx;
     };
@@ -471,11 +440,19 @@ ep_bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
 }
 
 ep_bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
+    /* !docs
+    Checks if a point is strictly inside a rectangle.
+    */
+
     return r.x < p.x && p.x < r.x + r.w &&
            r.y < p.y && p.y < r.y + r.h;
 }
 
 ep_bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
+    /* !docs
+    Checks if a convex quad is strictly intersecting a rectangle.
+    */
+
     return pointStrictlyInRect(quad[0], r) ||
            pointStrictlyInRect(quad[1], r) ||
            pointStrictlyInRect(quad[2], r) ||
@@ -487,6 +464,10 @@ ep_bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
 }
 
 ep_bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) {
+    /* !docs
+    Checks if a **line** is intersecting a **line segment**.
+    */
+
     ep_f64 angle = lineDeg / 180.0 * std::numbers::pi;
     Vec2 dir = { std::cos(angle), std::sin(angle) };
     
@@ -508,6 +489,10 @@ ep_bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2
 }
 
 ep_bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
+    /* !docs
+    Checks if a line is intersecting a rectangle.
+    */
+
     return lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x, r.y }, Vec2 { r.x + r.w, r.y } }) ||
            lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y }, Vec2 { r.x + r.w, r.y + r.h } }) ||
            lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x + r.w, r.y + r.h }, Vec2 { r.x, r.y + r.h } }) ||
@@ -515,6 +500,11 @@ ep_bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r
 }
 
 ep_bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
+    /* !docs
+    Checks if a point is leaving a target point.
+    When it returns true, it means that the point is leaving the target point if it is moving in the given direction.
+    */
+
     ep_f64 eps = 1.0;
     return (
         (point.rotateDegrees(deg + 90, -eps) - targetPoint).lengthSquared() -
@@ -523,17 +513,30 @@ ep_bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoi
 }
 
 ep_bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) {
+    /* !docs
+    Checks if a line is leaving the screen based on `@pointIsLeavingPoint`.
+    */
+
     return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg, screenArea.center());
 }
 
 template <typename T1, typename T2>
 struct SKVCache {
+    /* !docs
+    A simple key-value cache.
+    */
+
     T1 key;
     T2 value;
 
     template <typename F>
     [[gnu::always_inline, gnu::hot]]
     const T2& get(const T1& k, F&& reseter) {
+        /* !docs
+        Gets the value from the cache.
+        If the key is different from the cached key, the value is reset by reseter function and the key is updated.
+        */
+
         if (__builtin_expect(key != k, 0)) {
             key = k;
             value = reseter();
@@ -544,6 +547,10 @@ struct SKVCache {
 };
 
 struct EaseSet {
+    /* !docs
+    A set of easing functions.
+    */
+
     struct Milthm {
         static ep_f64 easing_in(ep_u64 press, ep_f64 p) {
             switch (press) {
@@ -686,6 +693,11 @@ enum class EnumPhiEventType : ep_u64 {
 };
 
 ep_bool phiEventTypeIsMultiply(EnumPhiEventType type) {
+    /* !docs
+    Checks if the event type is a multiply type.
+    If it returns true, it means that if there are there are `v1` and `v2` in the same time, the final value will be `v1 * v2`.
+    */
+
     return (
         type == EnumPhiEventType::MultiplyAlpha ||
         type == EnumPhiEventType::ScaleX ||
@@ -706,6 +718,10 @@ enum class EnumPhiLineAttachUI {
 };
 
 struct PhiNoteTypeHelper {
+    /* !docs
+    A helper class for converting phigros note type to `@EnumPhiNoteType`.
+    */
+
     static EnumPhiNoteType FromOfficial(ep_u64 n) {
         if (n == 1) return EnumPhiNoteType::Tap;
         if (n == 2) return EnumPhiNoteType::Drag;
@@ -732,6 +748,10 @@ struct PhiNoteTypeHelper {
 };
 
 struct PhiLineAttachUIHelper {
+    /* !docs
+    A helper class for converting phigros line attach ui target to `@EnumPhiLineAttachUI`.
+    */
+
     static EnumPhiLineAttachUI FromString(const std::string& s) {
         if (s == "pause") return EnumPhiLineAttachUI::Pause;
         if (s == "bar") return EnumPhiLineAttachUI::Bar;
@@ -745,6 +765,10 @@ struct PhiLineAttachUIHelper {
 };
 
 struct PhiMeta {
+    /* !docs
+    The meta information of a phigros chart.
+    */
+
     ep_f64 offset;
     std::string title;
     std::string composer;
@@ -760,15 +784,31 @@ struct PhiMeta {
     ep_bool isRegLineAlphaNoteHidden;
     Vec2 lineWidthUnit, lineHeightUnit;
 
+    /* !docs
+    The cover ellipsis of notes.
+    It means if the line enabled cover and the note's y position is less than this value, the note will be hidden.
+    */
     ep_f64 coverEllipsis = 1e-5;
 
+    /* !docs
+    The maximum view ratio of the chart.
+    If the view ratio is greater than this value, the chart will be rendered by fitting the width.
+    */
     ep_f64 maxViewRatio = (ep_f64)16 / 9;
+
+    /* !docs
+    The world origin and viewport of the chart, used to normalize the positions.
+    */
     Vec2 worldOrigin;
     Vec2 worldViewport;
 };
 
 struct PhiBPMEvent {
-    ep_f64 time; // beats
+    /* !docs
+    A bpm event item for the phigros chart.
+    */
+
+    ep_f64 time; // !inline-docs| It is a beat value, not a second value.
     ep_f64 bpm;
 
     static void SortBpmEvents(std::vector<PhiBPMEvent>& events) {
@@ -779,6 +819,10 @@ struct PhiBPMEvent {
 };
 
 struct PhiEventLayerIndexs {
+    /* !docs
+    The layer indexs preset of a phigros chart.
+    */
+
     static constexpr ep_u64 RPE_MAX = 5;
     static constexpr ep_u64 UNIT = 1000000;
 
@@ -789,16 +833,23 @@ struct PhiEventLayerIndexs {
 };
 
 struct PhiEvent {
-    Vec2 timeZone, valueZone;
+    /* !docs
+    A event item for the phigros chart.
+    */
+
+    Vec2 timeZone, valueZone; // !inline-docs| timeZone is a second value.
     EnumPhiEventType type;
 
+    /* !docs
+    The easing component of the event.
+    */
     ep_f64 (* easingFunc)(void*, ep_f64);
     void* easingFuncContext;
-    Vec2 easingZone = { 0.0, 1.0 };
+    Vec2 easingZone = { 0.0, 1.0 }; // !inline-docs| It is like the easing clip in Re:PhiEdit.
 
     ep_u64 layerIndex;
 
-    ep_f64 cumulativeValueAtStart;
+    ep_f64 cumulativeValueAtStart; // !inline-docs| It is like the `floorPosition` in official chart.
 
     ep_f64 valueAtTime(ep_f64 t) {
         // if (t < timeZone.x) return 0.0;
@@ -825,11 +876,21 @@ struct PhiEvent {
     }
 
     static ep_f64 GetDefaultValue(EnumPhiEventType type) {
+        /* !docs
+        Get the default value of a phigros event type.
+        It means the event value will be set to this value if the there is no event.
+        */
+
         return phiEventTypeIsMultiply(type) ? 1.0 : 0.0;
     }
 };
 
 struct PhiAnimLayer {
+    /* !docs
+    A animation layer for the phigros chart.
+    It stores all types of events if they are in the same layer.
+    */
+
     std::vector<PhiEvent> events[(ep_u64)EnumPhiEventType::MAX];
 
     void addEvent(const PhiEvent& e) {
@@ -841,6 +902,11 @@ struct PhiAnimLayer {
     }
 
     void init() {
+        /* !docs
+        Initialize the animation layer.
+        It will sort the events and calculate the cumulative value.
+        */
+
         for (auto& typed_events : events) {
             std::sort(typed_events.begin(), typed_events.end(), [](const auto& a, const auto& b) {
                 return a.timeZone.x < b.timeZone.x;
@@ -851,6 +917,10 @@ struct PhiAnimLayer {
     }
 
     void updateType(ep_u64 type, ep_f64 t) {
+        /* !docs
+        Update the event value of a event type at a time.
+        */
+
         auto& typed_events = getEvents((EnumPhiEventType)type);
         if (typed_events.empty()) return;
 
@@ -877,21 +947,37 @@ struct PhiAnimLayer {
     }
 
     void updateType(EnumPhiEventType type, ep_f64 t) {
+        /* !docs
+        `!ref @PhiAnimLayer::updateType`
+        */
+
         updateType((ep_u64)type, t);
     }
 
     void update(ep_f64 t) {
+        /* !docs
+        Update all event values at a time.
+        */
+
         for (ep_u64 type = 0; type < (ep_u64)EnumPhiEventType::MAX; type++) {
             updateType(type, t);
         }
     }
 
     ep_f64 get(EnumPhiEventType type) {
+        /* !docs
+        Get the event value of a event type.
+        */
+
         if (events[(ep_u64)type].empty()) return PhiEvent::GetDefaultValue(type);
         return currentValues[(ep_u64)type];
     }
 
     std::optional<ep_f64> getAlwaysValue(EnumPhiEventType type) {
+        /* !docs
+        Get a fixed value of a event type if it is exists.
+        */
+
         auto& typedEvents = getEvents(type);
         if (typedEvents.empty()) return PhiEvent::GetDefaultValue(type);
 
@@ -935,6 +1021,11 @@ struct PhiAnimLayer {
 };
 
 struct PhiAnimGroup {
+    /* !docs
+    A animation group of the phigros chart.
+    It stores all animation layers of a object.
+    */
+
     std::unordered_map<ep_u64, ep_u64> layerIndexMap;
     std::vector<PhiAnimLayer> layers;
 
@@ -948,24 +1039,40 @@ struct PhiAnimGroup {
     }
 
     void init() {
+        /* !docs
+        Initialize all animation layers.
+        */
+
         for (auto& layer : layers) {
             layer.init();
         }
     }
 
     void updateType(EnumPhiEventType type, ep_f64 t) {
+        /* !docs
+        Update the event value of a event type at a time.
+        */
+
         for (auto& layer : layers) {
             layer.updateType(type, t);
         }
     }
 
     void update(ep_f64 t) {
+        /* !docs
+        Update all event values at a time.
+        */
+
         for (auto& layer : layers) {
             layer.update(t);
         }
     }
 
     ep_f64 get_based(EnumPhiEventType type, ep_f64 baseValue) {
+        /* !docs
+        Get the event value of a event type and it will be added/multiplied to the base value.
+        */
+
         ep_f64 value = baseValue;
 
         for (auto& layer : layers) {
@@ -977,6 +1084,10 @@ struct PhiAnimGroup {
     }
 
     std::optional<ep_f64> getAlwaysHashValue(EnumPhiEventType type) {
+        /* !docs
+        Get the hash value of fixed event values if it is exists.
+        */
+
         ep_f64 result = PhiEvent::GetDefaultValue(type);
 
         for (auto& layer : layers) {
@@ -991,29 +1102,53 @@ struct PhiAnimGroup {
 };
 
 struct PhiAnimator {
+    /* !docs
+    The animator of a phigros chart.
+    It stores all animation groups of the chart.
+    */
+
     std::unordered_map<ep_u64, PhiAnimGroup> groups;
 
     PhiAnimGroup& requestGroup(ep_u64 index) {
+        /* !docs
+        Request a new animation group of a object.
+        */
+
         return groups.try_emplace(index, PhiAnimGroup {}).first->second;
     }
 
     template <typename T>
     PhiAnimGroup& requestGroup(T& obj) {
+        /* !docs
+        `!ref @PhiAnimator::requestGroup`
+        */
         return requestGroup(obj.indexer.get());
     }
 
     template <typename T>
     void addEvent(T& obj, const PhiEvent& e) {
+        /* !docs
+        Add a event to a object.
+        */
+
         requestGroup(obj).addEvent(e);
     }
 
     void init() {
+        /* !docs
+        Initialize all animation groups.
+        */
+
         for (auto& [_, group] : groups) {
             group.init();
         }
     }
 
     ep_f64 get_based(ep_u64 index, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
+        /* !docs
+        Get the event value of the type of a object at a time and it will be added/multiplied to the base value.
+        */
+
         auto group_it = groups.find(index);
         if (group_it == groups.end()) return baseValue;
 
@@ -1024,21 +1159,37 @@ struct PhiAnimator {
 
     template <typename T>
     ep_f64 get_based(T& obj, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
+        /* !docs
+        `!ref @PhiAnimator::get_based`
+        */
+
         return get_based(obj.indexer.get(), t, type, baseValue);
     }
 
     ep_f64 get(ep_u64 index, ep_f64 t, EnumPhiEventType type) {
+        /* !docs
+        Get the event value of the type of a object at a time.
+        */
+
         return get_based(index, t, type, PhiEvent::GetDefaultValue(type));
     }
 
     template <typename T>
     ep_f64 get(T& obj, ep_f64 t, EnumPhiEventType type) {
+        /* !docs
+        `!ref @PhiAnimator::get`
+        */
+
         return get(obj.indexer.get(), t, type);
     }
 
     // std::nullopt means it is unpredictable
     template <typename T>
     std::optional<ep_u64> get_note_group_hash(T& note) {
+        /* !docs
+        Get the hash value of the events of a note.
+        */
+
         HashBucket hash;
 
         auto group_it = groups.find(note.indexer.get());
@@ -1067,16 +1218,28 @@ struct PhiAnimator {
     }
 
     ep_f64 get_alpha(ep_u64 index, ep_f64 t, ep_f64 additionalDefault) {
+        /* !docs
+        Get the alpha value of a object at a time and `EnumPhiEventType::AdditiveAlpha` value is based on the additionalDefault.
+        */
+
         return get(index, t, EnumPhiEventType::MultiplyAlpha) * get_based(index, t, EnumPhiEventType::AdditiveAlpha, additionalDefault);
     }
 
     template <typename T>
     ep_f64 get_alpha(T& obj, ep_f64 t, ep_f64 additionalDefault) {
+        /* !docs
+        `!ref @PhiAnimator::get_alpha`
+        */
+
         return get_alpha(obj.indexer.get(), t, additionalDefault);
     }
 };
 
 struct PhiObjectIndexer {
+    /* !docs
+    A class that stores the index of a object for phigros chart.
+    */
+
     ep_u64 index;
 
     ep_u64 get() {
