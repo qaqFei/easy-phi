@@ -4049,6 +4049,7 @@ namespace GL {
     constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
     constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
     constexpr GLenum GL_DEPTH_WRITEMASK = 0x0B72;
+    constexpr GLenum GL_SAMPLES = 0x80A9;
 
     constexpr GLenum GL_ARRAY_BUFFER = 0x8892;
     constexpr GLenum GL_ELEMENT_ARRAY_BUFFER = 0x8893;
@@ -4106,6 +4107,7 @@ namespace GL {
     constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Y = 0x8518;
     constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Z = 0x8519;
     constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x851A;
+    constexpr GLenum GL_TEXTURE_2D_MULTISAMPLE = 0x9100;
 
     constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
     constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
@@ -4323,6 +4325,7 @@ namespace GL {
         void (*glGenerateMipmap)(GLenum target);
         void (*glActiveTexture)(GLenum texture);
         void (*glTexStorage2D)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
+        void (*glTexImage2DMultisample)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations);
 
         void (*glGenFramebuffers)(GLsizei n, GLuint* framebuffers);
         void (*glDeleteFramebuffers)(GLsizei n, const GLuint* framebuffers);
@@ -4485,6 +4488,7 @@ namespace GL {
         LOAD_AND_CHECK(glGenerateMipmap)
         LOAD_AND_CHECK(glActiveTexture)
         LOAD_AND_CHECK(glTexStorage2D)
+        LOAD_AND_CHECK(glTexImage2DMultisample)
 
         LOAD_AND_CHECK(glGenFramebuffers)
         LOAD_AND_CHECK(glDeleteFramebuffers)
@@ -4759,7 +4763,7 @@ namespace GL {
         }
 
         void addFullRect() {
-            addRect({ -1, -1 }, { 2, 2 }, { 0, 1 }, { 1, -1 });
+            addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
         }
 
         static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) {
@@ -5348,6 +5352,11 @@ namespace GL {
                 ref->glRef->glTexStorage2D(ref->target, levels, internalformat, width, height);
             }
 
+            void image2DMultisample(GLsizei width, GLsizei height, GLsizei samples) {
+                ref->glRef->glTexImage2DMultisample(ref->target, samples, GL_RGBA8, width, height, GL_TRUE);
+                ref->width = width; ref->height = height;
+            }
+
             ~UsingGuard() {
                 ref->glRef->glBindTexture(ref->target, 0);
             }
@@ -5415,12 +5424,6 @@ namespace GL {
                 ref->glRef->glGetIntegerv(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING : (target == GL_DRAW_FRAMEBUFFER ? GL_DRAW_FRAMEBUFFER_BINDING : GL_FRAMEBUFFER_BINDING), &savedId);
                 ref->glRef->glBindFramebuffer(target, ref->id);
                 ref->glRef->glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, texture->target, texture->id, 0);
-
-                if (target == GL_READ_FRAMEBUFFER) {
-                    ref->glRef->glReadBuffer(GL_COLOR_ATTACHMENT0);
-                } else if (target == GL_DRAW_FRAMEBUFFER) {
-                    ref->glRef->glDrawBuffer(GL_COLOR_ATTACHMENT0);
-                }
             }
 
             ~UsingGuard() {
@@ -5435,10 +5438,6 @@ namespace GL {
         ep_sp<UsingGuard> useSp(TextureInfo* texture, GLenum target) {
             auto* guard = new UsingGuard(*this, texture, target);
             return ep_sp<UsingGuard>(guard);
-        }
-
-        void blit(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter = GL_NEAREST) {
-            glRef->glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
         }
 
         ~FramebufferInfo() {
@@ -5672,6 +5671,46 @@ void main() {
     outColor = uColor * texture(uTexture, fragTexCoord);
 }
 )";
+
+    struct YUV420Frame {
+        aligned_vector<ep_u8, 16> data;
+        ep_u64 width, height;
+
+        void ensureSize() {
+            if (data.size() != getDataSize()) {
+                data.resize(getDataSize());
+            }
+        }
+
+        static ep_sp<YUV420Frame> Make(ep_u64 width, ep_u64 height) {
+            auto* frame = new YUV420Frame();
+            frame->width = width;
+            frame->height = height;
+            frame->ensureSize();
+            return ep_sp<YUV420Frame>(frame);
+        }
+
+        ep_sp<YUV420Frame> move() {
+            auto* frame = new YUV420Frame();
+            frame->data = std::move(data);
+            frame->width = width;
+            frame->height = height;
+            return ep_sp<YUV420Frame>(frame);
+        }
+
+        ep_u64 getDataSize() const { return width * height * 3 / 2; }
+
+        ep_u8* y() const { return (ep_u8*)data.data(); }
+        ep_u8* u() const { return (ep_u8*)data.data() + width * height; }
+        ep_u8* v() const { return (ep_u8*)data.data() + width * height + width * height / 4; }
+        ep_u64 rowBytesY() const { return width; }
+        ep_u64 rowBytesU() const { return width / 2; }
+        ep_u64 rowBytesV() const { return width / 2; }
+
+        void fromPtr(void* ptr) {
+            memcpy(data.data(), ptr, getDataSize());
+        }
+    };
 
     struct GL33Context {
         GL33Context() = default;
@@ -5978,6 +6017,7 @@ float getVI(int index) {
 void main() {
     int w = uResolution.x; int h = uResolution.y;
     ivec2 curr_pos = ivec2(fragTexCoord * vec2(uResolution));
+    curr_pos.y = h - curr_pos.y - 1;
     int byte_index = (int(curr_pos.x) + int(curr_pos.y) * w) * 4;
 
     int y_bytes = w * h; int uv_bytes = y_bytes / 4;
@@ -6073,13 +6113,12 @@ void main() {
 
         void copyCurrentToTexture(TextureInfo* dst) {
             auto kfboGuard = getFBOGuard();
-            auto texGuard = dst->use();
+            auto texFboGuard = dst->frameBuffer->use(dst, GL_DRAW_FRAMEBUFFER);
             gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, kfboGuard.drawFbo);
-            gl.glCopyTexSubImage2D(
-                GL_TEXTURE_2D, 0,
-                0, 0,
-                0, 0,
-                dst->width, dst->height
+            gl.glBlitFramebuffer(
+                0, 0, dst->width, dst->height,
+                0, 0, dst->width, dst->height,
+                GL_COLOR_BUFFER_BIT, GL_NEAREST
             );
         }
 
@@ -6138,6 +6177,12 @@ void main() {
             drawMesh(descMesh);
         }
 
+        bool getCurrentIsMultiSampled() {
+            GLint samples;
+            gl.glGetIntegerv(GL_SAMPLES, &samples);
+            return samples > 1;
+        }
+
         struct {
             ep_sp<ProgramInfo> gaussianBlur;
             ep_sp<ProgramInfo> yuvConverter;
@@ -6169,7 +6214,7 @@ void main() {
             }
 
             struct ReadResult {
-                std::pair<ep_u64, ep_u64> frameSize;
+                ep_u64 size;
                 ep_u64 frameIndex;
 
                 ReadResult() = default;
@@ -6178,21 +6223,14 @@ void main() {
                 ReadResult(ReadResult&& other) = default;
                 ReadResult& operator=(ReadResult&& other) = default;
 
-                static ep_sp<ReadResult> Make(ep_u64 width, ep_u64 height, ep_u64 frameIndex) {
+                static ep_sp<ReadResult> Make(ep_u64 size, ep_u64 frameIndex) {
                     auto* result = new ReadResult();
-                    result->frameSize = { width, height };
+                    result->size = size;
                     result->frameIndex = frameIndex;
                     return ep_sp<ReadResult>(result);
                 }
 
                 ep_sp<BufferInfo> pbo;
-
-                void initFromPbo(const ep_sp<BufferInfo>& pbo) {
-                    this->pbo = pbo;
-                }
-
-                ep_u64 width() const { return frameSize.first; }
-                ep_u64 height() const { return frameSize.second; }
 
                 struct UsingGuard {
                     ep_sp<BufferInfo::UsingGuard> pboGuard;
@@ -6240,7 +6278,7 @@ void main() {
                     if (!slot.sync || !slot.sync->isSignaled()) continue;
                     slot.sync = nullptr;
 
-                    auto result = ReadResult::Make(frameWidth, frameHeight, slot.frameIndex);
+                    auto result = ReadResult::Make(getBufferSize(), slot.frameIndex);
                     result->pbo = std::move(slot.buffer);
                     readResults.push_back(result);
                 }
@@ -6261,6 +6299,7 @@ void main() {
             private:
             struct BufferSlot {
                 ep_sp<BufferInfo> buffer;
+                ep_sp<TextureInfo> texture;
                 ep_sp<SyncInfo> sync;
                 ep_u64 frameIndex;
             };
@@ -6279,11 +6318,27 @@ void main() {
             }
 
             void readToSlot(BufferSlot& slot) {
+                if (!slot.buffer) slot.buffer = allocPbo();
+
+                if (glCtx->getCurrentIsMultiSampled()) {
+                    if (!slot.texture) {
+                        slot.texture = glCtx->createTexture();
+                        slot.texture->use().image2D(frameWidth, frameHeight, nullptr);
+                    }
+
+                    glCtx->copyCurrentToTexture(slot.texture.get());
+                    auto fboGuard = slot.texture->frameBuffer->use(slot.texture.get(), GL_FRAMEBUFFER);
+                    readToSlotDirect(slot);
+                } else {
+                    readToSlotDirect(slot);
+                }
+            }
+
+            void readToSlotDirect(BufferSlot& slot) {
                 glCtx->convertToYUV(frameWidth, frameHeight);
                 glCtx->flipY(frameWidth, frameHeight);
-                if (!slot.buffer) slot.buffer = allocPbo();
                 auto pboGuard = slot.buffer->use();
-                glCtx->gl.glReadPixels(0, 0, frameWidth, frameHeight, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                glCtx->gl.glReadPixels(0, 0, frameWidth, getBufferHeight(), GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
                 slot.sync = glCtx->createSync();
                 slot.frameIndex = currentFrameIndex++;
             }
@@ -6306,13 +6361,21 @@ void main() {
             ep_sp<BufferInfo> allocPbo() {
                 if (pendingBuffers.empty()) {
                     auto pbo = glCtx->createBuffer(GL_PIXEL_PACK_BUFFER);
-                    pbo->use().data(frameWidth * frameHeight * 4, nullptr, GL_STREAM_READ);
+                    pbo->use().data(getBufferSize(), nullptr, GL_STREAM_READ);
                     return pbo;
                 }
 
                 auto ret = std::move(pendingBuffers.back());
                 pendingBuffers.pop_back();
                 return ret;
+            }
+
+            ep_u64 getBufferHeight() {
+                return (frameHeight * 3 + 7) / 8;
+            }
+
+            ep_u64 getBufferSize() {
+                return frameWidth * getBufferHeight() * 4;
             }
         };
 
@@ -6414,6 +6477,9 @@ void main() {
 
             enable(GL_BLEND);
             blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            gl.glReadBuffer(GL_COLOR_ATTACHMENT0);
+            gl.glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
             vertexPool = VertexPool::Make();
         }
@@ -6520,46 +6586,6 @@ void main() {
         return canvas;
     }
 
-    struct YUV420Frame {
-        aligned_vector<ep_u8, 16> data;
-        ep_u64 width, height;
-
-        void ensureSize() {
-            if (data.size() != getDataSize()) {
-                data.resize(getDataSize());
-            }
-        }
-
-        static ep_sp<YUV420Frame> Make(ep_u64 width, ep_u64 height) {
-            auto* frame = new YUV420Frame();
-            frame->width = width;
-            frame->height = height;
-            frame->ensureSize();
-            return ep_sp<YUV420Frame>(frame);
-        }
-
-        ep_sp<YUV420Frame> move() {
-            auto* frame = new YUV420Frame();
-            frame->data = std::move(data);
-            frame->width = width;
-            frame->height = height;
-            return ep_sp<YUV420Frame>(frame);
-        }
-
-        ep_u64 getDataSize() const { return width * height * 3 / 2; }
-
-        ep_u8* y() const { return (ep_u8*)data.data(); }
-        ep_u8* u() const { return (ep_u8*)data.data() + width * height; }
-        ep_u8* v() const { return (ep_u8*)data.data() + width * height + width * height / 4; }
-        ep_u64 rowBytesY() const { return width; }
-        ep_u64 rowBytesU() const { return width / 2; }
-        ep_u64 rowBytesV() const { return width / 2; }
-
-        void fromPtr(void* ptr) {
-            memcpy(data.data(), ptr, getDataSize());
-        }
-    };
-
     struct VideoRecorder {
         VideoRecorder() = default;
         VideoRecorder(const VideoRecorder&) = delete;
@@ -6572,6 +6598,7 @@ void main() {
         struct Config {
             ep_u64 nominalSize = 1920 * 1080 * 16;
             bool callbackIsThreadSafe = false;
+            ep_u64 msaaSamples = 4;
         };
 
         static ep_sp<VideoRecorder> Make(
@@ -6607,9 +6634,15 @@ void main() {
             );
 
             for (ep_u64 i = 0; i < surfacesCount; i++) {
-                auto surface = glCtx->createTexture();
-                surface->use().image2D(width, height, nullptr);
-                recorder->surfaces.push_back(surface);
+                if (config.msaaSamples > 1) {
+                    auto surface = glCtx->createTexture(GL_TEXTURE_2D_MULTISAMPLE);
+                    surface->use().image2DMultisample(width, height, config.msaaSamples);
+                    recorder->surfaces.push_back(surface);
+                } else {
+                    auto surface = glCtx->createTexture(GL_TEXTURE_2D);
+                    surface->use().image2D(width, height, nullptr);
+                    recorder->surfaces.push_back(surface);
+                }
             }
 
             recorder->maxConcurrentYuvSlots = std::clamp<ep_u64>(
