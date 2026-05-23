@@ -6975,22 +6975,31 @@ struct AudioEngine {
     struct Task {
         ep_sp<DecodedAudio> audio;
         ep_i64 offset;
+        ep_f64 volume = 1.0;
+
+        static ep_sp<Task> Make() {
+            auto* task = new Task();
+            return ep_sp<Task>(task);
+        }
     };
 
     ep_i64 currentOffset;
-    std::list<Task> tasks;
+    std::list<ep_sp<Task>> tasks;
+    ep_f64 volume = 1.0;
 
     static ep_sp<AudioEngine> Make() {
         auto* eng = new AudioEngine();
         return ep_sp<AudioEngine>(eng);
     }
 
-    void createTask(const ep_sp<DecodedAudio>& audio) {
-        std::lock_guard<std::mutex> guard(mtx);
+    ep_sp<Task> createTask(const ep_sp<DecodedAudio>& audio) {
+        auto task = Task::Make();
+        task->audio = audio;
+        task->offset = currentOffset;
 
-        auto& task = tasks.emplace_back();
-        task.audio = audio;
-        task.offset = currentOffset;
+        std::lock_guard<std::mutex> guard(mtx);
+        tasks.push_back(task);
+        return task;
     }
 
     void callback(ep_i16* buffer, ep_i64 frameCount) {
@@ -6999,26 +7008,30 @@ struct AudioEngine {
         memset(buffer, 0, frameCount * channels * sizeof(ep_i16));
 
         tasks.remove_if([&](const auto& task) {
-            return task.offset + (ep_i64)task.audio->getSampleCount(sampleRate) <= currentOffset;
+            return task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset;
         });
 
         for (const auto& task : tasks) {
-            ep_i64 startSample = currentOffset - task.offset;
+            ep_i64 startSample = currentOffset - task->offset;
             ep_i64 endSample = startSample + frameCount;
 
-            if (startSample > (ep_i64)task.audio->getSampleCount(sampleRate)) continue;
+            if (startSample > (ep_i64)task->audio->getSampleCount(sampleRate)) continue;
             if (endSample <= 0) continue;
 
             startSample = std::max<ep_i64>(0, startSample);
-            endSample = std::min<ep_i64>(task.audio->getSampleCount(sampleRate), endSample);
+            endSample = std::min<ep_i64>(task->audio->getSampleCount(sampleRate), endSample);
 
             for (ep_i64 i = startSample; i < endSample; i++) {
                 for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
-                    ep_i16 sample = task.audio->sampleAt(i, j, channels, sampleRate);
+                    ep_i16 sample = task->audio->sampleAt(i, j, channels, sampleRate);
                     auto* ptr = buffer + (i - startSample) * channels + j;
-                    *ptr = typed_clamp<ep_i16, ep_i32>(*ptr + sample);
+                    *ptr = typed_clamp<ep_i16, ep_i32>((ep_f64)*ptr + sample * task->volume);
                 }
             }
+        }
+
+        for (ep_i64 i = 0; i < (ep_i64)(frameCount * channels); i++) {
+            buffer[i] = typed_clamp<ep_i16, ep_f64>(buffer[i] * volume);
         }
 
         currentOffset += frameCount;
@@ -8226,38 +8239,39 @@ namespace easy_phi {
         struct AudioContext {
             ma_device device;
             AudioEngine* engine;
+
+            static ep_sp<AudioContext> Make() {
+                auto* ctx = new AudioContext();
+                return ep_sp<AudioContext>(ctx);
+            }
         };
 
-        auto* ctx = new AudioContext();
+        auto ctx = AudioContext::Make();
 
         ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
         deviceConfig.playback.format = ma_format_s16;
-        deviceConfig.playback.channels = 0;
-        deviceConfig.sampleRate = 0;
+        deviceConfig.playback.channels = deviceConfig.sampleRate = 0;
         deviceConfig.dataCallback = [](ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
             auto* ctx = (AudioContext*)pDevice->pUserData;
             ctx->engine->callback((ep_i16*)pOutput, frameCount);
         };
-        deviceConfig.pUserData = ctx;
+        deviceConfig.pUserData = ctx.get();
 
         if (ma_device_init(NULL, &deviceConfig, &ctx->device) != MA_SUCCESS) {
-            delete ctx;
             throw std::runtime_error("failed to initialize audio device");
         }
+        engine->channels = ctx->device.playback.channels;
+        engine->sampleRate = ctx->device.sampleRate;
 
-        engine->audioContext = ctx;
+        ctx->engine = engine.get();
+        ma_device_start(&ctx->device);
+
+        engine->audioContext = ctx.release();
         engine->audioContextDestructor = [](void* userdata) {
             auto* ctx = (AudioContext*)userdata;
             ma_device_uninit(&ctx->device);
             delete ctx;
         };
-
-        engine->channels = ctx->device.playback.channels;
-        engine->sampleRate = ctx->device.sampleRate;
-
-        ctx->engine = engine.get();
-
-        ma_device_start(&ctx->device);
 
         return engine;
     }
