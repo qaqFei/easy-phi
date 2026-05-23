@@ -7010,7 +7010,7 @@ struct AudioEngine {
             if (endSample <= 0) continue;
 
             startSample = std::max<ep_i64>(0, startSample);
-            endSample = std::min<ep_i64>(task.audio->getSampleCount(), endSample);
+            endSample = std::min<ep_i64>(task.audio->getSampleCount(sampleRate), endSample);
 
             for (ep_i64 i = startSample; i < endSample; i++) {
                 for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
