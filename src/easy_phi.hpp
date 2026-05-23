@@ -7851,7 +7851,7 @@ namespace easy_phi {
 namespace easy_phi {
     DecodedRGBATexture decodeImage(const Data& data) {
         int width, height, channels;
-        ep_u8* pixels = stbi_load_from_memory (
+        ep_u8* pixels = stbi_load_from_memory(
             data.data.data(),
             data.data.size(),
             &width, &height, &channels,
