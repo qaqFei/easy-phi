@@ -177,6 +177,9 @@ struct Vec2 {
     ep_bool operator==(const Vec2& v) const { return x == v.x && y == v.y; }
     ep_bool operator!=(const Vec2& v) const { return x != v.x || y != v.y; }
 
+    ep_f64 max() const { return std::max(x, y); }
+    ep_f64 min() const { return std::min(x, y); }
+
     Vec2 rotate(ep_f64 angle, ep_f64 length) const {
         ep_f64 c = std::cos(angle);
         ep_f64 s = std::sin(angle);
@@ -6772,6 +6775,7 @@ struct PhiCalculateFrameConfig {
     std::unordered_map<EnumPhiNoteType, NoteTextureInfo> noteTextureInfos;
     ep_f64 songLength;
     ep_f64 maxNoteBodyLength = 8192.0;
+    ep_f64 maxFontSizeNormScale = 16.0;
 };
 
 struct PhiCalculatedFrame {
@@ -7395,13 +7399,23 @@ void calculatePhiFrame(
         } else {
             if (lineAlpha * lineColor.a > 0) {
                 if (lineText.has_value()) {
+                    ep_f64 fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum();
+
+                    auto maxScale = std::min(lineScale.max(), maxFontSizeNormScale);
+                    auto realScale = lineScale;
+
+                    if (maxScale > 1.0) {
+                        fontSize *= maxScale;
+                        realScale /= maxScale;
+                    }
+
                     frame.objects.push_back(PhiCalculatedFrame::CalculatedText {
                         .text = lineText.value(),
                         .position = lineScreenPosition,
-                        .scale = lineScale,
+                        .scale = realScale,
                         .align = EnumTextAlign::Center,
                         .baseline = EnumTextBaseline::Middle,
-                        .fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum(),
+                        .fontSize = fontSize,
                         .rotation = lineRotation,
                         .color = lineColor.applyAlpha(lineAlpha)
                     });

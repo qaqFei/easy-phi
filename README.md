@@ -25,6 +25,12 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 
 - **Rendering Takeover**: We're taking over the entire OpenGL pipeline — you don't write a single GL call. Just give us a `proc` (e.g. `glfwGetProcAddress`), and we handle context creation, buffer management, shader compilation, and all rendering operations from start to finish.
 
+- **Documentation**: We're working on comprehensive documentation to help you get started with easy-phi quickly and easily.
+
+- **Making it Easier**: We're making it easier to use easy-phi by clear and convient API design.
+
+- **Supporting More Games**: We're working on supporting more rhythm games, such as [Milthm](https://milthm.com/) and [Rizline](https://store.steampowered.com/app/2272590/Rizline/).
+
 ## Examples
 
 For the completed example, check out [here](./test_files/test.cpp).
