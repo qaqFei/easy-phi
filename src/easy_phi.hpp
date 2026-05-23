@@ -44,8 +44,6 @@ using ep_i64 = int64_t;
 using ep_f32 = float;
 using ep_f64 = double;
 
-using ep_bool = bool;
-
 static ep_u64 globalCounter = 1;
 
 ep_u64 reqGlobalCounter() {
@@ -103,7 +101,7 @@ struct HashBucket {
         }
     }
     
-    void submitBool(ep_bool b) {
+    void submitBool(bool b) {
         mix(b ? 1 : 0);
     }
 
@@ -133,7 +131,7 @@ struct Data {
         };
     }
 
-    static ep_bool FromFile(Data* dst, const std::string& fn) {
+    static bool FromFile(Data* dst, const std::string& fn) {
         std::ifstream file(std::filesystem::path((const char8_t*)fn.c_str()), std::ios::binary | std::ios::ate);
         if (!file) return false;
 
@@ -192,8 +190,8 @@ struct Vec2 {
     Vec2& operator*=(ep_f64 v) { x *= v; y *= v; return *this; }
     Vec2& operator/=(ep_f64 v) { x /= v; y /= v; return *this; }
 
-    ep_bool operator==(const Vec2& v) const { return x == v.x && y == v.y; }
-    ep_bool operator!=(const Vec2& v) const { return x != v.x || y != v.y; }
+    bool operator==(const Vec2& v) const { return x == v.x && y == v.y; }
+    bool operator!=(const Vec2& v) const { return x != v.x || y != v.y; }
 
     ep_f64 max() const { return std::max(x, y); }
     ep_f64 min() const { return std::min(x, y); }
@@ -211,11 +209,11 @@ struct Vec2 {
         return rotate(angle / 180.0 * std::numbers::pi, length);
     }
 
-    ep_bool isZeroZone() const {
+    bool isZeroZone() const {
         return x == y;
     }
 
-    ep_bool include(ep_f64 v) const {
+    bool include(ep_f64 v) const {
         return x <= v && v <= y;
     }
     
@@ -318,8 +316,8 @@ struct Color {
     Color& operator/=(const Color& c) { r /= c.r; g /= c.g; b /= c.b; a /= c.a; return *this; }
     Color& operator/=(ep_f64 v) { r /= v; g /= v; b /= v; a /= v; return *this; }
 
-    ep_bool operator==(const Color& c) const { return r == c.r && g == c.g && b == c.b && a == c.a; }
-    ep_bool operator!=(const Color& c) const { return !(*this == c); }
+    bool operator==(const Color& c) const { return r == c.r && g == c.g && b == c.b && a == c.a; }
+    bool operator!=(const Color& c) const { return !(*this == c); }
 };
 
 struct Transform2D {
@@ -424,7 +422,7 @@ struct Transform2D {
     }
 };
 
-ep_bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
+bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
     /* !docs
     Checks if a point is strictly inside a convex quad.
     */
@@ -445,7 +443,7 @@ ep_bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
     return false;
 }
 
-ep_bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
+bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
     /* !docs
     Checks if a point is strictly inside a rectangle.
     */
@@ -454,7 +452,7 @@ ep_bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
            r.y < p.y && p.y < r.y + r.h;
 }
 
-ep_bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
+bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
     /* !docs
     Checks if a convex quad is strictly intersecting a rectangle.
     */
@@ -469,7 +467,7 @@ ep_bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
            pointStrictlyInConvexQuad(Vec2 {r.x, r.y + r.h}, quad);
 }
 
-ep_bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) {
+bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) {
     /* !docs
     Checks if a **line** is intersecting a **line segment**.
     */
@@ -494,7 +492,7 @@ ep_bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2
     return u >= -eps && u <= 1.0 + eps;
 }
 
-ep_bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
+bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
     /* !docs
     Checks if a line is intersecting a rectangle.
     */
@@ -505,7 +503,7 @@ ep_bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r
            lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x, r.y + r.h }, Vec2 { r.x, r.y } });
 }
 
-ep_bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
+bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
     /* !docs
     Checks if a point is leaving a target point.
     When it returns true, it means that the point is leaving the target point if it is moving in the given direction.
@@ -518,7 +516,7 @@ ep_bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoi
     ) > 0;
 }
 
-ep_bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) {
+bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) {
     /* !docs
     Checks if a line is leaving the screen based on `@pointIsLeavingPoint`.
     */
@@ -698,7 +696,7 @@ enum class EnumPhiEventType : ep_u64 {
     MAX = PhiShaderUniform + 1
 };
 
-ep_bool phiEventTypeIsMultiply(EnumPhiEventType type) {
+bool phiEventTypeIsMultiply(EnumPhiEventType type) {
     /* !docs
     Checks if the event type is a multiply type.
     If it returns true, it means that if there are there are `v1` and `v2` in the same time, the final value will be `v1 * v2`.
@@ -784,10 +782,10 @@ struct PhiMeta {
 
     ep_u64 rpeVersion = 0;
 
-    ep_bool isHoldCoverAtHead;
-    ep_bool isZeroLengthHoldHidden;
-    ep_bool isHighNoteHidden;
-    ep_bool isRegLineAlphaNoteHidden;
+    bool isHoldCoverAtHead;
+    bool isZeroLengthHoldHidden;
+    bool isHighNoteHidden;
+    bool isRegLineAlphaNoteHidden;
     Vec2 lineWidthUnit, lineHeightUnit;
 
     /* !docs
@@ -1258,7 +1256,7 @@ struct PhiNote {
 
     struct State {
         ep_f64 lastUpdateTime;
-        ep_bool playedHitsound;
+        bool playedHitsound;
 
         void timeUpdated(ep_f64 t) {
             if (lastUpdateTime > t) {
@@ -1268,7 +1266,7 @@ struct PhiNote {
             lastUpdateTime = t;
         }
 
-        ep_bool onPlayHitsound() {
+        bool onPlayHitsound() {
             if (!playedHitsound) {
                 playedHitsound = true;
                 return true;
@@ -1280,13 +1278,13 @@ struct PhiNote {
 
     EnumPhiNoteType type;
     ep_f64 time, holdTime;
-    ep_bool isFake;
+    bool isFake;
 
     ep_u64 lineIndex;
     Vec2 floorPosition;
     std::optional<ep_f64> fixedHoldSpeed;
-    ep_bool isSimul;
-    ep_bool isReversedCover;
+    bool isSimul;
+    bool isReversedCover;
 
     State state;
 
@@ -1302,7 +1300,7 @@ struct PhiNote {
         return animator.get(lineIndex, t, EnumPhiEventType::Speed) + animator.get(*this, t, EnumPhiEventType::Speed);
     }
 
-    ep_bool isHold() {
+    bool isHold() {
         return holdTime > 0.0 || type == EnumPhiNoteType::Hold;
     }
 
@@ -1332,7 +1330,7 @@ struct PhiNoteGroup {
     };
     
     std::vector<ep_u64> indexs;
-    ep_bool breakable = true;
+    bool breakable = true;
 
     State state;
 };
@@ -1345,7 +1343,7 @@ struct PhiLine {
 
     std::optional<ep_u64> fatherLineIndex;
     ep_f64 zOrder;
-    ep_bool enableCover;
+    bool enableCover;
     Vec2 anchor = { 0.5, 0.5 };
 
     std::optional<std::string> textureName;
@@ -1474,7 +1472,7 @@ struct PhiExtraEffectItem {
     Vec2 timeZone;
     std::optional<ep_u64> targetLine;
     ep_u64 order;
-    ep_bool isGlobal;
+    bool isGlobal;
     std::string shaderName;
     std::unordered_map<std::string, PhiAnimLayer> uniforms;
 };
@@ -1515,13 +1513,13 @@ struct PhiShaderUniform {
         return result;
     }
 
-    ep_bool operator==(const PhiShaderUniform& other) const {
+    bool operator==(const PhiShaderUniform& other) const {
         if (used != other.used) return false;
         for (ep_u8 i = 0; i < 4; i++) if (value[i] != other.value[i]) return false;
         return true;
     }
 
-    ep_bool operator!=(const PhiShaderUniform& other) const { return !(*this == other); }
+    bool operator!=(const PhiShaderUniform& other) const { return !(*this == other); }
 };
 
 struct PhiStoryboardAssets {
@@ -1604,7 +1602,7 @@ struct PhiStoryboardAssets {
         return PhiShaderUniform::Interpolate(start, end, p);
     }
 
-    ep_bool requestLoadTexture(const std::string& name) {
+    bool requestLoadTexture(const std::string& name) {
         if (textures.contains(name)) return true;
         if (!textureLoader) return false;
 
@@ -1618,7 +1616,7 @@ struct PhiStoryboardAssets {
         return false;
     }
 
-    ep_bool isTextureLoaded(const std::string& name) {
+    bool isTextureLoaded(const std::string& name) {
         return textures.contains(name);
     }
 
@@ -1691,7 +1689,7 @@ struct PhiChart {
         ep_f64 hitEffectParticleSize = 1.0;
         ep_f64 hitEffectParticleDistance = 1.0;
 
-        ep_bool enableNoteOffScreenBreakOptimization = true;
+        bool enableNoteOffScreenBreakOptimization = true;
     };
 
     PhiMeta meta;
@@ -1778,8 +1776,8 @@ struct PhiChart {
 
     struct NoteFrameInfo {
         Vec2 headPosition, tailPosition;
-        ep_bool isArrived = false;
-        ep_bool isVisible = true;
+        bool isArrived = false;
+        bool isVisible = true;
         ep_f64 lineRotation, textureRotation, speedVectorRotation;
         Color color;
         Vec2 scale;
@@ -2000,7 +1998,7 @@ struct JsonNode {
         std::monostate,
         std::string,
         ep_f64,
-        ep_bool,
+        bool,
         std::vector<JsonNode>,
         std::unordered_map<std::string, JsonNode>
     > value;
@@ -2026,7 +2024,7 @@ struct JsonNode {
         };
     }
 
-    static JsonNode MakeBool(ep_bool b) {
+    static JsonNode MakeBool(bool b) {
         return JsonNode {
             .type = EnumType::Bool,
             .value = b
@@ -2068,17 +2066,17 @@ struct JsonNode {
         };
     }
 
-    ep_bool isString() const { return type == EnumType::String; }
-    ep_bool isNumber() const { return type == EnumType::Number; }
-    ep_bool isBool() const { return type == EnumType::Bool; }
-    ep_bool isArray() const { return type == EnumType::Array; }
-    ep_bool isObject() const { return type == EnumType::Object; }
-    ep_bool isNull() const { return type == EnumType::Null; }
+    bool isString() const { return type == EnumType::String; }
+    bool isNumber() const { return type == EnumType::Number; }
+    bool isBool() const { return type == EnumType::Bool; }
+    bool isArray() const { return type == EnumType::Array; }
+    bool isObject() const { return type == EnumType::Object; }
+    bool isNull() const { return type == EnumType::Null; }
 
     std::string& getString() noexcept { return std::get<std::string>(value); }
     const std::string& getString() const noexcept { return std::get<std::string>(value); }
     ep_f64 getNumber() const noexcept { return std::get<ep_f64>(value); }
-    ep_bool getBool() const noexcept { return std::get<ep_bool>(value); }
+    bool getBool() const noexcept { return std::get<bool>(value); }
     std::vector<JsonNode>& getArray() noexcept { return std::get<std::vector<JsonNode>>(value); }
     const std::vector<JsonNode>& getArray() const noexcept { return std::get<std::vector<JsonNode>>(value); }
     std::unordered_map<std::string, JsonNode>& getObject() noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
@@ -2096,22 +2094,22 @@ struct JsonNode {
             }
         }
 
-        ep_bool nextIs(const char c) {
+        bool nextIs(const char c) {
             return pos < str.size() && str[pos] == c;
         }
 
-        ep_bool nextIsAny(const std::string& s) {
+        bool nextIsAny(const std::string& s) {
             for (ep_u64 i = 0; i < s.size(); i++) {
                 if (nextIs(s[i])) return true;
             }
             return false;
         }
 
-        ep_bool nextIsSub(const std::string& s) {
+        bool nextIsSub(const std::string& s) {
             return pos + s.size() <= str.size() && str.substr(pos, s.size()) == s;
         }
 
-        ep_bool nextIsSubAny(const std::vector<std::string>& ss) {
+        bool nextIsSubAny(const std::vector<std::string>& ss) {
             for (const auto& s : ss) {
                 if (nextIsSub(s)) return true;
             }
@@ -2126,11 +2124,11 @@ struct JsonNode {
             return "at " + std::to_string(pos) + " of " + std::to_string(str.size());
         }
 
-        ep_bool eof() {
+        bool eof() {
             return pos >= str.size();
         }
 
-        ep_bool readUnicodeEscape(ep_u16* dst) {
+        bool readUnicodeEscape(ep_u16* dst) {
             if (pos + 4 > str.size()) return false;
 
             auto c1 = str[pos++];
@@ -2182,7 +2180,7 @@ struct JsonNode {
         }
     };
 
-    static std::pair<ep_bool, std::string> Parse(JsonNode* dst, StringReader& reader) {
+    static std::pair<bool, std::string> Parse(JsonNode* dst, StringReader& reader) {
         #define FAILED(err, msg) \
             { \
                 return { false, std::string(err) + ": " + msg + " " + reader.generatePositionString() }; \
@@ -2194,7 +2192,7 @@ struct JsonNode {
             reader.pos++;
             std::string str;
             str.reserve(64);
-            ep_bool isInBackslash = false;
+            bool isInBackslash = false;
 
             while (!reader.eof()) {
                 if (reader.nextIs('"') && !isInBackslash) {
@@ -2254,13 +2252,13 @@ struct JsonNode {
             FAILED("unexpected eof", "");
         } else if (reader.nextIsAny("0123456789-")) {
             ep_f64 num = 0;
-            ep_bool isNegative = reader.nextIs('-');
+            bool isNegative = reader.nextIs('-');
             if (isNegative) reader.pos++;
 
-            ep_bool afterDot = false;
+            bool afterDot = false;
             ep_u64 decimal = 1;
             ep_f64 fraction = 0;
-            ep_bool hasFraction = false;
+            bool hasFraction = false;
 
             while (!reader.eof()) {
                 ep_u8 c = reader.getNextChar();
@@ -2280,12 +2278,12 @@ struct JsonNode {
                 } else if (c == 'e' || c == 'E') {
                     if (hasFraction) num += fraction / (ep_f64)decimal;
                     
-                    ep_bool isNegativeExp = reader.nextIs('-');
+                    bool isNegativeExp = reader.nextIs('-');
                     if (isNegativeExp) reader.pos++;
                     else if (reader.nextIs('+')) reader.pos++;
 
                     ep_u64 exp = 0;
-                    ep_bool hasExp = false;
+                    bool hasExp = false;
                     while (!reader.eof()) {
                         ep_u8 c = reader.getNextChar();
 
@@ -2317,7 +2315,7 @@ struct JsonNode {
             *dst = MakeNumber(num * (isNegative ? -1 : 1));
             return { true, "" };
         } else if (reader.nextIsSubAny({ "true", "false" })) {
-            ep_bool b = reader.nextIsSub("true");
+            bool b = reader.nextIsSub("true");
             *dst = MakeBool(b);
             reader.pos += b ? 4 : 5;
             return { true, "" };
@@ -2402,7 +2400,7 @@ struct JsonNode {
         #undef FAILED
     }
 
-    static std::pair<ep_bool, std::string> Parse(JsonNode* dst, const Data& data) {
+    static std::pair<bool, std::string> Parse(JsonNode* dst, const Data& data) {
         StringReader reader(std::string_view(
             (const char*)data.data.data(),
             data.data.size()
@@ -2499,7 +2497,7 @@ private:
     }
 
 public:
-    ep_bool operator==(const JsonNode& other) const {
+    bool operator==(const JsonNode& other) const {
         if (type != other.type) return false;
         if (type == EnumType::Null) return true;
         if (type == EnumType::String) return getString() == other.getString();
@@ -2522,7 +2520,7 @@ public:
         return false;
     }
 
-    ep_bool operator!=(const JsonNode& other) const {
+    bool operator!=(const JsonNode& other) const {
         return !(*this == other);
     }
 
@@ -2546,14 +2544,14 @@ public:
         return obj[key];
     }
 
-    ep_bool hasKey(const std::string& key) const {
+    bool hasKey(const std::string& key) const {
         if (type != EnumType::Object) return false;
         return getObject().contains(key);
     }
 };
 
 struct PhiChartLoadResult {
-    ep_bool success;
+    bool success;
     std::vector<std::string> errors;
     PhiChart chart;
 };
@@ -2616,7 +2614,7 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
 
             auto& notesAboveNode = judgeLineNode["notesAbove"];
             auto& notesBelowNode = judgeLineNode["notesBelow"];
-            std::vector<std::pair<JsonNode*, ep_bool>> noteGroups = {
+            std::vector<std::pair<JsonNode*, bool>> noteGroups = {
                 { &notesAboveNode, true },
                 { &notesBelowNode, false }
             };
@@ -2876,9 +2874,9 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
         ep_u64 eventLayerIndex = 0;
         // events, hasEasing, type, converter
-        using EventGroupType = std::tuple<JsonNode*, ep_bool, EnumPhiEventType, std::function<ep_f64(ep_f64)>>;
+        using EventGroupType = std::tuple<JsonNode*, bool, EnumPhiEventType, std::function<ep_f64(ep_f64)>>;
 
-        auto progressEventGroup = [&](EventGroupType group) -> std::pair<ep_bool, std::string> {
+        auto progressEventGroup = [&](EventGroupType group) -> std::pair<bool, std::string> {
             auto& [eventsNode, hasEasing, type, converter] = group;
             if (!eventsNode->isArray()) return { false, "XXXEvents is not an array" };
 
@@ -3046,7 +3044,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                 endTime = line.beat2sec(endTime);
 
                 if (!noteNode.hasKey("above")) CHART_LOAD_FAILED("rpe", "missing above field");
-                ep_bool isAbove;
+                bool isAbove;
                 if (noteNode["above"].isBool()) isAbove = noteNode["above"].getBool();
                 else if (noteNode["above"].isNumber()) isAbove = noteNode["above"].getNumber() == 1;
                 else CHART_LOAD_FAILED("rpe", "above is not a boolean or number");
@@ -3060,7 +3058,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                 ep_f64 speed = noteNode["speed"].getNumber();
 
                 if (!noteNode.hasKey("isFake")) CHART_LOAD_FAILED("rpe", "missing isFake field");
-                ep_bool isFake;
+                bool isFake;
                 if (noteNode["isFake"].isBool()) isFake = noteNode["isFake"].getBool();
                 else if (noteNode["isFake"].isNumber()) isFake = noteNode["isFake"].getNumber() == 1;
                 else CHART_LOAD_FAILED("rpe", "isFake is not a boolean or number");
@@ -3196,7 +3194,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
             }
         }
 
-        ep_bool enableCover = true;
+        bool enableCover = true;
         if (judgeLineNode.hasKey("isCover")) {
             if (judgeLineNode["isCover"].isNumber()) enableCover = judgeLineNode["isCover"].getNumber() == 1;
             else if (judgeLineNode["isCover"].isBool()) enableCover = judgeLineNode["isCover"].getBool();
@@ -3235,7 +3233,7 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
 
         TokenReader(const std::string& str) : str(str) {}
 
-        ep_bool nextToken(std::string& dst) {
+        bool nextToken(std::string& dst) {
             jumpToNextNonWhiteSpace();
             if (pos >= str.size()) return false;
             ep_u64 start = pos;
@@ -3247,7 +3245,7 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
         }
 
         private:
-        ep_bool currentIsWhiteSpace() const {
+        bool currentIsWhiteSpace() const {
             return str[pos] == ' ' || str[pos] == '\t' || str[pos] == '\n' || str[pos] == '\r' || str[pos] == '\f' || str[pos] == '\v';
         }
 
@@ -3270,7 +3268,7 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
         return end != token.c_str();
     };
 
-    auto readBool = [&](ep_bool* dst) {
+    auto readBool = [&](bool* dst) {
         ep_f64 num;
         if (!readNumber(&num)) return false;
         *dst = num == 1.0;
@@ -3299,14 +3297,14 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
         struct Note {
             ep_i64 lineIndex;
             PhiNote note;
-            ep_bool isAbove;
+            bool isAbove;
             ep_f64 speed = 1.0, size = 1.0, positionX;
         };
 
         struct Event {
             Vec2 timeZone;
             ep_f64 value;
-            ep_bool useFront = false;
+            bool useFront = false;
             ep_u64 easingType = 1;
         };
     };
@@ -3338,7 +3336,7 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
             } else endTime = startTime;
 
             ep_f64 positionX;
-            ep_bool isAbove, isFake;
+            bool isAbove, isFake;
 
             if (!readNumber(&positionX)) CHART_LOAD_FAILED("pec", "failed to read positionX (nx)");
             if (!readBool(&isAbove)) CHART_LOAD_FAILED("pec", "failed to read isAbove (nx)");
@@ -3728,9 +3726,9 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
         if (!parseTimeTupleToSecond(effectNode["start"], &startTime)) return "start is not a valid time tuple";
         if (!parseTimeTupleToSecond(effectNode["end"], &endTime)) return "end is not a valid time tuple";
 
-        ep_bool isGlobal = false;
+        bool isGlobal = false;
         if (effectNode.hasKey("global")) {
-            if (!effectNode["global"].isBool()) return "global is not a ep_bool";
+            if (!effectNode["global"].isBool()) return "global is not a bool";
             isGlobal = effectNode["global"].getBool();
         }
 
@@ -7079,7 +7077,7 @@ struct PhiCalculatedFrame {
         ep_f64 rotation;
         ep_f64 width, head, body, tail;
         EnumPhiNoteType type;
-        ep_bool isSimul;
+        bool isSimul;
         Color color;
     };
 
@@ -7186,13 +7184,13 @@ struct PhiCalculatedFrame {
 
         struct NoteTextureDataReaderConfig {
             EnumPhiNoteType type;
-            ep_bool isSimul;
+            bool isSimul;
         };
         struct NoteTextureDataReaderResult {
             Data encoded;
             Vec2 cutPadding;
-            ep_bool cutPaddingIsPixel;
-            ep_bool ignoreCutPadding;
+            bool cutPaddingIsPixel;
+            bool ignoreCutPadding;
         };
         using NoteTextureDataReader = std::function<NoteTextureDataReaderResult(const NoteTextureDataReaderConfig&)>;
         NoteTextureDataReader noteTextureDataReader;
@@ -7212,7 +7210,7 @@ struct PhiCalculatedFrame {
         ep_sp<GL::GL33Context> glCtx;
 
         void check() {
-            auto checkBool = [](ep_bool cond, const std::string& err) {
+            auto checkBool = [](bool cond, const std::string& err) {
                 if (!cond) {
                     throw std::runtime_error(err);
                 }
@@ -7569,7 +7567,7 @@ void calculatePhiFrame(
 
     frame.frameTimeRange = { frame.frameTimeRange.y, time };
 
-    auto calcCoveredOrContainRect = [](const Rect& dst, const Vec2& size, ep_bool isCovered) {
+    auto calcCoveredOrContainRect = [](const Rect& dst, const Vec2& size, bool isCovered) {
         ep_f64 dst_ratio = dst.w / dst.h;
         ep_f64 src_ratio = size.x / size.y;
 
@@ -7643,7 +7641,7 @@ void calculatePhiFrame(
         }
     };
 
-    auto getNoteTextureSizeInfo = [&](EnumPhiNoteType type, ep_bool isSimul, ep_bool hideHead) {
+    auto getNoteTextureSizeInfo = [&](EnumPhiNoteType type, bool isSimul, bool hideHead) {
         const auto& texInfo = (
             isSimul
             ? config.noteTextureInfos.at(type).simul
@@ -7806,7 +7804,7 @@ void calculatePhiFrame(
 
                 // 只 hide 不用考虑 maxHalfNoteHeadDiagonal, 但是这里 break 优化也要用
                 auto extendedSafeArea = safeArea.extend(maxHalfNoteHeadDiagonal);
-                ep_bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, extendedSafeArea);
+                bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, extendedSafeArea);
 
                 if (noteInsideScreen) {
                     if (frameInfo.isVisible) {
@@ -7900,7 +7898,7 @@ void calculatePhiFrame(
         }
     }
 
-    auto calculateExtra = [&](ep_bool isGlobal) {
+    auto calculateExtra = [&](bool isGlobal) {
         for (auto& effectIndex : chart.extra.zOrderSortedEffects) {
             auto& effect = chart.extra.effects[effectIndex];
             if (effect.isGlobal != isGlobal) continue;
