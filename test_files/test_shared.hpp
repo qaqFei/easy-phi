@@ -33,85 +33,12 @@ extern "C" {
 using namespace easy_phi::GL;
 using easy_phi::ep_sp;
 
-#define WAV_HEADER_SIZE 44
-
-uint8_t* pcm16ToWav(int16_t* pcm, uint64_t pcm_size, int16_t chn, int32_t rate) {
-    uint64_t wav_size = pcm_size + WAV_HEADER_SIZE;
-    auto* wav = (uint8_t*)malloc(wav_size);
-
-    *(char*)&wav[0] = 'R';
-    *(char*)&wav[1] = 'I';
-    *(char*)&wav[2] = 'F';
-    *(char*)&wav[3] = 'F';
-    *(int32_t*)&wav[4] = wav_size - 8;
-    *(char*)&wav[8] = 'W';
-    *(char*)&wav[9] = 'A';
-    *(char*)&wav[10] = 'V';
-    *(char*)&wav[11] = 'E';
-    
-    *(char*)&wav[12] = 'f';
-    *(char*)&wav[13] = 'm';
-    *(char*)&wav[14] = 't';
-    *(char*)&wav[15] = ' ';
-    *(int32_t*)&wav[16] = 0x10;
-    *(int16_t*)&wav[20] = 1; // PCM
-    *(int16_t*)&wav[22] = chn;
-    *(int32_t*)&wav[24] = rate;
-    *(int32_t*)&wav[28] = rate * chn * sizeof(int16_t);
-    *(int16_t*)&wav[32] = chn * sizeof(int16_t);
-    *(int16_t*)&wav[34] = 2 * 8;
-
-    *(char*)&wav[36] = 'd';
-    *(char*)&wav[37] = 'a';
-    *(char*)&wav[38] = 't';
-    *(char*)&wav[39] = 'a';
-    *(int32_t*)&wav[40] = pcm_size;
-    std::memcpy((void*)((uint8_t*)wav + WAV_HEADER_SIZE), pcm, pcm_size);
-
-    return wav;
-}
-
-bool oggToWav(easy_phi::Data& data) {
-    int chn, rate;
-    int16_t* pcm;
-    uint64_t frames = stb_vorbis_decode_memory(data.data.data(), data.data.size(), &chn, &rate, &pcm);
-    if (frames <= 0) return false;
-
-    uint32_t pcm_size = frames * chn * sizeof(int16_t);
-    auto* wav = pcm16ToWav(pcm, pcm_size, chn, rate);
-    free(pcm);
-    data.data = std::vector<uint8_t>(wav, wav + pcm_size + WAV_HEADER_SIZE);
-    return true;
-}
-
-bool dataIsStartsWith(const easy_phi::Data& data, const std::string& prefix) {
-    return data.data.size() >= prefix.size() && std::memcmp(data.data.data(), prefix.data(), prefix.size()) == 0;
-}
-
 double globalTimer() {
     return std::chrono::duration<double>(
         std::chrono::system_clock::now()
         .time_since_epoch()
     ).count();
 }
-
-uint64_t rotl64(uint64_t x, uint64_t n) {
-    return (x << n) | (x >> (64 - n));
-}
-
-struct Pcm16 {
-    std::vector<int16_t> pcm;
-    uint16_t channels;
-    uint32_t sampleRate;
-
-    uint64_t GetPcmByteSize() {
-        return pcm.size() * sizeof(int16_t);
-    }
-
-    uint64_t GetPcmSampleSize() {
-        return pcm.size();
-    }
-};
 
 #define PCM_FIXED_SAMPLE_RATE 44100
 #define PCM_FIXED_CHANNELS 2
