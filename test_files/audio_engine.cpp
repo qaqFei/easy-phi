@@ -15,11 +15,11 @@ int main() {
     auto engine = makeAudioEngineMiniaudio();
     std::cout << "engine: " << engine.get() << std::endl;
 
-    engine->createTask(decoded);
-    std::cout << "task created" << std::endl;
+    auto task = engine->createTask(decoded);
+    std::cout << "task created: " << task.get() << std::endl;
 
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    while (!engine->getTaskEnded(task)) {
+        std::cout << "time: " << engine->getTaskTime(task) << std::endl;
     }
 
     return 0;

@@ -4154,7 +4154,7 @@ using aligned_vector = std::vector<T, AlignedAllocator<T, Alignment>>;
 
 ep_f64 globalTimer() {
     return std::chrono::duration<ep_f64>(
-        std::chrono::system_clock::now()
+        std::chrono::steady_clock::now()
         .time_since_epoch()
     ).count();
 }
@@ -6966,6 +6966,7 @@ struct AudioEngine {
 
     void* audioContext;
     std::function<void(void*)> audioContextDestructor;
+    std::function<ep_f64(void*)> audioContextTimer;
 
     ep_u64 channels;
     ep_u64 sampleRate;
@@ -6982,6 +6983,7 @@ struct AudioEngine {
     };
 
     ep_i64 currentOffset;
+    ep_f64 currentOffsetTime;
     std::list<ep_sp<Task>> tasks;
     ep_f64 volume = 1.0;
 
@@ -7000,14 +7002,20 @@ struct AudioEngine {
         return task;
     }
 
+    ep_f64 getTaskTime(const ep_sp<Task>& task) const {
+        return (ep_f64)(currentOffset - task->offset) / sampleRate + (globalTimer() - currentOffsetTime);
+    }
+
+    bool getTaskEnded(const ep_sp<Task>& task) const {
+        return task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset;
+    }
+
     void callback(ep_i16* buffer, ep_i64 frameCount) {
         std::lock_guard<std::mutex> guard(mtx);
 
         memset(buffer, 0, frameCount * channels * sizeof(ep_i16));
 
-        tasks.remove_if([&](const auto& task) {
-            return task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset;
-        });
+        tasks.remove_if([&](const auto& task) { return getTaskEnded(task); });
 
         for (const auto& task : tasks) {
             ep_i64 startSample = currentOffset - task->offset;
@@ -7033,6 +7041,7 @@ struct AudioEngine {
         }
 
         currentOffset += frameCount;
+        currentOffsetTime = globalTimer();
     }
 
     ~AudioEngine() {
