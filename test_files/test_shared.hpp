@@ -1,12 +1,11 @@
 #define EASY_PHI_TEXT_RENDERER
 #define EASY_PHI_IMAGE_DECODER
+#define EASY_PHI_MINIAUDIO_AUDIO_ENGINE
 #include <easy_phi.hpp>
 
-#include <miniaudio/miniaudio.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
-#include <stb/stb_vorbis.c>
 extern "C" {
     #include <libavcodec/avcodec.h>
     #include <libavformat/avformat.h>
@@ -89,52 +88,6 @@ bool dataIsStartsWith(const easy_phi::Data& data, const std::string& prefix) {
     return data.data.size() >= prefix.size() && std::memcmp(data.data.data(), prefix.data(), prefix.size()) == 0;
 }
 
-struct sound_ex {
-    ma_sound sound;
-    ma_decoder decoder;
-    uint64_t encoded_size;
-};
-
-ma_sound* loadMaSoundFromMemory(ma_engine* engine, easy_phi::Data& data) {
-    if (dataIsStartsWith(data, "OggS")) {
-        if (!oggToWav(data)) return nullptr;
-    }
-
-    auto* ex = (sound_ex*)malloc(sizeof(sound_ex) + data.data.size());
-    ex->encoded_size = data.data.size();
-    memcpy(ex + 1, data.data.data(), data.data.size());
-    if (ma_decoder_init_memory((void*)(ex + 1), data.data.size(), NULL, &ex->decoder) != MA_SUCCESS) {
-        free(ex);
-        return nullptr;
-    }
-    if (ma_sound_init_from_data_source(engine, &ex->decoder, 0, NULL, &ex->sound) != MA_SUCCESS) {
-        ma_decoder_uninit(&ex->decoder);
-        free(ex);
-        return nullptr;
-    }
-
-    return (ma_sound*)ex;
-}
-
-ma_uint32 getMaSoundSampleRate(ma_sound* snd) {
-    ma_uint32 sr = 0;
-    ma_data_source *pSrc = ma_sound_get_data_source(snd);
-    ma_data_source_get_data_format(pSrc, nullptr, nullptr, &sr, nullptr, 0);
-    return sr;
-}
-
-double getMaSoundPosition(ma_sound* snd) {
-    ma_uint64 cframes = 0;
-    ma_sound_get_cursor_in_pcm_frames(snd, &cframes);
-    return (double)cframes / getMaSoundSampleRate(snd);
-}
-
-double getMaSoundDuration(ma_sound* snd) {
-    ma_uint64 frames = 0;
-    ma_sound_get_length_in_pcm_frames(snd, &frames);
-    return (double)frames / getMaSoundSampleRate(snd);
-}
-
 double globalTimer() {
     return std::chrono::duration<double>(
         std::chrono::system_clock::now()
@@ -144,26 +97,6 @@ double globalTimer() {
 
 uint64_t rotl64(uint64_t x, uint64_t n) {
     return (x << n) | (x >> (64 - n));
-}
-
-static const int hitsoundsBufferSize = 3;
-
-using NoteHitsoundsType = std::unordered_map<easy_phi::EnumPhiNoteType, std::vector<ma_sound*>>;
-NoteHitsoundsType loadNoteHitsounds(ma_engine& eng) {
-    NoteHitsoundsType noteHitsounds;
-    for (const auto& [ type, name ] : std::vector<std::pair<easy_phi::EnumPhiNoteType, std::string>> {
-        { easy_phi::EnumPhiNoteType::Tap, "click" },
-        { easy_phi::EnumPhiNoteType::Drag, "drag" },
-        { easy_phi::EnumPhiNoteType::Flick, "flick" },
-        { easy_phi::EnumPhiNoteType::Hold, "click" },
-    }) {
-        auto data = StaticResource::get(std::string("/") + name + ".wav");
-        for (int i = 0; i < hitsoundsBufferSize; i++) {
-            noteHitsounds[type].push_back(loadMaSoundFromMemory(&eng, data));
-        }
-    }
-
-    return noteHitsounds;
 }
 
 struct Pcm16 {
@@ -182,54 +115,6 @@ struct Pcm16 {
 
 #define PCM_FIXED_SAMPLE_RATE 44100
 #define PCM_FIXED_CHANNELS 2
-
-std::pair<Pcm16, bool> decodePcm16FromMaSound(ma_sound* snd) {
-    auto* ex = (sound_ex*)snd;
-    ma_decoder decoder{};
-    ma_decoder_config decoderCfg{};
-    decoderCfg.format = ma_format_s16;
-    decoderCfg.channels = PCM_FIXED_CHANNELS;
-    decoderCfg.sampleRate = PCM_FIXED_SAMPLE_RATE;
-
-    if (ma_decoder_init_memory((void*)(ex + 1), ex->encoded_size, &decoderCfg, &decoder) != MA_SUCCESS) {
-        return { {}, false };
-    }
-
-    uint32_t channels = decoder.outputChannels;
-    uint32_t sampleRate = decoder.outputSampleRate;
-    ma_uint64 totalFrames = 0;
-    if (ma_data_source_get_length_in_pcm_frames(&decoder, &totalFrames) != MA_SUCCESS) {
-        ma_decoder_uninit(&decoder);
-        return { {}, false };
-    }
-
-    if (channels != PCM_FIXED_CHANNELS) {
-        std::cerr << "pcm channels mismatch\n";
-        ma_decoder_uninit(&decoder);
-        return { {}, false };
-    }
-
-    if (sampleRate != PCM_FIXED_SAMPLE_RATE) {
-        std::cerr << "pcm sample rate mismatch\n";
-        ma_decoder_uninit(&decoder);
-        return { {}, false };
-    }
-
-    Pcm16 pcm {};
-    pcm.pcm = std::vector<int16_t>(totalFrames * channels);
-    pcm.channels = channels;
-    pcm.sampleRate = sampleRate;
-
-    ma_uint64 framesDecoded = 0;
-    if (ma_decoder_read_pcm_frames(&decoder, pcm.pcm.data(), totalFrames, &framesDecoded) != MA_SUCCESS) {
-        ma_decoder_uninit(&decoder);
-        return { {}, false };
-    }
-
-    ma_decoder_uninit(&decoder);
-
-    return { pcm, true };
-}
 
 void interleave_uv_16(uint8_t* dst, uint8_t* u, uint8_t* v) {
     __m128i u16 = _mm_loadu_si128((const __m128i*)u);
@@ -468,24 +353,24 @@ struct VideoCap {
         av_packet_free(&packet);
     }
 
-    bool writeAudio(const Pcm16& pcm) {
+    bool writeAudio(const ep_sp<easy_phi::DecodedAudio>& audio) {
         if (wroteAudio) return false;
-        if ((int)pcm.sampleRate != aCodecCtx->sample_rate || (int)pcm.channels != aCodecCtx->ch_layout.nb_channels) return false;
+        if ((int)audio->sampleRate != aCodecCtx->sample_rate || (int)audio->channels != aCodecCtx->ch_layout.nb_channels) return false;
 
         const int frameSize = aCodecCtx->frame_size;
-        for (uint64_t offset = 0; offset + frameSize * pcm.channels <= pcm.pcm.size(); offset += frameSize * pcm.channels) {
+        for (uint64_t offset = 0; offset + frameSize * audio->channels <= audio->data.size(); offset += frameSize * audio->channels) {
             AVFrame* f = av_frame_alloc();
             f->format = aCodecCtx->sample_fmt;
             f->ch_layout = aCodecCtx->ch_layout;
             f->sample_rate = aCodecCtx->sample_rate;
             f->nb_samples = frameSize;
-            f->data[0] = (uint8_t*)(pcm.pcm.data() + offset);
+            f->data[0] = (uint8_t*)(audio->data.data() + offset);
             f->pts = aFramePts;
             aFramePts += frameSize;
 
             avcodec_send_frame(aCodecCtx, f);
 
-            if (offset + frameSize * pcm.channels > pcm.pcm.size()) {
+            if (offset + frameSize * audio->channels > audio->data.size()) {
                 avcodec_send_frame(aCodecCtx, nullptr);
             }
 
@@ -701,20 +586,38 @@ struct TelemetryDeckClient {
                 BaseInfo info;
 
                 {
+                    auto cpuid_gcc = [](int info[4], int func_id) {
+                        unsigned int eax, ebx, ecx, edx;
+                        __get_cpuid(func_id, &eax, &ebx, &ecx, &edx);
+                        info[0] = (int)eax;
+                        info[1] = (int)ebx;
+                        info[2] = (int)ecx;
+                        info[3] = (int)edx;
+                    };
+
+                    auto cpuid_gcc_ext = [](int info[4], unsigned int func_id) {
+                        unsigned int eax, ebx, ecx, edx;
+                        __get_cpuid(func_id, &eax, &ebx, &ecx, &edx);
+                        info[0] = (int)eax;
+                        info[1] = (int)ebx;
+                        info[2] = (int)ecx;
+                        info[3] = (int)edx;
+                    };
+
                     int cpuInfo[4] = {};
                     char vendor[13] = {};
-                    __cpuid(cpuInfo, 0);
-                    *(int*)&vendor[0] = cpuInfo[1];
-                    *(int*)&vendor[4] = cpuInfo[3];
-                    *(int*)&vendor[8] = cpuInfo[2];
+                    cpuid_gcc(cpuInfo, 0);
+                    *(int*)&vendor[0] = cpuInfo[1];   // ebx
+                    *(int*)&vendor[4] = cpuInfo[3];  // edx
+                    *(int*)&vendor[8] = cpuInfo[2];  // ecx
                     info.cpuInfo.vendor = vendor;
 
-                    __cpuid(cpuInfo, 0x80000000);
+                    cpuid_gcc_ext(cpuInfo, 0x80000000);
                     if ((unsigned)cpuInfo[0] >= 0x80000004) {
                         char brand[49] = {};
                         char* p = brand;
-                        for (uint64_t i = 0x80000002; i <= 0x80000004; ++i) {
-                            __cpuid(cpuInfo, i);
+                        for (unsigned int i = 0x80000002; i <= 0x80000004; ++i) {
+                            cpuid_gcc_ext(cpuInfo, i);
                             memcpy(p, cpuInfo, 16);
                             p += 16;
                         }
@@ -847,12 +750,8 @@ struct TelemetryDeckClient {
 
 struct Window {
     GLFWwindow* window;
-    ma_engine maeng;
     easy_phi::PhiCalculateFrameConfig calculateFrameConfig;
-    ma_sound* mainSound;
     easy_phi::TextRenderer textRenderer;
-    std::vector<ma_sound*> playingHitsounds;
-    NoteHitsoundsType noteHitsounds;
     double globalScale;
     easy_phi::PhiCalculatedFrame calculatedFrame;
     easy_phi::PhiChart chart;
@@ -892,9 +791,6 @@ struct Window {
         glCtx = GL33Context::Make(MakeGL33CoreInterface(
             [](const char* name) { return (void*)glfwGetProcAddress(name); }
         ));
-
-        ma_engine_init(NULL, &maeng);
-        noteHitsounds = loadNoteHitsounds(maeng);
 
         globalScale = 1.0;
         frameBusyWaitPercentage = 0.8;
@@ -942,6 +838,20 @@ struct Window {
             return result;
         };
 
+        renderer->audioDecoder = easy_phi::decodeAudioMiniaudio;
+
+        renderer->hitsoundDataReader = [this](easy_phi::EnumPhiNoteType type) -> easy_phi::Data {
+            std::unordered_map<easy_phi::EnumPhiNoteType, std::string> nameMap = {
+                { easy_phi::EnumPhiNoteType::Tap, "click" },
+                { easy_phi::EnumPhiNoteType::Drag, "drag" },
+                { easy_phi::EnumPhiNoteType::Flick, "flick" },
+                { easy_phi::EnumPhiNoteType::Hold, "click" }
+            };
+
+            auto name = nameMap.at(type);
+            return StaticResource::get(std::string("/") + name + ".wav");
+        };
+
         renderer->storyboardDataReader = [this](const std::string& name) -> easy_phi::Data {
             auto path = easy_phi::PhiStoryboardHelpers::textureNameToPath(chartDir, name);
             easy_phi::Data data;
@@ -970,31 +880,8 @@ struct Window {
             return shaderText.toString();
         };
 
-        renderer->hitsoundPlayer = [this](easy_phi::EnumPhiNoteType type) {
-            playingHitsounds.erase(
-                std::remove_if(
-                    playingHitsounds.begin(), playingHitsounds.end(),
-                    [](ma_sound* sound) {
-                        return !ma_sound_is_playing(sound);
-                    }
-                ), playingHitsounds.end()
-            );
-
-            while (playingHitsounds.size() >= hitsoundsBufferSize) {
-                ma_sound_stop(playingHitsounds.front());
-                playingHitsounds.erase(playingHitsounds.begin());
-            }
-
-            for (auto* sound : noteHitsounds[type]) {
-                if (std::find(playingHitsounds.begin(), playingHitsounds.end(), sound) == playingHitsounds.end()) {
-                    ma_sound_start(sound);
-                    ma_sound_seek_to_pcm_frame(sound, 0);
-                    playingHitsounds.push_back(sound);
-                }
-            }
-        };
-
         renderer->glCtx = glCtx;
+        renderer->audioEngine = easy_phi::makeAudioEngineMiniaudio();
         renderer->check();
 
         renderer->loadResources(calculateFrameConfig);
@@ -1017,18 +904,13 @@ struct Window {
     std::optional<std::string> loadMainSound(const std::string& path) {
         easy_phi::Data data;
         if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
-        mainSound = loadMaSoundFromMemory(&maeng, data);
-        if (!mainSound) return "failed to load";
-        calculateFrameConfig.songLength = getMaSoundDuration(mainSound);
+        try { renderer->loadAudio(data, calculateFrameConfig); }
+        catch (const std::exception& e) { return e.what(); }
         return std::nullopt;
     }
 
     void startMainSound() {
-        ma_sound_seek_to_pcm_frame(mainSound, 0);
-        ma_sound_start(mainSound);
-        while (!ma_sound_is_playing(mainSound)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
-        }
+        renderer->startBgm();
     }
 
     std::optional<std::string> loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
@@ -1138,50 +1020,6 @@ struct Window {
         std::cout << std::string(80, '.') << std::endl;
 
         return true;
-    }
-
-    struct RenderHitSoundsConfig {
-        double musicVol, sfxVol;
-        bool sfxRandshake;
-    };
-
-    std::optional<std::wstring> renderHitsounds(Pcm16& dst, const RenderHitSoundsConfig& config) {
-        std::unordered_map<easy_phi::EnumPhiNoteType, Pcm16> noteHitsoundsPcm;
-
-        for (auto& [type, sound] : noteHitsounds) {
-            auto pcm = decodePcm16FromMaSound(sound[0]);
-            if (!pcm.second) return L"解码打击音效失败";
-            noteHitsoundsPcm[type] = std::move(pcm.first);
-        }
-
-        for (auto& v : dst.pcm) {
-            v = std::clamp<int32_t>((int32_t)v * config.musicVol, -32768, 32767);
-        }
-
-        std::mt19937 rng { std::random_device {} () };
-        std::uniform_real_distribution<double> sfxRandshakeDist { 0.0, 0.02 };
-
-        for (auto& line : chart.lines) {
-            for (auto& note : line.notes) {
-                if (note.isFake) continue;
-
-                double t = note.time + chart.meta.offset;
-                if (config.sfxRandshake) t += sfxRandshakeDist(rng);
-                int64_t start = std::max<int64_t>(0, (int64_t)(t * PCM_FIXED_SAMPLE_RATE) * PCM_FIXED_CHANNELS);
-                if (start >= (int64_t)dst.pcm.size()) continue;
-
-                auto& hitsoundPcm = noteHitsoundsPcm[note.type];
-                int64_t end = std::min<int64_t>(dst.pcm.size(), start + hitsoundPcm.pcm.size());
-
-                for (int64_t i = start; i < end; i += PCM_FIXED_CHANNELS) {
-                    for (int64_t j = 0; j < PCM_FIXED_CHANNELS; j++) {
-                        dst.pcm[i + j] = (int16_t)std::clamp<int32_t>((int32_t)dst.pcm[i + j] + (int32_t)hitsoundPcm.pcm[i + j - start] * config.sfxVol, -32768, 32767);
-                    }
-                }
-            }
-        }
-
-        return std::nullopt;
     }
 
     private:

@@ -16,11 +16,6 @@ with open("./dev.flag", "w"):
 debug = "--debug" in sys.argv
 source = "test.cpp" if "--source" not in sys.argv else sys.argv[sys.argv.index("--source") + 1]
 libraries = {
-    "miniaudio": [
-        "-I./test_files/externals/miniaudio/include",
-        "./test_files/externals/miniaudio/lib/miniaudio.o",
-    ],
-    
     "glfw3": [
         "-I./test_files/externals/glfw3/include",
         "-L./test_files/externals/glfw3/lib",
@@ -38,10 +33,6 @@ libraries = {
         "-L./test_files/externals/ffmpeg/lib",
         "-lavformat", "-lavcodec", "-lavutil",
         "-lx264", "-lfdk-aac", "-lmfx",
-    ],
-    
-    "stb": [
-        "-I./test_files/externals/stb/include",
     ],
     
     "cpr": [

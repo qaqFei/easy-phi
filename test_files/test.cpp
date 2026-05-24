@@ -102,8 +102,8 @@ int main(int argc, char** argv) {
     window.loadMainSound(audioPath);
     window.startMainSound();
 
-    while (ma_sound_is_playing(window.mainSound)) {
-        double t = getMaSoundPosition(window.mainSound);
+    while (!window.renderer->getBpmIsEnded()) {
+        double t = window.renderer->getBgmTime();
 
         if (!window.mainloopFrame(t, {})) {
             break;

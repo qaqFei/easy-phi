@@ -1,5 +1,4 @@
 #define EASY_PHI_MINIAUDIO_AUDIO_ENGINE
-#define EASY_PHI_MINIAUDIO_AUDIO_ENGINE_NO_MINIAUDIO_IMPL
 #include <easy_phi.hpp>
 
 #include "./resources/inlined_resources.cpp"
@@ -7,7 +6,7 @@
 using namespace easy_phi;
 
 int main() {
-    auto data = StaticResource::get("/test.mp3");
+    auto data = StaticResource::get("/test.ogg");
 
     auto decoded = decodeAudioMiniaudio(data);
     std::cout << "decoded audio: " << decoded.get() << std::endl;

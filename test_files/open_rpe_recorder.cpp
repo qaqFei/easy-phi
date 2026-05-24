@@ -558,20 +558,16 @@ int main() {
         backendWin.setVSync(true);
         backendWin.startMainSound();
 
-        ma_sound_set_volume(backendWin.mainSound, settings.musicVol);
-        for (auto& [_, sfxs] : backendWin.noteHitsounds) {
-            for (auto& sfx : sfxs) {
-                ma_sound_set_volume(sfx, settings.sfxVol);
-            }
-        }
+        backendWin.renderer->setBgmVolume(settings.musicVol);
+        backendWin.renderer->setSfxVolume(settings.sfxVol);
 
-        while (ma_sound_is_playing(backendWin.mainSound)) {
-            double t = getMaSoundPosition(backendWin.mainSound);
+        while (!backendWin.renderer->getBpmIsEnded()) {
+            double t = backendWin.renderer->getBgmTime();
 
             if (!backendWin.mainloopFrame(t, {
                 .pccfi = &performanceInfo.frames.emplace_back()
             })) {
-                ma_sound_stop(backendWin.mainSound);
+                backendWin.renderer->stopBgm();
                 break;
             }
         }
@@ -652,28 +648,17 @@ int main() {
 
         double renderSt = globalTimer();
 
-        pd.setLine(1, L"解码音频...");
-        auto pcm = decodePcm16FromMaSound(backendWin.mainSound);
-        if (!pcm.second) {
-            showErrorMsg(win.get(), L"无法解码音频");
-            return;
-        }
-
         pd.setLine(1, L"渲染音频...");
-        auto renderHitsoundsResult = backendWin.renderHitsounds(pcm.first, {
+        auto mixedAudio = backendWin.renderer->mixFinalBgm(backendWin.chart, {
             .musicVol = settings.musicVol,
             .sfxVol = settings.sfxVol,
             .sfxRandshake = settings.recordSfxRandshake
         });
-        if (renderHitsoundsResult.has_value()) {
-            std::wstring msg = L"渲染打击音效失败: ";
-            msg += renderHitsoundsResult.value();
-            showErrorMsg(win.get(), msg.c_str());
-            return;
-        }
+
+        mixedAudio->resample(PCM_FIXED_CHANNELS, PCM_FIXED_SAMPLE_RATE);
         
         pd.setLine(1, L"写入音频...");
-        cap.writeAudio(pcm.first);
+        cap.writeAudio(mixedAudio);
 
         pd.setLine(1, L"渲染视频...");
         uint64_t frameCut = 0;

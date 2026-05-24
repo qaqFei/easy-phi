@@ -24,9 +24,8 @@
 #include <thread>
 #include <map>
 #include <cstring>
-#include <intrin.h>
+#include <cpuid.h>
 #include <cstdlib>
-#include <malloc.h>
 #include <list>
 
 namespace easy_phi {
@@ -51,9 +50,11 @@ ep_u64 reqGlobalCounter() {
 }
 
 bool cpuHasSSE2() {
-    int cpuInfo[4];
-    __cpuid(cpuInfo, 1);
-    return (cpuInfo[3] & (1 << 26)) != 0;
+    unsigned int eax, ebx, ecx, edx;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+        return false;
+    }
+    return (edx & (1u << 26)) != 0;
 }
 
 bool ptrIsAligned16(void* ptr) {
@@ -157,6 +158,26 @@ struct Data {
         HashBucket bucket;
         for (ep_u8 byte : data) bucket.submitNumber(byte);
         return bucket.getHash();
+    }
+
+    bool isStartsWith(const Data& other) const {
+        if (data.size() < other.data.size()) return false;
+        return std::memcmp(data.data(), other.data.data(), other.data.size()) == 0;
+    }
+
+    bool isEndsWith(const Data& other) const {
+        if (data.size() < other.data.size()) return false;
+        return std::memcmp(data.data() + data.size() - other.data.size(), other.data.data(), other.data.size()) == 0;
+    }
+
+    bool isStartsWith(const std::string& other) const {
+        if (data.size() < other.size()) return false;
+        return std::memcmp(data.data(), other.data(), other.size()) == 0;
+    }
+
+    bool isEndsWith(const std::string& other) const {
+        if (data.size() < other.size()) return false;
+        return std::memcmp(data.data() + data.size() - other.size(), other.data(), other.size()) == 0;
     }
 };
 
@@ -6919,6 +6940,88 @@ void main() {
     };
 };
 
+enum class ByteEndian {
+    Native,
+    Little,
+    Big
+};
+
+template<ByteEndian E>
+struct ByteWriter {
+    std::vector<ep_u8> data;
+
+    static ep_sp<ByteWriter<E>> Make() {
+        auto* writer = new ByteWriter<E>();
+        return ep_sp<ByteWriter<E>>(writer);
+    }
+
+    void writeBytes(const Data& data) {
+        this->data.insert(this->data.end(), data.data.begin(), data.data.end());
+    }
+
+    void writeBytes(const ep_u8* data, ep_u64 size) {
+        this->data.insert(this->data.end(), data, data + size);
+    }
+
+    void writeBytes(const std::string& data) {
+        writeBytes((const ep_u8*)data.data(), data.size());
+    }
+
+    void writeBytes(const std::vector<ep_u8>& data) {
+        writeBytes(data.data(), data.size());
+    }
+
+    template<typename T>
+    static T byte_swap(T val) {
+        if constexpr (sizeof(T) == 1) return val;
+        else if constexpr (sizeof(T) == 2) {
+            ep_u16 ret;
+            memcpy(&ret, &val, sizeof(T));
+            ret = __builtin_bswap16(ret);
+            memcpy(&val, &ret, sizeof(T));
+            return val;
+        } else if constexpr (sizeof(T) == 4) {
+            ep_u32 ret;
+            memcpy(&ret, &val, sizeof(T));
+            ret = __builtin_bswap32(ret);
+            memcpy(&val, &ret, sizeof(T));
+            return val;
+        } else if constexpr (sizeof(T) == 8) {
+            ep_u64 ret;
+            memcpy(&ret, &val, sizeof(T));
+            ret = __builtin_bswap64(ret);
+            memcpy(&val, &ret, sizeof(T));
+            return val;
+        } else {
+            static_assert(!sizeof(T), "Unsupported size");
+            return val;
+        }
+    }
+
+    template<typename T>
+    static T from_native(T val) {
+        if constexpr (E == ByteEndian::Native) return val;
+        #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            else if constexpr (E == ByteEndian::Little) return val;
+            else return byte_swap(val);
+        #else
+            else if constexpr (E == ByteEndian::Big) return val;
+            else return byte_swap(val);
+        #endif
+    }
+
+    template<typename T>
+    void write(T value) {
+        static_assert(std::is_trivially_copyable_v<T>);
+        T write_val = from_native(value);
+        writeBytes((ep_u8*)&write_val, sizeof(T));
+    }
+
+    Data toData() const {
+        return { .data = data };
+    }
+};
+
 struct DecodedAudio {
     std::vector<ep_i16> data;
     ep_u64 channels;
@@ -6938,6 +7041,8 @@ struct DecodedAudio {
     }
 
     ep_i16 sampleAt(ep_f64 index, ep_u64 channel_index, ep_u64 channels) const {
+        index = std::clamp<ep_f64>(index, 0, getSampleCount() - 1);
+
         if (channels == this->channels) {
             ep_f64 v1 = data[ep_i64(index) * channels + channel_index];
             ep_f64 v2 = data[ep_i64(std::ceil(index)) * channels + channel_index];
@@ -6954,6 +7059,88 @@ struct DecodedAudio {
 
     ep_i16 sampleAt(ep_i64 index, ep_u64 channel_index, ep_u64 channels, ep_u64 sampleRate) const {
         return sampleAt((ep_f64)index / sampleRate * this->sampleRate, channel_index, channels);
+    }
+
+    ep_f64 getLengthInSeconds() const {
+        return (ep_f64)getSampleCount() / sampleRate;
+    }
+
+    ep_sp<DecodedAudio> copy() const {
+        auto audio = DecodedAudio::Make();
+        audio->data = data;
+        audio->channels = channels;
+        audio->sampleRate = sampleRate;
+        return audio;
+    }
+
+    void overlapIndex(const ep_sp<DecodedAudio>& other, ep_i64 start_index, ep_f64 volume = 1.0) {
+        ep_i64 end_index = start_index + other->getSampleCount(sampleRate);
+
+        if (start_index > (ep_i64)getSampleCount()) return;
+        if (end_index < 0) return;
+
+        start_index = std::max<ep_i64>(0, start_index);
+        end_index = std::min<ep_i64>(getSampleCount(), end_index);
+
+        for (ep_i64 i = start_index; i < end_index; i++) {
+            for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
+                ep_i64 k = i * channels + j;
+                data[k] = typed_clamp<ep_i16, ep_f64>((ep_f64)data[k] + other->sampleAt(i - start_index, j, channels, sampleRate) * volume);
+            }
+        }
+    }
+
+    void overlapSecond(const ep_sp<DecodedAudio>& other, ep_f64 start_time, ep_f64 volume = 1.0) {
+        overlapIndex(other, (ep_i64)(start_time * sampleRate), volume);
+    }
+
+    void applyVolume(ep_f64 volume) {
+        if (volume == 1.0) return;
+
+        for (ep_u64 i = 0; i < data.size(); i++) {
+            data[i] = typed_clamp<ep_i16, ep_f64>((ep_f64)data[i] * volume);
+        }
+    }
+
+    ep_u64 getSampleBytesSize() const {
+        return data.size() * sizeof(ep_i16);
+    }
+
+    Data toWav() const {
+        ByteWriter<ByteEndian::Little> writer;
+
+        writer.writeBytes("RIFF");
+        writer.write<ep_i32>(getSampleBytesSize() + 36);
+        writer.writeBytes("WAVEfmt ");
+        writer.write<ep_i32>(16);
+        writer.write<ep_i16>(1);
+        writer.write<ep_i16>(channels);
+        writer.write<ep_i32>(sampleRate);
+        writer.write<ep_i32>(sampleRate * channels * sizeof(ep_i16));
+        writer.write<ep_i16>(channels * sizeof(ep_i16));
+        writer.write<ep_i16>(16);
+        writer.writeBytes("data");
+        writer.write<ep_i32>(getSampleBytesSize());
+        for (ep_u64 i = 0; i < data.size(); i++) {
+            writer.write<ep_i16>(data[i]);
+        }
+        return writer.toData();
+    }
+
+    void resample(ep_u64 channels, ep_u64 sampleRate) {
+        std::vector<ep_i16> data;
+        ep_u64 sampleCount = getSampleCount(sampleRate);
+        data.resize(sampleCount * channels);
+
+        for (ep_u64 i = 0; i < sampleCount; i++) {
+            for (ep_u64 j = 0; j < channels; j++) {
+                data[i * channels + j] = sampleAt(i, j, channels, sampleRate);
+            }
+        }
+
+        this->data = data;
+        this->channels = channels;
+        this->sampleRate = sampleRate;
     }
 };
 
@@ -6975,6 +7162,7 @@ struct AudioEngine {
         ep_sp<DecodedAudio> audio;
         ep_i64 offset;
         ep_f64 volume = 1.0;
+        bool stopped;
 
         static ep_sp<Task> Make() {
             auto* task = new Task();
@@ -7007,7 +7195,7 @@ struct AudioEngine {
     }
 
     bool getTaskEnded(const ep_sp<Task>& task) const {
-        return task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset;
+        return (task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset) || task->stopped;
     }
 
     void callback(ep_i16* buffer, ep_i64 frameCount) {
@@ -7207,16 +7395,22 @@ struct PhiCalculatedFrame {
         using HitEffectDataReader = std::function<std::vector<Data>()>;
         HitEffectDataReader hitEffectDataReader;
 
+        using AudioDecoder = std::function<ep_sp<DecodedAudio>(const Data&)>;
+        AudioDecoder audioDecoder;
+
+        using HitsoundDataReader = std::function<Data(EnumPhiNoteType)>;
+        HitsoundDataReader hitsoundDataReader;
+
         using StoryboardDataReader = std::function<Data(const std::string&)>;
         StoryboardDataReader storyboardDataReader;
 
         using ShaderDataReader = std::function<std::string(const std::string&)>;
         ShaderDataReader shaderDataReader;
 
-        using HitsoundPlayer = std::function<void(EnumPhiNoteType)>;
-        HitsoundPlayer hitsoundPlayer;
-
         ep_sp<GL::GL33Context> glCtx;
+        ep_sp<AudioEngine> audioEngine;
+
+        ep_u64 maxSfxPlaying = 16;
 
         void check() {
             auto checkBool = [](bool cond, const std::string& err) {
@@ -7229,10 +7423,12 @@ struct PhiCalculatedFrame {
             checkBool(!!textRenderer, "textRenderer is not set");
             checkBool(!!noteTextureDataReader, "noteTextureDataReader is not set");
             checkBool(!!hitEffectDataReader, "hitEffectDataReader is not set");
+            checkBool(!!audioDecoder, "audioDecoder is not set");
+            checkBool(!!hitsoundDataReader, "hitsoundDataReader is not set");
             checkBool(!!storyboardDataReader, "storyboardDataReader is not set");
             checkBool(!!shaderDataReader, "shaderDataReader is not set");
-            checkBool(!!hitsoundPlayer, "hitsoundPlayer is not set");
             checkBool(!!glCtx, "glCtx is not set");
+            checkBool(!!audioEngine, "audioEngine is not set");
         }
 
         void loadIllustion(const Data& data, PhiCalculateFrameConfig& calcConfig) {
@@ -7240,6 +7436,12 @@ struct PhiCalculatedFrame {
             rawIllustionTexture = loadTextureFromDecoded(decoded);
             bluredIllustionCache.key = -1.0;
             calcConfig.backgroundTextureSize = { rawIllustionTexture->width, rawIllustionTexture->height };
+        }
+
+        void loadAudio(const Data& data, PhiCalculateFrameConfig& calcConfig) {
+            bgmAudio = audioDecoder(data);
+            if (!bgmAudio) throw std::runtime_error("audioDecoder failed");
+            calcConfig.songLength = bgmAudio->getLengthInSeconds();
         }
 
         void loadResources(PhiCalculateFrameConfig& calcConfig) {
@@ -7286,6 +7488,78 @@ struct PhiCalculatedFrame {
                 auto tex = loadTextureFromDecoded(decoded);
                 hitEffectTextures.push_back(tex);
             }
+
+            for (const auto type : {
+                EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
+                EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
+            }) {
+                auto data = hitsoundDataReader(type);
+                auto decoded = audioDecoder(data);
+                if (!decoded) throw std::runtime_error("audioDecoder failed");
+                hitsoundAudios[type] = decoded;
+            }
+        }
+
+        void startBgm() {
+            if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
+            if (bgmAudioTask) bgmAudioTask->stopped = true;
+            bgmAudioTask = audioEngine->createTask(bgmAudio);
+        }
+
+        ep_f64 getBgmTime() {
+            if (!bgmAudioTask) return 0.0;
+            return audioEngine->getTaskTime(bgmAudioTask);
+        }
+
+        bool getBpmIsEnded() {
+            if (!bgmAudioTask) return false;
+            return audioEngine->getTaskEnded(bgmAudioTask);
+        }
+
+        void stopBgm() {
+            if (!bgmAudioTask) return;
+            bgmAudioTask->stopped = true;
+            bgmAudioTask = nullptr;
+        }
+
+        void setBgmVolume(ep_f64 vol) {
+            bgmVolume = vol;
+            if (bgmAudioTask) {
+                bgmAudioTask->volume = bgmVolume;
+            }
+        }
+
+        void setSfxVolume(ep_f64 vol) {
+            sfxVolume = vol;
+        }
+
+        struct MixBgmConfig {
+            ep_f64 musicVol = 1.0, sfxVol = 1.0;
+            bool sfxRandshake = false;
+        };
+
+        ep_sp<DecodedAudio> mixFinalBgm(const PhiChart& chart, const MixBgmConfig& config) {
+            if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
+
+            auto result = bgmAudio->copy();
+            result->applyVolume(config.musicVol);
+            
+            std::mt19937 rng { std::random_device {} () };
+            std::uniform_real_distribution<double> sfxRandshakeDist { 0.0, 0.02 };
+
+            for (const auto& line : chart.lines) {
+                for (const auto& note : line.notes) {
+                    if (note.isFake) continue;
+
+                    ep_f64 t = note.time + chart.meta.offset;
+                    if (config.sfxRandshake) t += sfxRandshakeDist(rng);
+
+                    auto sfx = hitsoundAudios.at(note.type);
+                    result->overlapSecond(sfx, t, config.sfxVol);
+                }
+            }
+
+            return result;
         }
 
         using ChartIniter = std::function<void(PhiChart&)>;
@@ -7471,9 +7745,9 @@ struct PhiCalculatedFrame {
                 }
             }
 
-            if (!renderConfig.disableHitsound) {
-                for (auto& i : frame.hitsounds) {
-                    hitsoundPlayer(i.first);
+            if (!renderConfig.disableHitsound && maxSfxPlaying > 0) {
+                for (ep_u64 i = std::max<ep_i64>(0, frame.hitsounds.size() - maxSfxPlaying); i < frame.hitsounds.size(); ++i) {
+                    playSfx(hitsoundAudios.at(frame.hitsounds[i].first));
                 }
             }
         }
@@ -7481,8 +7755,13 @@ struct PhiCalculatedFrame {
         private:
         ep_sp<GL::TextureInfo> rawIllustionTexture;
         SKVCache<ep_f64, ep_sp<GL::TextureInfo>> bluredIllustionCache;
+        ep_sp<DecodedAudio> bgmAudio;
+        ep_sp<AudioEngine::Task> bgmAudioTask;
+        ep_f64 bgmVolume = 1.0, sfxVolume = 1.0;
+        std::vector<ep_sp<AudioEngine::Task>> playingSfxs;
         std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
         std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
+        std::unordered_map<EnumPhiNoteType, ep_sp<DecodedAudio>> hitsoundAudios;
         std::unordered_map<ep_u64, ep_sp<GL::TextureInfo>> storyboardTextures;
         ep_u64 maxTextTextures = 128;
         std::map<std::pair<std::string, ep_u64>, ep_sp<GL::TextureInfo>> cachedTextTextures;
@@ -7561,6 +7840,19 @@ struct PhiCalculatedFrame {
                 .texture = tex.get()
             });
             cvs.restore();
+        }
+
+        void playSfx(const ep_sp<DecodedAudio>& audio) {
+            if (!maxSfxPlaying) return;
+
+            while (playingSfxs.size() >= maxSfxPlaying) {
+                auto& task = playingSfxs.front();
+                task->stopped = true;
+                playingSfxs.erase(playingSfxs.begin());
+            }
+
+            auto task = audioEngine->createTask(audio);
+            task->volume = sfxVolume;
         }
     };
 };
@@ -8056,9 +8348,7 @@ void calculatePhiFrame(
 } // namespace easy_phi
 
 #ifdef EASY_PHI_TEXT_RENDERER
-#ifndef EASY_PHI_TEXT_RENDERER_NO_STB_TRUETYPE_IMPL
 #define STB_TRUETYPE_IMPLEMENTATION
-#endif // EASY_PHI_TEXT_RENDERER_NO_STB_TRUETYPE_IMPL
 #include "helpers/stb_truetype.h"
 namespace easy_phi {
     struct TextRenderer {
@@ -8167,9 +8457,7 @@ namespace easy_phi {
 #endif // EASY_PHI_TEXT_RENDERER
 
 #ifdef EASY_PHI_IMAGE_DECODER
-#ifndef EASY_PHI_IMAGE_DECODER_NO_STB_IMAGE_IMPL
 #define STB_IMAGE_IMPLEMENTATION
-#endif // EASY_PHI_IMAGE_DECODER_NO_STB_IMAGE_IMPL
 #include "helpers/stb_image.h"
 namespace easy_phi {
     DecodedRGBATexture decodeImage(const Data& data) {
@@ -8198,17 +8486,40 @@ namespace easy_phi {
 #endif // EASY_PHI_IMAGE_DECODER
 
 #ifdef EASY_PHI_MINIAUDIO_AUDIO_ENGINE
-#ifndef EASY_PHI_MINIAUDIO_AUDIO_ENGINE_NO_MINIAUDIO_IMPL
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
 #define MA_NO_ENGINE
 #define MA_NO_NODE_GRAPH
 #define MA_NO_RESOURCE_MANAGER
 #define MINIAUDIO_IMPLEMENTATION
-#endif // EASY_PHI_MINIAUDIO_AUDIO_ENGINE_NO_MINIAUDIO_IMPL
 #include "helpers/miniaudio.h"
+#include "helpers/stb_vorbis.c"
 namespace easy_phi {
     ep_sp<DecodedAudio> decodeAudioMiniaudio(const Data& data) {
+        if (data.isStartsWith("OggS")) {
+            int channels, sampleRate;
+            ep_i16* pcm;
+
+            ep_u64 frames = stb_vorbis_decode_memory(
+                data.data.data(),
+                data.data.size(),
+                &channels,
+                &sampleRate,
+                &pcm
+            );
+
+            if (frames <= 0) {
+                throw std::runtime_error("failed to decode audio");
+            }
+
+            auto decoded = DecodedAudio::Make();
+            decoded->channels = channels;
+            decoded->sampleRate = sampleRate;
+            decoded->data.insert(decoded->data.end(), pcm, pcm + frames * channels);
+            free(pcm);
+            return decoded;
+        }
+
         ma_decoder_config config = ma_decoder_config_init(ma_format_s16, 0, 0);
 
         ma_decoder decoder;
