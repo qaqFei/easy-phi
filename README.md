@@ -45,7 +45,7 @@ And the `Open RPE Recorder` is a subproject of this project, you can find it [he
 
 Just include the [`easy_phi.hpp`](./src/easy_phi.hpp) header file in your project and you're ready to go!
 
-If you want to use some extra features, you can define the following macros ([`helpers` module](./src/helpers/) is required):
+If you want to use some extra features, you can define the following macros ([`helpers`](./src/helpers/) module is required):
 
 - `EASY_PHI_TEXT_RENDERER`: Enable internal text renderer, using [`stb_truetype`](https://github.com/nothings/stb/blob/master/stb_truetype.h).
 
