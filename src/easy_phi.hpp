@@ -1273,6 +1273,10 @@ struct PhiObjectIndexer {
 };
 
 struct PhiNote {
+    /* !docs
+    A note of the phigros chart.
+    */
+
     PhiObjectIndexer indexer;
 
     struct State {
@@ -1288,6 +1292,10 @@ struct PhiNote {
         }
 
         bool onPlayHitsound() {
+            /* !docs
+            Check if the note should play hitsound.
+            */
+
             if (!playedHitsound) {
                 playedHitsound = true;
                 return true;
@@ -1303,9 +1311,9 @@ struct PhiNote {
 
     ep_u64 lineIndex;
     Vec2 floorPosition;
-    std::optional<ep_f64> fixedHoldSpeed;
+    std::optional<ep_f64> fixedHoldSpeed; // !inline-docs| The speed of the hold note when it is clicked.
     bool isSimul;
-    bool isReversedCover;
+    bool isReversedCover; // !inline-docs| Whether the note is reversed cover, used to below a note.
 
     State state;
 
@@ -1314,6 +1322,10 @@ struct PhiNote {
     }
 
     ep_f64 getFloorPositionAt(ep_f64 t, PhiAnimator& animator) {
+        /* !docs
+        Get the floor position of the note at a time.
+        */
+
         if (t > time && fixedHoldSpeed.has_value()) {
             return getFloorPositionAt(time, animator) + (t - time) * fixedHoldSpeed.value();
         }
@@ -1331,6 +1343,10 @@ struct PhiNote {
 };
 
 struct PhiNoteGroup {
+    /* !docs
+    A group of the phigros chart, used to do optimization.
+    */
+
     struct State {
         ep_f64 lastUpdateTime;
         ep_u64 firstNoteIndex;
@@ -1350,24 +1366,28 @@ struct PhiNoteGroup {
         }
     };
     
-    std::vector<ep_u64> indexs;
+    std::vector<ep_u64> indexs; // !inline-docs| The indexs of the notes in their line.
     bool breakable = true;
 
     State state;
 };
 
 struct PhiLine {
+    /* !docs
+    A line of the phigros chart.
+    */
+
     PhiObjectIndexer indexer;
 
     std::vector<PhiBPMEvent> bpms;
     std::vector<PhiNote> notes;
 
-    std::optional<ep_u64> fatherLineIndex;
+    std::optional<ep_u64> fatherLineIndex; // !inline-docs| The index of its father line.
     ep_f64 zOrder;
     bool enableCover;
-    Vec2 anchor = { 0.5, 0.5 };
+    Vec2 anchor = { 0.5, 0.5 }; // !inline-docs| The anchor of the line's texture.
 
-    std::optional<std::string> textureName;
+    std::optional<std::string> textureName; // !inline-docs| The name of the texture, used to load the texture.
     std::optional<EnumPhiLineAttachUI> attachUI;
 
     std::vector<PhiNoteGroup> noteGroups;
@@ -1454,6 +1474,10 @@ struct PhiLine {
     }
 
     ep_f64 getBpmAtSecond(ep_f64 t) {
+        /* !docs
+        Get the bpm at the given time.
+        */
+
         if (bpms.size() == 1) return bpms[0].bpm;
 
         for (ep_u64 i = 0; i < bpms.size(); i++) {
@@ -1478,6 +1502,10 @@ struct PhiLine {
 };
 
 struct PhiHitEffectItem {
+    /* !docs
+    A hit effect item of the phigros chart.
+    */
+
     static constexpr ep_u64 kParticleCount = 4;
 
     struct Particle {
@@ -1490,6 +1518,10 @@ struct PhiHitEffectItem {
 };
 
 struct PhiExtraEffectItem {
+    /* !docs
+    A extra effect item of the phigros chart.
+    */
+
     Vec2 timeZone;
     std::optional<ep_u64> targetLine;
     ep_u64 order;
@@ -1499,6 +1531,10 @@ struct PhiExtraEffectItem {
 };
 
 struct PhiExtra {
+    /* !docs
+    The extra of a phigros chart.
+    */
+
     std::vector<PhiExtraEffectItem> effects;
     std::vector<ep_u64> zOrderSortedEffects;
 
@@ -1518,6 +1554,10 @@ struct PhiExtra {
 };
 
 struct PhiShaderUniform {
+    /* !docs
+    A shader uniform of the phigros chart.
+    */
+
     ep_u8 used;
     ep_f64 value[4];
 
@@ -1544,6 +1584,10 @@ struct PhiShaderUniform {
 };
 
 struct PhiStoryboardAssets {
+    /* !docs
+    The assets of the storyboard of a phigros chart.
+    */
+
     // 用于区分是否到达了第一个
     static constexpr ep_f64 kTextIndexOffset = 1;
     static constexpr ep_f64 kColorIndexOffset = 1;
@@ -1661,6 +1705,10 @@ struct PhiStoryboardAssets {
 };
 
 struct PhiChart {
+    /* !docs
+    The phigros chart.
+    */
+
     struct State {
         ep_f64 lastUpdateTime;
         ep_u64 firstHitEffectIndex;
@@ -1689,6 +1737,10 @@ struct PhiChart {
 
         Color lineDefaultColor = { (ep_f64)0xff / 0xff, (ep_f64)0xec / 0xff, (ep_f64)0x9f / 0xff, 1.0 };
 
+        /* !docs
+        The color of the progress bar.
+        `.first` is the body color, `.second` is the head color.
+        */
         std::pair<Color, Color> progressBarDefaultColor = {
             { (ep_f64)145 / 255, (ep_f64)145 / 255, (ep_f64)145 / 255, 0.85 },
             { 1.0, 1.0, 1.0, 0.9 }
@@ -1701,7 +1753,7 @@ struct PhiChart {
             AboutHeight,
             Stretch
         };
-        EnumStoryboardTextureSclaingBehavior storyboardTextureSclaingBehavior = EnumStoryboardTextureSclaingBehavior::AboutWidth;
+        EnumStoryboardTextureSclaingBehavior storyboardTextureSclaingBehavior = EnumStoryboardTextureSclaingBehavior::AboutWidth; // !inline-docs| The behavior of the storyboard texture scaling.
         Vec2 storyboardTextureScaling = { 1.0, 1.0 };
 
         ep_f64 hitEffectDuration = 0.5;
@@ -1763,6 +1815,11 @@ struct PhiChart {
     }
 
     Vec2 getLinePositionRaw(ep_f64 t, PhiLine& line) {
+        /* !docs
+        Get the position of a line at a time.
+        The result is not scaled and not processed father line.
+        */
+
         return {
             animator.get(line, t, EnumPhiEventType::PositionX),
             animator.get(line, t, EnumPhiEventType::PositionY)
@@ -1770,6 +1827,11 @@ struct PhiChart {
     }
 
     Vec2 getLinePositionRelOrigin(ep_f64 t, PhiLine& line, const Vec2& screenSize) {
+        /* !docs
+        Get the position of a line at a time.
+        The result is not scaled but processed father line and it is origin relative.
+        */
+
         Vec2 pos = getLinePositionRaw(t, line);
         pos = pos / meta.worldViewport * screenSize;
 
@@ -1791,11 +1853,21 @@ struct PhiChart {
     }
 
     Vec2 getLinePosition(ep_f64 t, PhiLine& line, const Vec2& screenSize) {
+        /* !docs
+        Get the position of a line at a time.
+        The result is scaled and processed father line.
+        */
+
+
         Vec2 ori = getLinePositionRelOrigin(t, line, screenSize);
         return ori - meta.worldOrigin / meta.worldViewport * screenSize;
     }
 
     struct NoteFrameInfo {
+        /* !docs
+        Information of a note at a time.
+        */
+
         Vec2 headPosition, tailPosition;
         bool isArrived = false;
         bool isVisible = true;
@@ -1809,6 +1881,10 @@ struct PhiChart {
         PhiLine& line, PhiNote& note,
         ep_f64 time, const Vec2& screenSize
     ) {
+        /* !docs
+        Get the information of a note at a time.
+        */
+
         NoteFrameInfo info {};
 
         auto linePosition = getLinePosition(time, line, screenSize);
@@ -1864,6 +1940,10 @@ struct PhiChart {
     }
 
     ep_u64 getCombo(ep_f64 t) {
+        /* !docs
+        Get the combo at a time.
+        */
+
         if (comboTimes.empty() || comboTimes[0] > t) return 0;
 
         ep_u64 left = 0, right = comboTimes.size() - 1;
@@ -1954,6 +2034,10 @@ struct PhiChart {
 };
 
 std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
+    /* !docs
+    Convert a codepoint to a UTF-8 string.
+    */
+
     ep_u32 codepoint;
     
     if (n >= 0xD800 && n <= 0xDBFF) {
@@ -1993,6 +2077,10 @@ std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
 }
 
 std::string formatToStdString(const char* fmt, ...) {
+    /* !docs
+    Format a string with the same syntax as `printf`.
+    */
+
     va_list args;
 
     va_start(args, fmt);
@@ -2010,6 +2098,10 @@ std::string formatToStdString(const char* fmt, ...) {
 }
 
 struct JsonNode {
+    /* !docs
+    A JSON node.
+    */
+
     enum class EnumType {
         String, Number, Bool, Array, Object, Null
     };
@@ -2202,6 +2294,11 @@ struct JsonNode {
     };
 
     static std::pair<bool, std::string> Parse(JsonNode* dst, StringReader& reader) {
+        /* !docs
+        Parse a JSON string into a JsonNode.
+        The result is a pair of a boolean indicating success and a string containing an error message if failed.
+        */
+
         #define FAILED(err, msg) \
             { \
                 return { false, std::string(err) + ": " + msg + " " + reader.generatePositionString() }; \
@@ -2422,6 +2519,10 @@ struct JsonNode {
     }
 
     static std::pair<bool, std::string> Parse(JsonNode* dst, const Data& data) {
+        /* !docs
+        `!ref @JsonNode::Parse`
+        */
+
         StringReader reader(std::string_view(
             (const char*)data.data.data(),
             data.data.size()
@@ -2431,6 +2532,10 @@ struct JsonNode {
 
     template<typename T>
     void Print(T& stream) const {
+        /* !docs
+        Prints the json node to the given stream.
+        */
+
         if (isString()) {
             stream << '"';
             for (ep_u8 c : getString()) {
@@ -2468,10 +2573,18 @@ struct JsonNode {
     }
 
     void Print() const {
+        /* !docs
+        Prints the json node to the standard output.
+        */
+
         Print(std::cout);
     }
 
     std::string toString() const {
+        /* !docs
+        Converts the json node to a string.
+        */
+
         std::string result;
         result.reserve(256);
         toStringImpl(result);
@@ -2566,12 +2679,20 @@ public:
     }
 
     bool hasKey(const std::string& key) const {
+        /* !docs
+        Checks if the json node is an object and contains the specified key.
+        */
+
         if (type != EnumType::Object) return false;
         return getObject().contains(key);
     }
 };
 
 struct PhiChartLoadResult {
+    /* !docs
+    The result of loading a phigros chart.
+    */
+
     bool success;
     std::vector<std::string> errors;
     PhiChart chart;
@@ -2586,6 +2707,10 @@ struct PhiChartLoadResult {
     }
 
 PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
+    /* !docs
+    Loads a phigros chart from an official json data.
+    */
+
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) CHART_LOAD_FAILED("official", std::string("failed to parse json: ") + err);
@@ -2792,6 +2917,10 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
 }
 
 PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
+    /* !docs
+    Loads a phigros chart from a Re:PhiEdit JSON file.
+    */
+
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) CHART_LOAD_FAILED("rpe", std::string("failed to parse json: ") + err);
@@ -3248,6 +3377,10 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 }
 
 PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
+    /* !docs
+    Loads a phigros chart from a PhiEdit Chart file (.pec).
+    */
+
     struct TokenReader {
         std::string str;
         ep_u64 pos = 0;
@@ -3638,6 +3771,14 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
 }
 
 PhiChartLoadResult loadPhiChartFromData(const Data& data) {
+    /* !docs
+    Loads a Phi chart from a data object.
+    It will try to load the chart from different formats in order:
+    - Official Json
+    - Re:PhiEdit Json
+    - PhiEdit Chart (pec)
+    */
+
     PhiChartLoadResult result{};
     result.success = false;
 
@@ -3660,6 +3801,10 @@ PhiChartLoadResult loadPhiChartFromData(const Data& data) {
 #undef CHART_LOAD_FAILED
 
 std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
+    /* !docs
+    Loads extra from a data object.
+    */
+
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) return std::string("failed to parse json: ") + err;
@@ -3861,6 +4006,10 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
 }
 
 struct PhiStoryboardHelpers {
+    /* !docs
+    A helper function set for phigros storyboard assets.
+    */
+
     static std::string textureNameToPath(const std::string& dir, const std::string& name) {
         return std::filesystem::path(dir + "/" + name)
             .lexically_normal()
@@ -3880,6 +4029,10 @@ struct PhiStoryboardHelpers {
 };
 
 void stripString(std::string& str) {
+    /* !docs
+    Strip a string like python's `str.strip()`.
+    */
+
     auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
     auto tail = std::ranges::find_if(str | std::views::reverse, not_space);
     str.erase(tail.base(), str.end());
@@ -3888,12 +4041,20 @@ void stripString(std::string& str) {
 }
 
 void splitStringToLines(const std::string& str, std::vector<std::string>& lines) {
+    /* !docs
+    Split a string to lines like python's `str.split('\n')`.
+    */
+
     for (auto&& subrange : str | std::views::split('\n')) {
         lines.emplace_back(subrange.begin(), subrange.end());
     }
 }
 
 struct ParsedRPEChartInfo {
+    /* !docs
+    A struct for parsed RPE chart info.
+    */
+
     std::string name;
     std::string path;
     std::string song;
@@ -3908,6 +4069,10 @@ struct ParsedRPEChartInfo {
 };
 
 std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
+    /* !docs
+    Parse RPE chart infos from a data object.
+    */
+
     std::vector<ParsedRPEChartInfo> infos;
 
     auto str = data.toString();
@@ -3961,6 +4126,10 @@ std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
 
 template <typename T>
 class ep_sp {
+    /* !docs
+    The small pointer class.
+    */
+
     struct RefCnt {
         T* ptr;
         std::atomic<int> count{1};
@@ -4064,10 +4233,19 @@ public:
 };
 
 struct DecodedRGBATexture {
+    /* !docs
+    The decoded RGBA texture.
+    The data is a flat array of RGBA pixels.
+    */
+
     std::vector<ep_u8> data;
     ep_u64 width, height;
 
     static DecodedRGBATexture Make(ep_u64 width, ep_u64 height, ep_u8 init = 0) {
+        /* !docs
+        Create a new texture with the given width and height, and fill it with the given value.
+        */
+
         return {
             .data = std::vector<ep_u8>(width * height * 4, init),
             .width = width, .height = height
@@ -4089,12 +4267,20 @@ struct DecodedRGBATexture {
     }
 
     void fillRGBWhite() {
+        /* !docs
+        Fill the texture with white color.
+        */
+
         ensureDataSize();
         std::fill(data.begin(), data.end(), 255);
         for (ep_u64 i = 0; i < width * height; ++i) data[i * 4 + 3] = 0;
     }
 
     void paste(const DecodedRGBATexture& other, ep_i64 x, ep_i64 y) {
+        /* !docs
+        Paste the other texture onto this texture at the given position.
+        */
+
         if (x >= (ep_i64)width || y >= (ep_i64)height) return;
         if (x + other.width < 0 || y + other.height < 0) return;
 
@@ -4140,6 +4326,10 @@ struct DecodedRGBATexture {
 
 template <typename T, size_t Alignment>
 struct AlignedAllocator {
+    /* !docs
+    The aligned allocator.
+    */
+
     using value_type = T;
 
     AlignedAllocator() = default;
@@ -4174,6 +4364,10 @@ template <typename T, size_t Alignment>
 using aligned_vector = std::vector<T, AlignedAllocator<T, Alignment>>;
 
 ep_f64 globalTimer() {
+    /* !docs
+    Get the current time in seconds since the program started.
+    */
+
     return std::chrono::duration<ep_f64>(
         std::chrono::steady_clock::now()
         .time_since_epoch()
@@ -4181,6 +4375,10 @@ ep_f64 globalTimer() {
 }
 
 namespace GL {
+    /* !docs
+    The OpenGL namespace.
+    */
+
     using GLboolean = unsigned char;
     using GLbitfield = unsigned int;
     using GLbyte = signed char;
@@ -4429,6 +4627,10 @@ namespace GL {
     constexpr GLenum GL_NUM_EXTENSIONS = 0x821D;
 
     struct GL33CoreInterface {
+        /* !docs
+        A struct containing pointers to the OpenGL 3.3 core functions.
+        */
+
         GLenum (*glGetError)();
         void (*glGetIntegerv)(GLenum pname, GLint* data);
         void (*glGetFloatv)(GLenum pname, GLfloat* data);
@@ -4565,6 +4767,10 @@ namespace GL {
         void (*glGetSynciv)(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei* length, GLint* values);
 
         bool isExtensionSupported(const char* extension) {
+            /* !docs
+            Checks if the given OpenGL extension is supported.
+            */
+
             GLint num;
             glGetIntegerv(GL_NUM_EXTENSIONS, &num);
 
@@ -4581,6 +4787,10 @@ namespace GL {
 
     using GLProcLoader = std::function<void*(const char*)>;
     static GL33CoreInterface MakeGL33CoreInterface(GLProcLoader loader) {
+        /* !docs
+        Creates a `@GL33CoreInterface` object from a procedure loader.
+        */
+
         GL33CoreInterface interface {};
 
         #define LOAD_AND_CHECK(proc) { \
@@ -4831,6 +5041,10 @@ namespace GL {
     static_assert(offsetof(GLvec4, w) == sizeof(GLfloat) * 3, "GLvec4.w must be at offset 3");
 
     struct Vertex {
+        /* !docs
+        A vertex, with position and texture coordinates.
+        */
+
         GLvec2 position;
         GLvec2 texCoord;
     };
@@ -4846,6 +5060,10 @@ namespace GL {
     struct SyncInfo;
 
     struct VertexPool {
+        /* !docs
+        A pool of vertices, which can be allocated from.
+        */
+
         struct Chunk {
             std::vector<Vertex> vertices;
             ep_u64 offset;
@@ -4880,6 +5098,10 @@ namespace GL {
         }
 
         struct AllocResult {
+            /* !docs
+            The result of allocating vertices from a `@VertexPool`.
+            */
+
             Vertex* vertices;
             ep_u64 count;
             ep_u64 sig;
@@ -4913,6 +5135,10 @@ namespace GL {
         }
 
         void reset() {
+            /* !docs
+            Resets the vertex pool, freeing all allocated vertices.
+            */
+
             offset = 0;
             for (auto& chunk : chunks) chunk->offset = 0;
             sig++;
@@ -4935,6 +5161,10 @@ namespace GL {
     };
 
     struct Mesh {
+        /* !docs
+        A mesh of vertices, which can be drawn.
+        */
+
         VertexPool::AllocResult vertices;
         GLvec4 color;
         TextureInfo* texture;
@@ -4953,14 +5183,26 @@ namespace GL {
         }
 
         void addFullRect() {
+            /* !docs
+            Adds a full-screen rectangle to the mesh.
+            */
+
             addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
         }
 
         static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) {
+            /* !docs
+            Get the number of vertices required to draw a polygon with the given number of points.
+            */
+
             return (pointsCount - 2) * 3;
         }
 
         void addPolygon(const std::vector<GLvec2>& points, const std::vector<GLvec2>& uvs) {
+            /* !docs
+            Adds a polygon to the mesh.
+            */
+
             for (ep_u64 i = 0; i < points.size() - 2; i++) {
                 *vertices.next() = { points[0], uvs[0] };
                 *vertices.next() = { points[i + 1], uvs[i + 1] };
@@ -4970,6 +5212,10 @@ namespace GL {
     };
 
     struct BufferInfo {
+        /* !docs
+        A buffer object, which is created by `glGenBuffers`.
+        */
+        
         BufferInfo() = default;
         BufferInfo(const BufferInfo&) = delete;
         BufferInfo& operator=(const BufferInfo&) = delete;
@@ -5108,6 +5354,10 @@ namespace GL {
     };
 
     struct VertexArrayInfo {
+        /* !docs
+        A vertex array object (VAO), which is created by `glGenVertexArrays`.
+        */
+
         VertexArrayInfo() = default;
         VertexArrayInfo(const VertexArrayInfo&) = delete;
         VertexArrayInfo& operator=(const VertexArrayInfo&) = delete;
@@ -5181,6 +5431,10 @@ namespace GL {
     };
 
     struct ShaderInfo {
+        /* !docs
+        A shader object, which is created by `glCreateShader`.
+        */
+
         ShaderInfo() = default;
         ShaderInfo(const ShaderInfo&) = delete;
         ShaderInfo& operator=(const ShaderInfo&) = delete;
@@ -5256,11 +5510,20 @@ namespace GL {
     };
 
     struct VertexLayout {
+        /* !docs
+        A vertex layout, which is used to describe the structure of the vertex data and store the vertex buffer.
+        It includes a vertex array object (VAO) and a vertex buffer object (VBO).
+        */
+
         ep_sp<VertexArrayInfo> vao;
         ep_sp<BufferInfo> vbo;
     };
 
     struct VertexLayoutPool {
+        /* !docs
+        A vertex layout pool.
+        */
+
         std::vector<VertexLayout> layouts;
         ep_u64 currentIndex;
         ep_u64 frameSig;
@@ -5291,6 +5554,10 @@ namespace GL {
     };
 
     struct ProgramInfo {
+        /* !docs
+        A program object, which is created by `glCreateProgram`.
+        */
+
         ProgramInfo() = default;
         ProgramInfo(const ProgramInfo&) = delete;
         ProgramInfo& operator=(const ProgramInfo&) = delete;
@@ -5469,6 +5736,10 @@ namespace GL {
     };
 
     struct TextureInfo {
+        /* !docs
+        A texture object, which is created by `glGenTextures`.
+        */
+
         TextureInfo() = default;
         TextureInfo(const TextureInfo&) = delete;
         TextureInfo& operator=(const TextureInfo&) = delete;
@@ -5582,6 +5853,10 @@ namespace GL {
     };
 
     struct FramebufferInfo {
+        /* !docs
+        A framebuffer object (FBO), which is created by `glGenFramebuffers`.
+        */
+
         FramebufferInfo() = default;
         FramebufferInfo(const FramebufferInfo&) = delete;
         FramebufferInfo& operator=(const FramebufferInfo&) = delete;
@@ -5644,6 +5919,10 @@ namespace GL {
     };
 
     struct RenderbufferInfo {
+        /* !docs
+        A renderbuffer object (RBO), which is created by `glGenRenderbuffers`.
+        */
+
         RenderbufferInfo() = default;
         RenderbufferInfo(const RenderbufferInfo&) = delete;
         RenderbufferInfo& operator=(const RenderbufferInfo&) = delete;
@@ -5703,6 +5982,10 @@ namespace GL {
     };
 
     struct QueryInfo {
+        /* !docs
+        A query object, which is created by `glGenQueries`.
+        */
+
         QueryInfo() = default;
         QueryInfo(const QueryInfo&) = delete;
         QueryInfo& operator=(const QueryInfo&) = delete;
@@ -5775,6 +6058,10 @@ namespace GL {
     };
 
     struct SyncInfo {
+        /* !docs
+        A sync object, which is created by `glFenceSync`.
+        */
+
         SyncInfo() = default;
         SyncInfo(const SyncInfo&) = delete;
         SyncInfo& operator=(const SyncInfo&) = delete;
@@ -5828,11 +6115,6 @@ namespace GL {
     template <typename T>
     bool operator==(std::nullptr_t, const ep_sp<T>& a) { return !a; }
 
-    template <typename T, typename... Args>
-    ep_sp<T> gl_make_sp(Args&&... args) {
-        return ep_sp<T>(new T(std::forward<Args>(args)...));
-    }
-
     static const char* defaultVertexShaderSource = R"(
 #version 330 core
 
@@ -5863,6 +6145,16 @@ void main() {
 )";
 
     struct YUV420Frame {
+        /* !docs
+        A YUV420 frame.
+        The data is stored in a `aligned_vector` with the following layout:
+        ```
+        y[width * height]
+        u[width * height / 4]
+        v[width * height / 4]
+        ```
+        */
+
         aligned_vector<ep_u8, 16> data;
         ep_u64 width, height;
 
@@ -5898,11 +6190,19 @@ void main() {
         ep_u64 rowBytesV() const { return width / 2; }
 
         void fromPtr(void* ptr) {
+            /* !docs
+            Fills the frame with data from a pointer.
+            */
+
             memcpy(data.data(), ptr, getDataSize());
         }
     };
 
     struct GL33Context {
+        /* !docs
+        A gl context.
+        */
+
         GL33Context() = default;
         GL33Context(const GL33Context&) = delete;
         GL33Context& operator=(const GL33Context&) = delete;
@@ -5944,6 +6244,10 @@ void main() {
         };
 
         GLFeatureGuard getFeatureGuard(GLenum cap) {
+            /* !docs
+            Returns a guard that will keep the feature enabled or disabled when it goes out of scope.
+            */
+
             return GLFeatureGuard(this, cap, isEnabled(cap));
         }
 
@@ -6066,6 +6370,10 @@ void main() {
         }
 
         ep_sp<ProgramInfo> createConfiguredProgram(const std::string& fragCode) {
+            /* !docs
+            Creates a configured program with default vertex shader and given fragment shader.
+            */
+
             auto vert = createShader(GL_VERTEX_SHADER);
             auto frag = createShader(GL_FRAGMENT_SHADER);
             
@@ -6107,6 +6415,10 @@ void main() {
         }
 
         struct ProgramPresets {
+            /* !docs
+            A struct containing some preconfigured programs.
+            */
+
             static ep_sp<ProgramInfo> gaussianBlur(GL33Context* glCtx) {
                 return glCtx->createConfiguredProgram(R"(
 #version 330 core
@@ -6239,6 +6551,10 @@ void main() {
         };
 
         void drawMesh(Mesh& mesh) noexcept {
+            /* !docs
+            Draw a mesh.
+            */
+
             if (!vertexPool->valid(mesh.vertices)) {
                 std::abort();
             }
@@ -6282,10 +6598,18 @@ void main() {
         };
 
         ViewportGuard getViewportGuard() {
+            /* !docs
+            Get a guard that will restore viewport on destruction.
+            */
+
             return ViewportGuard(this, getViewport());
         }
 
         void copyTexture(TextureInfo* src, TextureInfo* dst) {
+            /* !docs
+            Copy texture to another texture.
+            */
+
             if (!dst->sizeIsSame(src)) {
                 dst->use().image2D(src->width, src->height, nullptr);
             }
@@ -6302,6 +6626,11 @@ void main() {
         }
 
         void copyCurrentToTexture(TextureInfo* dst) {
+            /* !docs
+            Copy current framebuffer to texture.
+            It supports multisampling framebuffers.
+            */
+
             auto kfboGuard = getFBOGuard();
             auto texFboGuard = dst->frameBuffer->use(dst, GL_DRAW_FRAMEBUFFER);
             gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, kfboGuard.drawFbo);
@@ -6313,12 +6642,20 @@ void main() {
         }
 
         ep_sp<TextureInfo> ensureTexturePingPong(TextureInfo* texture) {
+            /* !docs
+            Ensures that texture has a ping-pong texture and returns it.
+            */
+
             if (!texture->pingPong) texture->pingPong = createTexture();
             copyTexture(texture, texture->pingPong.get());
             return texture->pingPong;
         }
 
         void renderIntoTexture(TextureInfo* texture, Mesh& descMesh) {
+            /* !docs
+            Render mesh into texture.
+            */
+
             auto vpGuard = getViewportGuard();
             auto pingPong = ensureTexturePingPong(texture);
             auto fbGuard = texture->frameBuffer->use(texture, GL_DRAW_FRAMEBUFFER);
@@ -6334,6 +6671,10 @@ void main() {
         }
 
         void gaussianBlurToTexture(TextureInfo* texture, ep_f64 radius) {
+            /* !docs
+            Apply gaussian blur to texture.
+            */
+
             auto mesh = requestMesh(6);
             mesh.program = preloadedPrograms.gaussianBlur.get();
             mesh.color = GLvec4::White();
@@ -6353,6 +6694,10 @@ void main() {
         }
 
         void renderToDrawFbo(ep_u64 width, ep_u64 height, Mesh& descMesh) {
+            /* !docs
+            Render mesh into draw framebuffer.
+            */
+
             auto tempTexGuard = allocTempTexture(width, height);
             auto tempTex = tempTexGuard.get();
             copyCurrentToTexture(tempTex.get());
@@ -6368,6 +6713,10 @@ void main() {
         }
 
         bool getCurrentIsMultiSampled() {
+            /* !docs
+            Check if current framebuffer is multisampled.
+            */
+
             GLint samples;
             gl.glGetIntegerv(GL_SAMPLES, &samples);
             return samples > 1;
@@ -6376,20 +6725,32 @@ void main() {
         struct {
             ep_sp<ProgramInfo> gaussianBlur;
             ep_sp<ProgramInfo> yuvConverter;
-        } preloadedPrograms;
+        } preloadedPrograms; // !inline-docs| Preloaded programs.
 
         void frameEnded() {
+            /* !docs
+            Please call this function at the end of each frame.
+            */
+
             drawCallsCount = 0;
             frameSig++;
         }
 
         Mesh requestMesh(ep_u64 verticesCount) {
+            /* !docs
+            Request mesh with specified number of vertices.
+            */
+
             return {
                 .vertices = vertexPool->alloc(verticesCount)
             };
         }
 
         struct AsyncFrameReader {
+            /* !docs
+            A frame reader which is used to read YUV420 frames from GPU.
+            */
+
             GL33Context* glCtx;
             ep_u64 frameWidth, frameHeight;
 
@@ -6447,6 +6808,11 @@ void main() {
             };
 
             void requestRead() {
+                /* !docs
+                Requests read this frame.
+                It will automatically call `@flush`.
+                */
+
                 flush();
 
                 for (auto& slot : bufferSlots) {
@@ -6464,6 +6830,10 @@ void main() {
             CallbackFunc callback;
 
             void flush() {
+                /* !docs
+                Flushes read results.
+                */
+
                 for (auto& slot : bufferSlots) {
                     if (!slot.sync || !slot.sync->isSignaled()) continue;
                     slot.sync = nullptr;
@@ -6477,6 +6847,10 @@ void main() {
             }
 
             void finish() {
+                /* !docs
+                Waits for all read results to be flushed.
+                */
+
                 glCtx->finish();
 
                 for (auto& slot : bufferSlots) {
@@ -6570,6 +6944,10 @@ void main() {
         };
 
         AsyncFrameReader createAsyncFrameReader(ep_u64 frameWidth, ep_u64 frameHeight) {
+            /* !docs
+            Creates an `@AsyncFrameReader` for reading frames from the current context.
+            */
+
             AsyncFrameReader reader {};
             reader.glCtx = this;
             reader.frameWidth = frameWidth;
@@ -6599,10 +6977,18 @@ void main() {
         };
 
         FBOGuard getFBOGuard() {
+            /* !docs
+            Creates a guard that will restore the draw&read framebuffer bindings when it goes out of scope.
+            */
+
             return FBOGuard(this);
         }
 
         void flipY(ep_u64 width, ep_u64 height) {
+            /* !docs
+            Flips the current framebuffer vertically.
+            */
+
             auto tempTexGuard = allocTempTexture(width, height);
             auto tempTex = tempTexGuard.get();
             copyCurrentToTexture(tempTex.get());
@@ -6620,6 +7006,10 @@ void main() {
         }
 
         void convertToYUV(ep_u64 width, ep_u64 height) {
+            /* !docs
+            Converts the current framebuffer to YUV420 format.
+            */
+
             auto mesh = requestMesh(6);
             mesh.program = preloadedPrograms.yuvConverter.get();
             mesh.color = GLvec4::White();
@@ -6713,6 +7103,10 @@ void main() {
     };
 
     struct GL33Context::Canvas {
+        /* !docs
+        A canvas to draw on.
+        */
+
         Transform2D transform;
         GL33Context* glCtx;
 
@@ -6771,12 +7165,20 @@ void main() {
     };
 
     GL33Context::Canvas GL33Context::getCanvas() {
+        /* !docs
+        Creates a canvas to draw on.
+        */
+
         Canvas canvas {};
         canvas.glCtx  = this;
         return canvas;
     }
 
     struct VideoRecorder {
+        /* !docs
+        A video recorder, which records YUV420 frames to callback.
+        */
+
         VideoRecorder() = default;
         VideoRecorder(const VideoRecorder&) = delete;
         VideoRecorder& operator=(const VideoRecorder&) = delete;
@@ -6948,6 +7350,10 @@ enum class ByteEndian {
 
 template<ByteEndian E>
 struct ByteWriter {
+    /* !docs
+    A class for writing bytes to a vector.
+    */
+
     std::vector<ep_u8> data;
 
     static ep_sp<ByteWriter<E>> Make() {
@@ -7023,6 +7429,11 @@ struct ByteWriter {
 };
 
 struct DecodedAudio {
+    /* !docs
+    A class to store decoded audio data.
+    The data is pcm 16-bit signed integer and interleaved.
+    */
+
     std::vector<ep_i16> data;
     ep_u64 channels;
     ep_u64 sampleRate;
@@ -7145,6 +7556,10 @@ struct DecodedAudio {
 };
 
 struct AudioEngine {
+    /* !docs
+    An audio engine to play audio.
+    */
+
     AudioEngine() = default;
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;
@@ -7199,6 +7614,10 @@ struct AudioEngine {
     }
 
     void callback(ep_i16* buffer, ep_i64 frameCount) {
+        /* !docs
+        Fills the buffer with audio data.
+        */
+
         std::lock_guard<std::mutex> guard(mtx);
 
         memset(buffer, 0, frameCount * channels * sizeof(ep_i16));
@@ -7243,16 +7662,24 @@ struct AudioEngine {
 };
 
 struct PhiLineAttachUIData {
+    /* !docs
+    Data for attaching a phigros line which is attached ui.
+    */
+
     Vec2 position, scale = { 1.0, 1.0 };
     ep_f64 rotation;
     Color color = { 1.0, 1.0, 1.0, 1.0 };
 };
 
 struct PhiCalculateFrameConfig {
+    /* !docs
+    Configuration for calculating a frame.
+    */
+
     struct NoteTextureInfo {
         struct Item {
             Vec2 textureSize;
-            Vec2 cutPadding;
+            Vec2 cutPadding; // !inline-docs| It means the padding of the texture when cutting the texture, its unit is pixels.
             Vec2 scaling = { 1.0, 1.0 };
         };
 
@@ -7261,14 +7688,18 @@ struct PhiCalculateFrameConfig {
     };
 
     Vec2 screenSize;
-    Vec2 backgroundTextureSize;
+    Vec2 backgroundTextureSize; // !inline-docs| The real size of the background texture.
     std::unordered_map<EnumPhiNoteType, NoteTextureInfo> noteTextureInfos;
-    ep_f64 songLength;
+    ep_f64 songLength; // !inline-docs| In seconds.
     ep_f64 maxNoteBodyLength = 8192.0;
     ep_f64 maxFontSizeNormScale = 16.0;
 };
 
 struct PhiCalculatedFrame {
+    /* !docs
+    The calculated frame.
+    */
+
     struct CalculatedNote {
         Vec2 position;
         ep_f64 rotation;
@@ -7362,6 +7793,10 @@ struct PhiCalculatedFrame {
     Vec2 frameTimeRange;
 
     struct TakeOverer {
+        /* !docs
+        The take overer for phigros.
+        */
+
         TakeOverer() = default;
         TakeOverer(const TakeOverer&) = delete;
         TakeOverer(TakeOverer&&) = delete;
@@ -7862,6 +8297,10 @@ void calculatePhiFrame(
     const PhiCalculateFrameConfig& config,
     PhiCalculatedFrame& frame
 ) {
+    /* !docs
+    Calculate a frame of the chart at the given time.
+    */
+
     frame.objects.clear();
     frame.hitsounds.clear();
     frame.cache.clear();
@@ -8352,7 +8791,15 @@ void calculatePhiFrame(
 #include "helpers/stb_truetype.h"
 namespace easy_phi {
     struct TextRenderer {
+        /* !docs
+        A text renderer by `stb_truetype`.
+        */
+
         void loadFont(const Data& data, ep_u64 index = 0) {
+            /* !docs
+            Load a font from a data.
+            */
+
             fontData = data;
             if (!stbtt_InitFont(&font, fontData.data.data(), stbtt_GetFontOffsetForIndex(fontData.data.data(), index))) {
                 throw std::runtime_error("failed to load font");
@@ -8360,6 +8807,10 @@ namespace easy_phi {
         }
 
         DecodedRGBATexture render(const std::string& text, ep_u64 fontSize) {
+            /* !docs
+            Render a text to a texture.
+            */
+
             struct DrawedChar {
                 DecodedRGBATexture tex;
                 ep_i32 xoff, yoff;
@@ -8461,6 +8912,10 @@ namespace easy_phi {
 #include "helpers/stb_image.h"
 namespace easy_phi {
     DecodedRGBATexture decodeImage(const Data& data) {
+        /* !docs
+        Decode an image from a data by `stb_image`.
+        */
+
         int width, height, channels;
         ep_u8* pixels = stbi_load_from_memory(
             data.data.data(),
@@ -8496,6 +8951,10 @@ namespace easy_phi {
 #include "helpers/stb_vorbis.c"
 namespace easy_phi {
     ep_sp<DecodedAudio> decodeAudioMiniaudio(const Data& data) {
+        /* !docs
+        Decode an audio from a data by `miniaudio` and `stb_vorbis`.
+        */
+
         if (data.isStartsWith("OggS")) {
             int channels, sampleRate;
             ep_i16* pcm;
@@ -8552,6 +9011,10 @@ namespace easy_phi {
     }
 
     ep_sp<AudioEngine> makeAudioEngineMiniaudio() {
+        /* !docs
+        Create an audio engine which is based on `miniaudio`.
+        */
+        
         auto engine = AudioEngine::Make();
 
         struct AudioContext {
