@@ -1,3 +1,6 @@
 /build
-need-ignore-*
+/docs
+
 dev.flag
+
+need-ignore-*

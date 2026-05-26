@@ -268,7 +268,7 @@ struct Rect {
 
     Rect extend(ep_f64 padding) const {
         /* !docs
-        Returns a new `@Rect` with the padding applied to all sides.
+        Returns a new rect with the padding applied to all sides.
         */
 
         return Rect {
@@ -313,7 +313,7 @@ struct Color {
 
     Color applyAlpha(ep_f64 alpha) {
         /* !docs
-        Returns a new `@Color` with the alpha multiplied by `alpha`.
+        Returns a new color with the alpha multiplied by `alpha`.
         */
 
         return Color { r, g, b, a * alpha };
@@ -809,23 +809,19 @@ struct PhiMeta {
     bool isRegLineAlphaNoteHidden;
     Vec2 lineWidthUnit, lineHeightUnit;
 
-    /* !docs
+    ep_f64 coverEllipsis = 1e-5; /* !inline-docs|
     The cover ellipsis of notes.
     It means if the line enabled cover and the note's y position is less than this value, the note will be hidden.
     */
-    ep_f64 coverEllipsis = 1e-5;
 
-    /* !docs
+    ep_f64 maxViewRatio = (ep_f64)16 / 9; /* !inline-docs|
     The maximum view ratio of the chart.
     If the view ratio is greater than this value, the chart will be rendered by fitting the width.
     */
-    ep_f64 maxViewRatio = (ep_f64)16 / 9;
-
-    /* !docs
+    
+    Vec2 worldOrigin, worldViewport; /* !inline-docs|
     The world origin and viewport of the chart, used to normalize the positions.
     */
-    Vec2 worldOrigin;
-    Vec2 worldViewport;
 };
 
 struct PhiBPMEvent {
@@ -972,10 +968,6 @@ struct PhiAnimLayer {
     }
 
     void updateType(EnumPhiEventType type, ep_f64 t) {
-        /* !docs
-        `!ref @PhiAnimLayer::updateType`
-        */
-
         updateType((ep_u64)type, t);
     }
 
@@ -1144,9 +1136,6 @@ struct PhiAnimator {
 
     template <typename T>
     PhiAnimGroup& requestGroup(T& obj) {
-        /* !docs
-        `!ref @PhiAnimator::requestGroup`
-        */
         return requestGroup(obj.indexer.get());
     }
 
@@ -1184,10 +1173,6 @@ struct PhiAnimator {
 
     template <typename T>
     ep_f64 get_based(T& obj, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
-        /* !docs
-        `!ref @PhiAnimator::get_based`
-        */
-
         return get_based(obj.indexer.get(), t, type, baseValue);
     }
 
@@ -1201,10 +1186,6 @@ struct PhiAnimator {
 
     template <typename T>
     ep_f64 get(T& obj, ep_f64 t, EnumPhiEventType type) {
-        /* !docs
-        `!ref @PhiAnimator::get`
-        */
-
         return get(obj.indexer.get(), t, type);
     }
 
@@ -1252,10 +1233,6 @@ struct PhiAnimator {
 
     template <typename T>
     ep_f64 get_alpha(T& obj, ep_f64 t, ep_f64 additionalDefault) {
-        /* !docs
-        `!ref @PhiAnimator::get_alpha`
-        */
-
         return get_alpha(obj.indexer.get(), t, additionalDefault);
     }
 };
@@ -2519,10 +2496,6 @@ struct JsonNode {
     }
 
     static std::pair<bool, std::string> Parse(JsonNode* dst, const Data& data) {
-        /* !docs
-        `!ref @JsonNode::Parse`
-        */
-
         StringReader reader(std::string_view(
             (const char*)data.data.data(),
             data.data.size()
@@ -3773,7 +3746,9 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
 PhiChartLoadResult loadPhiChartFromData(const Data& data) {
     /* !docs
     Loads a Phi chart from a data object.
+    
     It will try to load the chart from different formats in order:
+
     - Official Json
     - Re:PhiEdit Json
     - PhiEdit Chart (pec)
@@ -4125,7 +4100,7 @@ std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
 }
 
 template <typename T>
-class ep_sp {
+struct ep_sp {
     /* !docs
     The small pointer class.
     */
@@ -4148,7 +4123,6 @@ class ep_sp {
 
     explicit ep_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
 
-public:
     using element_type = T;
 
     constexpr ep_sp() noexcept : fCtrl(nullptr) {}
@@ -4224,7 +4198,6 @@ public:
         std::swap(fCtrl, o.fCtrl);
     }
 
-    template <typename U> friend class ep_sp;
     auto* release_ctrl() noexcept {
         auto* c = fCtrl;
         fCtrl = nullptr;
@@ -4788,7 +4761,7 @@ namespace GL {
     using GLProcLoader = std::function<void*(const char*)>;
     static GL33CoreInterface MakeGL33CoreInterface(GLProcLoader loader) {
         /* !docs
-        Creates a `@GL33CoreInterface` object from a procedure loader.
+        Creates a interface object from a procedure loader.
         */
 
         GL33CoreInterface interface {};
@@ -5099,7 +5072,7 @@ namespace GL {
 
         struct AllocResult {
             /* !docs
-            The result of allocating vertices from a `@VertexPool`.
+            The result of allocating vertices from a `@../VertexPool`.
             */
 
             Vertex* vertices;
@@ -6945,7 +6918,7 @@ void main() {
 
         AsyncFrameReader createAsyncFrameReader(ep_u64 frameWidth, ep_u64 frameHeight) {
             /* !docs
-            Creates an `@AsyncFrameReader` for reading frames from the current context.
+            Creates an reader for reading frames from the current context.
             */
 
             AsyncFrameReader reader {};
