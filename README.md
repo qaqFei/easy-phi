@@ -23,7 +23,7 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 
 ## Working On
 
-- **Rendering Takeover**: We're taking over the entire OpenGL pipeline — you don't write a single GL call. Just give us a `proc` (e.g. `glfwGetProcAddress`), and we handle context creation, buffer management, shader compilation, and all rendering operations from start to finish.
+- **Takeover**: The library assumes full control over the rendering pipeline, handling all complex operations internally so that you do not need to manage any low-level details.
 
 - **Documentation**: We're working on comprehensive documentation to help you get started with easy-phi quickly and easily.
 
