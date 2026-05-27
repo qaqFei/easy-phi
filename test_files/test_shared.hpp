@@ -784,8 +784,7 @@ struct Window {
             static const std::unordered_set<std::string> builtinShaders = {
                 "chromatic", "circleBlur", "fisheye",
                 "glitch", "grayscale", "noise",
-                "pixel", "radialBlur", "shockwave",
-                "trigrid", "vignette"
+                "pixel", "radialBlur", "shockwave", "vignette"
             };
             
             easy_phi::Data shaderText {};

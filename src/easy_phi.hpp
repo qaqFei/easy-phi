@@ -1504,6 +1504,7 @@ struct PhiExtraEffectItem {
     ep_u64 order;
     bool isGlobal;
     std::string shaderName;
+    ep_u64 shaderId; // !inline-docs| The id of the shader, used to index the shader faster for renderer.
     std::unordered_map<std::string, PhiAnimLayer> uniforms;
 };
 
@@ -1544,6 +1545,10 @@ struct PhiShaderUniform {
     PhiShaderUniform(ep_f64 v0) : used(1), value{ v0, 0.0, 0.0, 0.0 } {}
     PhiShaderUniform() : used(0) {}
 
+    PhiShaderUniform(const std::vector<ep_f64>& v) : used(v.size()), value{} {
+        for (ep_u8 i = 0; i < v.size(); i++) value[i] = v[i];
+    }
+
     static PhiShaderUniform Interpolate(const PhiShaderUniform& a, const PhiShaderUniform& b, ep_f64 t) {
         PhiShaderUniform result;
         result.used = std::max(a.used, b.used);
@@ -1575,9 +1580,11 @@ struct PhiStoryboardAssets {
     std::vector<Color> colors;
     std::vector<PhiShaderUniform> shaderUniforms;
 
+    std::unordered_map<ep_u64, std::string> shaderNameMap;
+
     std::function<std::optional<std::pair<ep_u64, Vec2>>(std::string)> textureLoader;
     std::function<void(ep_u64)> textureDestroyer;
-    std::function<void(std::string)> shaderPreloader;
+    std::function<void(std::string, ep_u64)> shaderPreloader;
 
     Vec2 requestTextPair(const std::string& start, const std::string& end) {
         Vec2 valueZone;
@@ -1674,6 +1681,16 @@ struct PhiStoryboardAssets {
         }
 
         textures.clear();
+    }
+
+    ep_u64 requestShaderName(const std::string& name) {
+        ep_u64 id = shaderNameMap.size();
+        shaderNameMap[id] = name;
+        return id;
+    }
+
+    std::string getShaderName(ep_u64 id) {
+        return shaderNameMap[id];
     }
 
     ~PhiStoryboardAssets() {
@@ -1778,8 +1795,16 @@ struct PhiChart {
         }
         
         if (storyboardAssets.shaderPreloader) {
+            std::unordered_map<std::string, ep_u64> shaderNameMapInv;
+
             for (auto& name : shaderNames) {
-                storyboardAssets.shaderPreloader(name);
+                auto id = storyboardAssets.requestShaderName(name);
+                storyboardAssets.shaderPreloader(name, id);
+                shaderNameMapInv[name] = id;
+            }
+
+            for (auto& effect : extra.effects) {
+                effect.shaderId = shaderNameMapInv[effect.shaderName];
             }
         }
 
@@ -3980,6 +4005,32 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
     return extra;
 }
 
+void stripString(std::string& str) {
+    /* !docs
+    Strip a string like python's `str.strip()`.
+    */
+
+    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+    auto tail = std::ranges::find_if(str | std::views::reverse, not_space);
+    str.erase(tail.base(), str.end());
+    auto head = std::ranges::find_if(str, not_space);
+    str.erase(str.begin(), head);
+}
+
+void splitString(const std::string& str, std::vector<std::string>& lines, char delimiter = '\n') {
+    /* !docs
+    Split a string to lines like python's `str.split(delimiter)`.
+    */
+
+    for (auto&& subrange : str | std::views::split(delimiter)) {
+        lines.emplace_back(subrange.begin(), subrange.end());
+    }
+}
+
+bool stringIsStartsWith(const std::string& str, const std::string& prefix) {
+    return str.size() >= prefix.size() && str.substr(0, prefix.size()) == prefix;
+}
+
 struct PhiStoryboardHelpers {
     /* !docs
     A helper function set for phigros storyboard assets.
@@ -4001,29 +4052,50 @@ struct PhiStoryboardHelpers {
         assets.textureLoader = [=](std::string name) { return loader(textureNameToPath(dir, name)); };
         assets.textureDestroyer = destroyer;
     }
-};
 
-void stripString(std::string& str) {
-    /* !docs
-    Strip a string like python's `str.strip()`.
-    */
+    static std::unordered_map<std::string, PhiShaderUniform> parseDefaultShaderUniforms(
+        const std::string& code
+    ) {
+        std::vector<std::string> lines;
+        splitString(code, lines);
 
-    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
-    auto tail = std::ranges::find_if(str | std::views::reverse, not_space);
-    str.erase(tail.base(), str.end());
-    auto head = std::ranges::find_if(str, not_space);
-    str.erase(str.begin(), head);
-}
+        std::unordered_map<std::string, PhiShaderUniform> result;
 
-void splitStringToLines(const std::string& str, std::vector<std::string>& lines) {
-    /* !docs
-    Split a string to lines like python's `str.split('\n')`.
-    */
+        for (auto& line : lines) {
+            stripString(line);
+            if (!stringIsStartsWith(line, "uniform ")) continue;
 
-    for (auto&& subrange : str | std::views::split('\n')) {
-        lines.emplace_back(subrange.begin(), subrange.end());
+            auto s = line.find('%');
+            if (s == std::string::npos) continue;
+
+            auto e = line.find('%', s);
+            if (e == std::string::npos) continue;
+
+            auto default_str = line.substr(s + 1, e - s - 1);
+
+            std::vector<std::string> value_strs;
+            splitString(default_str, value_strs, ',');
+
+            std::vector<ep_f64> values;
+            for (auto& value_str : value_strs) {
+                stripString(value_str);
+                try { values.push_back(std::stod(value_str)); }
+                catch (...) { values.push_back(0); }
+            }
+
+            if (values.empty() || values.size() > 4) continue;
+
+            s = line.find(';');
+            if (s == std::string::npos) continue;
+            e = s;
+            while (e > 0 && line[e - 1] != ' ') e--;
+
+            result[line.substr(e, s - e)] = PhiShaderUniform(values);
+        }
+
+        return result;
     }
-}
+};
 
 struct ParsedRPEChartInfo {
     /* !docs
@@ -4054,7 +4126,7 @@ std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
     str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
 
     std::vector<std::string> lines;
-    splitStringToLines(str, lines);
+    splitString(str, lines);
 
     ParsedRPEChartInfo info {};
     ep_u64 vaildLineCount = 0;
@@ -5654,6 +5726,13 @@ namespace GL {
             void setMatrix2fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix2fv(location, count, transpose, value); }
             void setMatrix3fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix3fv(location, count, transpose, value); }
             void setMatrix4fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix4fv(location, count, transpose, value); }
+
+            void set(const PhiShaderUniform& u) {
+                if (u.used == 1) setf(u.value[0]);
+                else if (u.used == 2) setf(u.value[0], u.value[1]);
+                else if (u.used == 3) setf(u.value[0], u.value[1], u.value[2]);
+                else if (u.used == 4) setf(u.value[0], u.value[1], u.value[2], u.value[3]);
+            }
         };
 
         GLint getAttribLocationPosition(const std::string& name) {
@@ -6102,6 +6181,20 @@ void main() {
 }
 )";
 
+    static const char* defaultVertexShaderSource_RPE = R"(
+#version 100
+
+attribute vec2 inPosition;
+attribute vec2 inTexCoord;
+
+varying vec2 uv;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+    uv = inTexCoord;
+}
+)";
+
     static const char* defaultFragmentShaderSource = R"(
 #version 330 core
 
@@ -6342,7 +6435,7 @@ void main() {
             return ep_sp<SyncInfo>(info);
         }
 
-        ep_sp<ProgramInfo> createConfiguredProgram(const std::string& fragCode) {
+        ep_sp<ProgramInfo> createConfiguredProgram(const std::string& fragCode, const std::string& vertCode = defaultVertexShaderSource) {
             /* !docs
             Creates a configured program with default vertex shader and given fragment shader.
             */
@@ -6350,7 +6443,7 @@ void main() {
             auto vert = createShader(GL_VERTEX_SHADER);
             auto frag = createShader(GL_FRAGMENT_SHADER);
             
-            vert->source(defaultVertexShaderSource);
+            vert->source(vertCode);
             frag->source(fragCode);
 
             std::string log;
@@ -7716,7 +7809,7 @@ struct PhiCalculatedFrame {
     };
 
     struct CalculatedShader {
-        std::string name;
+        ep_u64 id;
         std::unordered_map<std::string, PhiShaderUniform> uniforms;
     };
 
@@ -8118,7 +8211,7 @@ void calculatePhiFrame(
             if (effect.isGlobal != isGlobal) continue;
             if (!effect.timeZone.include(time)) continue;
 
-            PhiCalculatedFrame::CalculatedShader shader { .name = effect.shaderName };
+            PhiCalculatedFrame::CalculatedShader shader { .id = effect.shaderId };
 
             for (auto& [uniformName, layer] : effect.uniforms) {
                 layer.updateType(EnumPhiEventType::PhiShaderUniform, time);
@@ -8518,6 +8611,7 @@ struct PhiTakeOverer {
         ep_u64 storyboardTextureId = 0;
 
         chart.storyboardAssets.clearTextures();
+
         chart.storyboardAssets.textureLoader = [&, this](const std::string& name) {
             auto data = storyboardDataReader(name);
             auto decoded = textureDeocder(data);
@@ -8526,15 +8620,33 @@ struct PhiTakeOverer {
             storyboardTextures[id] = tex;
             return std::make_pair(id, Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height });
         };
+
         chart.storyboardAssets.textureDestroyer = [this](ep_u64 id) {
             storyboardTextures.erase(id);
         };
 
-        chart.storyboardAssets.shaderPreloader = [this](const std::string& name) {
+        chart.storyboardAssets.shaderPreloader = [this](const std::string& name, ep_u64 id) {
             auto shaderString = shaderDataReader(name);
 
-            // TODO: ...
+            if (shaderString.empty()) {
+                throw std::runtime_error("shader string is empty: " + name);
+            }
+
+            try {
+                auto prog = glCtx->createConfiguredProgram(shaderString, GL::defaultVertexShaderSource_RPE);
+                prog->fragConfig.textureUniformName = "screenTexture";
+                prog->fragConfig.colorUniformName = std::nullopt;
+                shaders[id] = prog;
+            } catch (const std::exception& e) {
+                throw std::runtime_error("failed to load shader: " + name + "\n" + e.what());
+            }
+
+            auto defaultUnfiroms = PhiStoryboardHelpers::parseDefaultShaderUniforms(shaderString);
+            shadersDefaultUniforms[id] = defaultUnfiroms;
         };
+
+        shaders.clear();
+        shadersDefaultUniforms.clear();
 
         {
             auto startTime = globalTimer();
@@ -8713,6 +8825,27 @@ struct PhiTakeOverer {
                 cvs.drawMesh(mesh);
             } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedShader>(obj)) {
                 auto& shader = std::get<PhiCalculatedFrame::CalculatedShader>(obj);
+                auto& prog = shaders[shader.id];
+                if (!prog) continue;
+
+                {
+                    auto guard = prog->use();
+
+                    for (auto& [k, v] : shadersDefaultUniforms[shader.id]) {
+                        prog->getUniformLocation(k).set(v);
+                    }
+
+                    for (auto& [k, v] : shader.uniforms) {
+                        prog->getUniformLocation(k).set(v);
+                    }
+
+                    prog->getUniformLocation("screenSize").setf(calcConfig.screenSize.x, calcConfig.screenSize.y);
+                }
+
+                auto mesh = glCtx->requestMesh(6);
+                mesh.program = prog.get();
+                mesh.color = GLvec4::White();
+                glCtx->renderToDrawFbo(calcConfig.screenSize.x, calcConfig.screenSize.y, mesh);
             }
         }
 
@@ -8745,6 +8878,8 @@ struct PhiTakeOverer {
     ep_u64 maxTextTextures = 128;
     std::map<std::pair<std::string, ep_u64>, ep_sp<GL::TextureInfo>> cachedTextTextures;
     RenderResultInfo renderResultInfoCache;
+    std::unordered_map<ep_u64, ep_sp<GL::ProgramInfo>> shaders;
+    std::unordered_map<ep_u64, std::unordered_map<std::string, PhiShaderUniform>> shadersDefaultUniforms;
 
     ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedRGBATexture& decoded) {
         if (!decoded.valid()) throw std::runtime_error("texture is invalid");
