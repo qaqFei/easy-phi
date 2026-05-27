@@ -513,26 +513,23 @@ int main() {
     double loadingChartTook;
 
     auto load = [&]() {
-        auto check = [&](std::optional<std::string> res, std::wstring msg) {
-            if (res.has_value()) {
-                showErrorMsg(win.get(), msg.c_str());
-                return false;
+        try {
+            backendWin.loadChart(chartPath, chartRoot, &loadingChartTook);
+
+            if (chartInfo.has_value()) {
+                auto& info = chartInfo.value();
+                backendWin.renderer->chart.meta.title = info.name;
+                backendWin.renderer->chart.meta.difficulty = info.level;
             }
 
-            return true;
-        };
-
-        backendWin.loadChart(chartPath, chartRoot, &loadingChartTook);
-
-        if (chartInfo.has_value()) {
-            auto& info = chartInfo.value();
-            backendWin.renderer->chart.meta.title = info.name;
-            backendWin.renderer->chart.meta.difficulty = info.level;
+            backendWin.renderer->chart.options.noteScaling *= settings.noteScaling;
+            backendWin.renderer->loadIllustion(imagePath);
+            backendWin.renderer->loadAudio(audioPath);
+        } catch (const std::exception& e) {
+            auto msg = Win32Utils::stringToWstring(e.what());
+            showErrorMsg(win.get(), msg.c_str());
+            return false;
         }
-
-        backendWin.renderer->chart.options.noteScaling *= settings.noteScaling;
-        backendWin.renderer->loadIllustion(imagePath);
-        backendWin.renderer->loadAudio(audioPath);
 
         return true;
     };
