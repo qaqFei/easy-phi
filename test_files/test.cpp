@@ -93,19 +93,17 @@ int main(int argc, char** argv) {
 
     window.loadChart(chartPath, storyboardAssetsPath, nullptr);
 
-    if (window.chart.meta.title.empty()) {
-        window.chart.meta.title = chartTitle;
-        window.chart.meta.difficulty = chartDifficulty;
+    if (window.renderer->chart.meta.title.empty()) {
+        window.renderer->chart.meta.title = chartTitle;
+        window.renderer->chart.meta.difficulty = chartDifficulty;
     }
 
-    window.loadBgImage(imagePath);
-    window.loadMainSound(audioPath);
-    window.startMainSound();
+    window.renderer->loadIllustion(imagePath);
+    window.renderer->loadAudio(audioPath);
+    window.renderer->startBgm();
 
     while (!window.renderer->getBpmIsEnded()) {
-        double t = window.renderer->getBgmTime();
-
-        if (!window.mainloopFrame(t, {})) {
+        if (!window.mainloopFrame({})) {
             break;
         }
     }

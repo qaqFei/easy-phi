@@ -677,11 +677,8 @@ struct TelemetryDeckClient {
 
 struct Window {
     GLFWwindow* window;
-    easy_phi::PhiCalculateFrameConfig calculateFrameConfig;
     easy_phi::TextRenderer textRenderer;
     double globalScale;
-    easy_phi::PhiCalculatedFrame calculatedFrame;
-    easy_phi::PhiChart chart;
     int width, height;
     bool hidden;
     double frameBusyWaitPercentage;
@@ -689,7 +686,7 @@ struct Window {
     bool fullscreen;
 
     ep_sp<GL33Context> glCtx;
-    ep_sp<easy_phi::PhiCalculatedFrame::TakeOverer> renderer;
+    ep_sp<easy_phi::PhiTakeOverer> renderer;
 
     void init() {
         glfwInit();
@@ -724,15 +721,12 @@ struct Window {
 
         textRenderer.loadFont(StaticResource::get("/font.ttf"));
 
-        renderer = easy_phi::PhiCalculatedFrame::TakeOverer::Make();
+        renderer = easy_phi::PhiTakeOverer::Make();
 
         renderer->textureDeocder = easy_phi::decodeImage;
-        
-        renderer->textRenderer = [this](const std::string& text, easy_phi::ep_u64 size) -> easy_phi::DecodedRGBATexture {
-            return textRenderer.render(text, size);
-        };
+        renderer->textRenderer = [this](const std::string& text, easy_phi::ep_u64 size) -> easy_phi::DecodedRGBATexture { return textRenderer.render(text, size); };
 
-        renderer->noteTextureDataReader = [](const easy_phi::PhiCalculatedFrame::TakeOverer::NoteTextureDataReaderConfig config) -> easy_phi::PhiCalculatedFrame::TakeOverer::NoteTextureDataReaderResult {
+        renderer->noteTextureDataReader = [](const easy_phi::PhiTakeOverer::NoteTextureDataReaderConfig config) -> easy_phi::PhiTakeOverer::NoteTextureDataReaderResult {
             static const std::unordered_map<easy_phi::EnumPhiNoteType, std::string> nameMap = {
                 { easy_phi::EnumPhiNoteType::Tap, "click" },
                 { easy_phi::EnumPhiNoteType::Drag, "drag" },
@@ -810,8 +804,7 @@ struct Window {
         renderer->glCtx = glCtx;
         renderer->audioEngine = easy_phi::makeAudioEngineMiniaudio();
         renderer->check();
-
-        renderer->loadResources(calculateFrameConfig);
+        renderer->loadResources();
     }
 
     void setHidden(bool newValue) {
@@ -820,55 +813,31 @@ struct Window {
         else glfwShowWindow(window);
     }
 
-    std::optional<std::string> loadBgImage(const std::string& path) {
+    void loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
         easy_phi::Data data;
-        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
-        try { renderer->loadIllustion(data, calculateFrameConfig); }
-        catch (const std::exception& e) { return e.what(); }
-        return std::nullopt;
-    }
-    
-    std::optional<std::string> loadMainSound(const std::string& path) {
-        easy_phi::Data data;
-        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read file";
-        try { renderer->loadAudio(data, calculateFrameConfig); }
-        catch (const std::exception& e) { return e.what(); }
-        return std::nullopt;
-    }
-
-    void startMainSound() {
-        renderer->startBgm();
-    }
-
-    std::optional<std::string> loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
-        easy_phi::Data data;
-        if (!easy_phi::Data::FromFile(&data, path)) return "failed to read chart file";
-
-        double load_st = globalTimer();
-        auto chartLoadResult = easy_phi::loadPhiChartFromData(data);
-        if (loadingTook) *loadingTook = globalTimer() - load_st;
-        std::cout << "loadPhiChartFromData took: " << globalTimer() - load_st << " s" << std::endl;
-        std::cout << "chartLoadResult.success: " << chartLoadResult.success << std::endl;
-        std::cout << "chartLoadResult.erros: " << std::endl;
-        for (const auto& e : chartLoadResult.errors) std::cout << e << std::endl;
-        if (!chartLoadResult.success) return "failed to load chart";
-        chart = std::move(chartLoadResult.chart);
+        if (!easy_phi::Data::FromFile(&data, path)) throw std::runtime_error("failed to read chart file");
 
         this->chartDir = chartDir;
 
-        easy_phi::Data extraData;
-        if (easy_phi::Data::FromFile(&extraData, chartDir + "extra.json")) {
-            auto extraLoadResult = easy_phi::loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
-            if (std::holds_alternative<easy_phi::PhiExtra>(extraLoadResult)) {
-                chart.extra = std::move(std::get<easy_phi::PhiExtra>(extraLoadResult));
-                std::cout << "loaded extra" << std::endl;
-            } else if (std::holds_alternative<std::string>(extraLoadResult)) {
-                std::cout << "failed to load extra: " << std::get<std::string>(extraLoadResult) << std::endl;
+        auto resultInfo = renderer->loadChart(data, [&](auto& chart) {
+            easy_phi::Data extraData;
+            if (easy_phi::Data::FromFile(&extraData, chartDir + "extra.json")) {
+                auto extraLoadResult = easy_phi::loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
+                if (std::holds_alternative<easy_phi::PhiExtra>(extraLoadResult)) {
+                    chart.extra = std::move(std::get<easy_phi::PhiExtra>(extraLoadResult));
+                    std::cout << "loaded extra" << std::endl;
+                } else if (std::holds_alternative<std::string>(extraLoadResult)) {
+                    std::cout << "failed to load extra: " << std::get<std::string>(extraLoadResult) << std::endl;
+                }
             }
-        }
 
-        renderer->initChart(chart);
-        return std::nullopt;
+            chart.init();
+        });
+
+        std::cout << "create chart object took: " << resultInfo.createObjectTook << " s" << std::endl;
+        std::cout << "init chart took: " << resultInfo.initTook << " s" << std::endl;
+
+        resultInfo.checkAndThrow();
     }
 
     void setVSync(bool enabled) {
@@ -877,16 +846,15 @@ struct Window {
     }
 
     struct MainloopConfig {
+        std::optional<double> time;
         bool isRenderingVideo;
         TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi;
         ep_sp<TextureInfo> renderTarget;
     };
 
-    bool mainloopFrame(
-        double t,
-        const MainloopConfig& mainloopConfig
-    ) {
-        double frameSt = globalTimer();
+    bool mainloopFrame(const MainloopConfig& mainloopConfig) {
+        auto frameSt = globalTimer();
+
         if (!mainloopConfig.isRenderingVideo && glfwWindowShouldClose(window)) {
             glfwSetWindowShouldClose(window, GLFW_FALSE);
             return false;
@@ -896,30 +864,22 @@ struct Window {
             glfwGetFramebufferSize(window, &width, &height);
         }
 
-        calculateFrameConfig.screenSize = { (double)width, (double)height };
+        renderer->calcConfig.screenSize = { (double)width, (double)height };
 
-        {
-            double st = globalTimer();
-            easy_phi::calculatePhiFrame(chart, t, calculateFrameConfig, calculatedFrame);
-            double took = (globalTimer() - st) * 1000;
-            if (mainloopConfig.pccfi) mainloopConfig.pccfi->calculationTook = took;
-            std::cout << "calculatePhiFrame took " << took << " ms" << std::endl;
-        }
-
-        double renderSt = globalTimer();
-        renderer->render(calculateFrameConfig, calculatedFrame, {
+        auto& resultInfo = renderer->render({
+            .time = mainloopConfig.time,
             .disableHitsound = mainloopConfig.isRenderingVideo
         });
 
+        std::cout << "calculate took: " << (resultInfo.calculatedTook * 1000) << " ms" << std::endl;
+        std::cout << "gl operations took: " << (resultInfo.glOperationsTook * 1000) << " ms" << std::endl;
+        
         if (mainloopConfig.pccfi) {
+            mainloopConfig.pccfi->calculationTook = resultInfo.calculatedTook * 1000;
             mainloopConfig.pccfi->screenSize = { (double)width, (double)height };
-            mainloopConfig.pccfi->timeRange = calculatedFrame.frameTimeRange.toPair();
-            mainloopConfig.pccfi->renderTook = (globalTimer() - renderSt) * 1000;
+            mainloopConfig.pccfi->timeRange = renderer->calculatedFrame.frameTimeRange.toPair();
+            mainloopConfig.pccfi->renderTook = resultInfo.glOperationsTook * 1000;
         }
-
-        std::cout << "frame took (without glfw operation) " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
-
-        glCtx->flush();
 
         if (!mainloopConfig.isRenderingVideo) {
             glfwPollEvents();

@@ -7764,505 +7764,6 @@ struct PhiCalculatedFrame {
 
     Cache cache;
     Vec2 frameTimeRange;
-
-    struct TakeOverer {
-        /* !docs
-        The take overer for phigros.
-        */
-
-        TakeOverer() = default;
-        TakeOverer(const TakeOverer&) = delete;
-        TakeOverer(TakeOverer&&) = delete;
-        TakeOverer& operator=(const TakeOverer&) = delete;
-        TakeOverer& operator=(TakeOverer&&) = delete;
-
-        static ep_sp<TakeOverer> Make() {
-            auto* renderer = new TakeOverer();
-            return ep_sp<TakeOverer>(renderer);
-        }
-        
-        using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
-        TextureDeocder textureDeocder;
-
-        using TextRenderer = std::function<DecodedRGBATexture(const std::string&, ep_u64)>;
-        TextRenderer textRenderer;
-
-        struct NoteTextureDataReaderConfig {
-            EnumPhiNoteType type;
-            bool isSimul;
-        };
-        struct NoteTextureDataReaderResult {
-            Data encoded;
-            Vec2 cutPadding;
-            bool cutPaddingIsPixel;
-            bool ignoreCutPadding;
-        };
-        using NoteTextureDataReader = std::function<NoteTextureDataReaderResult(const NoteTextureDataReaderConfig&)>;
-        NoteTextureDataReader noteTextureDataReader;
-
-        using HitEffectDataReader = std::function<std::vector<Data>()>;
-        HitEffectDataReader hitEffectDataReader;
-
-        using AudioDecoder = std::function<ep_sp<DecodedAudio>(const Data&)>;
-        AudioDecoder audioDecoder;
-
-        using HitsoundDataReader = std::function<Data(EnumPhiNoteType)>;
-        HitsoundDataReader hitsoundDataReader;
-
-        using StoryboardDataReader = std::function<Data(const std::string&)>;
-        StoryboardDataReader storyboardDataReader;
-
-        using ShaderDataReader = std::function<std::string(const std::string&)>;
-        ShaderDataReader shaderDataReader;
-
-        ep_sp<GL::GL33Context> glCtx;
-        ep_sp<AudioEngine> audioEngine;
-
-        ep_u64 maxSfxPlaying = 16;
-
-        void check() {
-            auto checkBool = [](bool cond, const std::string& err) {
-                if (!cond) {
-                    throw std::runtime_error(err);
-                }
-            };
-
-            checkBool(!!textureDeocder, "textureDeocder is not set");
-            checkBool(!!textRenderer, "textRenderer is not set");
-            checkBool(!!noteTextureDataReader, "noteTextureDataReader is not set");
-            checkBool(!!hitEffectDataReader, "hitEffectDataReader is not set");
-            checkBool(!!audioDecoder, "audioDecoder is not set");
-            checkBool(!!hitsoundDataReader, "hitsoundDataReader is not set");
-            checkBool(!!storyboardDataReader, "storyboardDataReader is not set");
-            checkBool(!!shaderDataReader, "shaderDataReader is not set");
-            checkBool(!!glCtx, "glCtx is not set");
-            checkBool(!!audioEngine, "audioEngine is not set");
-        }
-
-        void loadIllustion(const Data& data, PhiCalculateFrameConfig& calcConfig) {
-            auto decoded = textureDeocder(data);
-            rawIllustionTexture = loadTextureFromDecoded(decoded);
-            bluredIllustionCache.key = -1.0;
-            calcConfig.backgroundTextureSize = { rawIllustionTexture->width, rawIllustionTexture->height };
-        }
-
-        void loadAudio(const Data& data, PhiCalculateFrameConfig& calcConfig) {
-            bgmAudio = audioDecoder(data);
-            if (!bgmAudio) throw std::runtime_error("audioDecoder failed");
-            calcConfig.songLength = bgmAudio->getLengthInSeconds();
-        }
-
-        void loadResources(PhiCalculateFrameConfig& calcConfig) {
-            clearResources();
-
-            for (const auto type : {
-                EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
-                EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
-            }) {
-                noteTextures[type] = { nullptr, nullptr };
-                calcConfig.noteTextureInfos[type] = {};
-
-                for (const auto isSimul : { false, true }) {
-                    auto loadResult = noteTextureDataReader(NoteTextureDataReaderConfig {
-                        .type = type,
-                        .isSimul = isSimul
-                    });
-
-                    auto decoded = textureDeocder(loadResult.encoded);
-                    auto tex = loadTextureFromDecoded(decoded);
-                    if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding *= decoded.height;
-                    if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.height, (ep_f64)decoded.height } / 2;
-
-                    if (!isSimul) noteTextures[type].first = tex;
-                    else noteTextures[type].second = tex;
-
-                    PhiCalculateFrameConfig::NoteTextureInfo::Item item {
-                        .textureSize = Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height },
-                        .cutPadding = loadResult.cutPadding
-                    };
-
-                    if (!isSimul) calcConfig.noteTextureInfos[type].single = item;
-                    else calcConfig.noteTextureInfos[type].simul = item;
-                }
-
-                auto& info = calcConfig.noteTextureInfos[type];
-                auto simulScale = (ep_f64)info.simul.textureSize.x / info.single.textureSize.x;
-                info.simul.scaling = { simulScale, simulScale };
-            }
-
-            auto hitEffectDatas = hitEffectDataReader();
-            for (const auto& data : hitEffectDatas) {
-                auto decoded = textureDeocder(data);
-                auto tex = loadTextureFromDecoded(decoded);
-                hitEffectTextures.push_back(tex);
-            }
-
-            for (const auto type : {
-                EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
-                EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
-            }) {
-                auto data = hitsoundDataReader(type);
-                auto decoded = audioDecoder(data);
-                if (!decoded) throw std::runtime_error("audioDecoder failed");
-                hitsoundAudios[type] = decoded;
-            }
-        }
-
-        void startBgm() {
-            if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
-            if (bgmAudioTask) bgmAudioTask->stopped = true;
-            bgmAudioTask = audioEngine->createTask(bgmAudio);
-        }
-
-        ep_f64 getBgmTime() {
-            if (!bgmAudioTask) return 0.0;
-            return audioEngine->getTaskTime(bgmAudioTask);
-        }
-
-        bool getBpmIsEnded() {
-            if (!bgmAudioTask) return false;
-            return audioEngine->getTaskEnded(bgmAudioTask);
-        }
-
-        void stopBgm() {
-            if (!bgmAudioTask) return;
-            bgmAudioTask->stopped = true;
-            bgmAudioTask = nullptr;
-        }
-
-        void setBgmVolume(ep_f64 vol) {
-            bgmVolume = vol;
-            if (bgmAudioTask) {
-                bgmAudioTask->volume = bgmVolume;
-            }
-        }
-
-        void setSfxVolume(ep_f64 vol) {
-            sfxVolume = vol;
-        }
-
-        struct MixBgmConfig {
-            ep_f64 musicVol = 1.0, sfxVol = 1.0;
-            bool sfxRandshake = false;
-        };
-
-        ep_sp<DecodedAudio> mixFinalBgm(const PhiChart& chart, const MixBgmConfig& config) {
-            if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
-
-            auto result = bgmAudio->copy();
-            result->applyVolume(config.musicVol);
-            
-            std::mt19937 rng { std::random_device {} () };
-            std::uniform_real_distribution<double> sfxRandshakeDist { 0.0, 0.02 };
-
-            for (const auto& line : chart.lines) {
-                for (const auto& note : line.notes) {
-                    if (note.isFake) continue;
-
-                    ep_f64 t = note.time + chart.meta.offset;
-                    if (config.sfxRandshake) t += sfxRandshakeDist(rng);
-
-                    auto sfx = hitsoundAudios.at(note.type);
-                    result->overlapSecond(sfx, t, config.sfxVol);
-                }
-            }
-
-            return result;
-        }
-
-        using ChartIniter = std::function<void(PhiChart&)>;
-        void initChart(PhiChart& chart, const ChartIniter& initer = [](PhiChart& chart) {
-            chart.init();
-        }) {
-            ep_u64 storyboardTextureId = 0;
-
-            chart.storyboardAssets.clearTextures();
-            chart.storyboardAssets.textureLoader = [&, this](const std::string& name) {
-                auto data = storyboardDataReader(name);
-                auto decoded = textureDeocder(data);
-                auto tex = loadTextureFromDecoded(decoded);
-                auto id = storyboardTextureId++;
-                storyboardTextures[id] = tex;
-                return std::make_pair(id, Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height });
-            };
-            chart.storyboardAssets.textureDestroyer = [this](ep_u64 id) {
-                storyboardTextures.erase(id);
-            };
-
-            chart.storyboardAssets.shaderPreloader = [this](const std::string& name) {
-                auto shaderString = shaderDataReader(name);
-
-                // TODO: ...
-            };
-
-            initer(chart);
-        }
-
-        struct RenderConfig {
-            bool disableHitsound = false;
-        };
-        void render(
-            PhiCalculateFrameConfig& calcConfig,
-            const PhiCalculatedFrame& frame,
-            const RenderConfig& renderConfig
-        ) {
-            using namespace GL;
-
-            glCtx->setViewport(calcConfig.screenSize.x, calcConfig.screenSize.y);
-            glCtx->setClearColor(0.0, 0.0, 0.0, 0.0);
-            glCtx->clear(GL_COLOR_BUFFER_BIT);
-
-            auto illuTex = bluredIllustionCache.get(frame.backgroundImageBlurRadius, [&]() {
-                auto tex = glCtx->createTexture();
-                glCtx->copyTexture(rawIllustionTexture.get(), tex.get());
-                glCtx->gaussianBlurToTexture(tex.get(), frame.backgroundImageBlurRadius);
-                return tex;
-            });
-
-            auto cvs = glCtx->getCanvas();
-
-            cvs.drawRect({
-                .position = { frame.unsafeBackgroundRect.x, frame.unsafeBackgroundRect.y },
-                .size = { frame.unsafeBackgroundRect.w, frame.unsafeBackgroundRect.h },
-                .color = GLvec4::Gray(1.0 - frame.unsafeAreaDim),
-                .texture = illuTex.get()
-            });
-
-            glCtx->setViewport(
-                frame.objectsClipRect.x, frame.objectsClipRect.y,
-                frame.objectsClipRect.w, frame.objectsClipRect.h
-            );
-
-            cvs.drawRect({
-                .position = { frame.backgroundRect.x, frame.backgroundRect.y },
-                .size = { frame.backgroundRect.w, frame.backgroundRect.h },
-                .color = GLvec4::Gray(1.0 - frame.backgroundDim),
-                .texture = illuTex.get()
-            });
-
-            for (auto& obj : frame.objects) {
-                if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedNote>(obj)) {
-                    auto& note = std::get<easy_phi::PhiCalculatedFrame::CalculatedNote>(obj);
-                    auto& img = note.isSimul ? noteTextures[note.type].second : noteTextures[note.type].first;
-                    auto& imgInfo = note.isSimul ? calcConfig.noteTextureInfos[note.type].simul : calcConfig.noteTextureInfos[note.type].single;
-
-                    cvs.save();
-                    cvs.translate(note.position);
-                    cvs.rotateDegrees(note.rotation);
-
-                    auto mesh = glCtx->requestMesh(6 * 3);
-                    mesh.color = note.color;
-                    mesh.texture = img.get();
-
-                    mesh.addRect(
-                        { -note.width / 2, 0.0 }, { note.width, note.head },
-                        GLvec2 { 0.0, imgInfo.textureSize.y - imgInfo.cutPadding.x } / imgInfo.textureSize,
-                        GLvec2 { imgInfo.textureSize.x, imgInfo.cutPadding.x } / imgInfo.textureSize
-                    );
-
-                    mesh.addRect(
-                        { -note.width / 2, -note.body },
-                        { note.width, note.body },
-                        GLvec2 { 0.0, imgInfo.cutPadding.y } / imgInfo.textureSize,
-                        GLvec2 { imgInfo.textureSize.x, imgInfo.textureSize.y - imgInfo.cutPadding.sum() } / imgInfo.textureSize
-                    );
-
-                    mesh.addRect(
-                        { -note.width / 2, -note.body - note.tail },
-                        { note.width, note.tail },
-                        GLvec2 { 0.0, 0.0 },
-                        GLvec2 { imgInfo.textureSize.x, imgInfo.cutPadding.y } / imgInfo.textureSize
-                    );
-
-                    cvs.drawMesh(mesh);
-                    cvs.restore();
-                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedText>(obj)) {
-                    auto& text = std::get<easy_phi::PhiCalculatedFrame::CalculatedText>(obj);
-
-                    Vec2 anchor;
-
-                    if (text.align == EnumTextAlign::Left) anchor.x = 0.0;
-                    else if (text.align == EnumTextAlign::Center) anchor.x = 0.5;
-                    else if (text.align == EnumTextAlign::Right) anchor.x = 1.0;
-
-                    if (text.baseline == EnumTextBaseline::Top) anchor.y = 0.0;
-                    else if (text.baseline == EnumTextBaseline::Middle) anchor.y = 0.5;
-                    else if (text.baseline == EnumTextBaseline::Bottom) anchor.y = 1.0;
-
-                    DrawTextConfig config {
-                        .text = text.text,
-                        .fontSize = text.fontSize,
-                        .pos = text.position,
-                        .anchor = anchor,
-                        .rotation = text.rotation,
-                        .scale = text.scale,
-                        .color = text.color
-                    };
-
-                    drawText(cvs, config);
-                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj)) {
-                    auto& sbTexture = std::get<easy_phi::PhiCalculatedFrame::CalculatedStoryboardTexture>(obj);
-                    auto& img = storyboardTextures[sbTexture.texture];
-
-                    cvs.save();
-                    cvs.translate(sbTexture.position);
-                    cvs.rotateDegrees(sbTexture.rotation);
-                    cvs.scale(sbTexture.scale);
-                    cvs.drawRect({
-                        .position = -sbTexture.size * sbTexture.anchor,
-                        .size = sbTexture.size,
-                        .color = sbTexture.color,
-                        .texture = img.get()
-                    });
-                    cvs.restore();
-                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedHitEffectTexture>(obj)) {
-                    auto& effect = std::get<easy_phi::PhiCalculatedFrame::CalculatedHitEffectTexture>(obj);
-                    auto& img = hitEffectTextures[std::clamp<ep_u64>(effect.progress * hitEffectTextures.size(), 0, hitEffectTextures.size() - 1)];
-
-                    cvs.save();
-                    cvs.translate(effect.position);
-                    cvs.rotateDegrees(effect.rotation);
-                    cvs.drawRect({
-                        .position = -effect.size / 2,
-                        .size = effect.size,
-                        .color = effect.color,
-                        .texture = img.get()
-                    });
-                    cvs.restore();
-                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedRect>(obj)) {
-                    auto& effect = std::get<easy_phi::PhiCalculatedFrame::CalculatedRect>(obj);
-
-                    cvs.save();
-                    cvs.translate(effect.position);
-                    cvs.rotateDegrees(effect.rotation);
-                    cvs.drawRect({
-                        .position = -effect.size / 2,
-                        .size = effect.size,
-                        .color = effect.color
-                    });
-                    cvs.restore();
-                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedPoly>(obj)) {
-                    auto& poly = std::get<easy_phi::PhiCalculatedFrame::CalculatedPoly>(obj);
-
-                    auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
-                    mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
-                    mesh.color = poly.color;
-                    cvs.drawMesh(mesh);
-                } else if (std::holds_alternative<easy_phi::PhiCalculatedFrame::CalculatedShader>(obj)) {
-                    auto& shader = std::get<easy_phi::PhiCalculatedFrame::CalculatedShader>(obj);
-                }
-            }
-
-            if (!renderConfig.disableHitsound && maxSfxPlaying > 0) {
-                for (ep_u64 i = std::max<ep_i64>(0, frame.hitsounds.size() - maxSfxPlaying); i < frame.hitsounds.size(); ++i) {
-                    playSfx(hitsoundAudios.at(frame.hitsounds[i].first));
-                }
-            }
-        }
-
-        private:
-        ep_sp<GL::TextureInfo> rawIllustionTexture;
-        SKVCache<ep_f64, ep_sp<GL::TextureInfo>> bluredIllustionCache;
-        ep_sp<DecodedAudio> bgmAudio;
-        ep_sp<AudioEngine::Task> bgmAudioTask;
-        ep_f64 bgmVolume = 1.0, sfxVolume = 1.0;
-        std::vector<ep_sp<AudioEngine::Task>> playingSfxs;
-        std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
-        std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
-        std::unordered_map<EnumPhiNoteType, ep_sp<DecodedAudio>> hitsoundAudios;
-        std::unordered_map<ep_u64, ep_sp<GL::TextureInfo>> storyboardTextures;
-        ep_u64 maxTextTextures = 128;
-        std::map<std::pair<std::string, ep_u64>, ep_sp<GL::TextureInfo>> cachedTextTextures;
-
-        ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedRGBATexture& decoded) {
-            if (!decoded.valid()) throw std::runtime_error("texture is invalid");
-
-            auto tex = glCtx->createTexture();
-            tex->use().image2D(decoded);
-            return tex;
-        }
-
-        void clearResources() {
-            noteTextures.clear();
-            hitEffectTextures.clear();
-            storyboardTextures.clear();
-        }
-
-        ep_sp<GL::TextureInfo> getTextTexture(const std::string& text, ep_u64 fontSize) {
-            auto key = std::make_pair(text, fontSize);
-
-            if (cachedTextTextures.find(key) == cachedTextTextures.end()) {
-                if (cachedTextTextures.size() >= maxTextTextures) {
-                    static std::mt19937 rng { std::random_device {} () };
-                    std::uniform_int_distribution<ep_u64> dist { 0, cachedTextTextures.size() - 1 };
-                    
-                    auto it = cachedTextTextures.begin();
-                    std::advance(it, dist(rng));
-                    cachedTextTextures.erase(it);
-                }
-
-                auto decoded = textRenderer(text, fontSize);
-                auto tex = loadTextureFromDecoded(decoded);
-                cachedTextTextures[key] = tex;
-            }
-
-            return cachedTextTextures[key];
-        }
-
-        struct DrawTextConfig {
-            std::string text; ep_f64 fontSize;
-            GL::GLvec2 pos, anchor;
-            ep_f64 rotation;
-            GL::GLvec2 scale;
-            GL::GLvec4 color;
-
-            void normScale() {
-                auto wScale = std::min<ep_f64>(std::max(scale.x, scale.y), 16.0);
-
-                if (wScale > 1.0) {
-                    scale /= wScale;
-                    fontSize *= wScale;
-                }
-            }
-        };
-
-        void drawText(
-            GL::GL33Context::Canvas& cvs,
-            DrawTextConfig& config
-        ) {
-            config.normScale();
-
-            ep_u64 isize = std::ceil(config.fontSize / 48) * 48;
-            auto tex = getTextTexture(config.text, isize);
-            ep_f64 scale = config.fontSize / isize;
-
-            auto size = tex->size() * scale * config.scale;
-
-            cvs.save();
-            cvs.translate(config.pos);
-            cvs.rotateDegrees(config.rotation);
-            cvs.drawRect({
-                .position = -size * config.anchor,
-                .size = size,
-                .color = config.color,
-                .texture = tex.get()
-            });
-            cvs.restore();
-        }
-
-        void playSfx(const ep_sp<DecodedAudio>& audio) {
-            if (!maxSfxPlaying) return;
-
-            while (playingSfxs.size() >= maxSfxPlaying) {
-                auto& task = playingSfxs.front();
-                task->stopped = true;
-                playingSfxs.erase(playingSfxs.begin());
-            }
-
-            auto task = audioEngine->createTask(audio);
-            task->volume = sfxVolume;
-        }
-    };
 };
 
 void calculatePhiFrame(
@@ -8756,6 +8257,584 @@ void calculatePhiFrame(
 
     calculateExtra(true);
 }
+
+
+struct PhiTakeOverer {
+    /* !docs
+    The take overer for phigros.
+    */
+
+    PhiTakeOverer() = default;
+    PhiTakeOverer(const PhiTakeOverer&) = delete;
+    PhiTakeOverer(PhiTakeOverer&&) = delete;
+    PhiTakeOverer& operator=(const PhiTakeOverer&) = delete;
+    PhiTakeOverer& operator=(PhiTakeOverer&&) = delete;
+
+    static ep_sp<PhiTakeOverer> Make() {
+        auto* renderer = new PhiTakeOverer();
+        return ep_sp<PhiTakeOverer>(renderer);
+    }
+    
+    using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
+    TextureDeocder textureDeocder;
+
+    using TextRenderer = std::function<DecodedRGBATexture(const std::string&, ep_u64)>;
+    TextRenderer textRenderer;
+
+    struct NoteTextureDataReaderConfig {
+        EnumPhiNoteType type;
+        bool isSimul;
+    };
+    struct NoteTextureDataReaderResult {
+        Data encoded;
+        Vec2 cutPadding;
+        bool cutPaddingIsPixel;
+        bool ignoreCutPadding;
+    };
+    using NoteTextureDataReader = std::function<NoteTextureDataReaderResult(const NoteTextureDataReaderConfig&)>;
+    NoteTextureDataReader noteTextureDataReader;
+
+    using HitEffectDataReader = std::function<std::vector<Data>()>;
+    HitEffectDataReader hitEffectDataReader;
+
+    using AudioDecoder = std::function<ep_sp<DecodedAudio>(const Data&)>;
+    AudioDecoder audioDecoder;
+
+    using HitsoundDataReader = std::function<Data(EnumPhiNoteType)>;
+    HitsoundDataReader hitsoundDataReader;
+
+    using StoryboardDataReader = std::function<Data(const std::string&)>;
+    StoryboardDataReader storyboardDataReader;
+
+    using ShaderDataReader = std::function<std::string(const std::string&)>;
+    ShaderDataReader shaderDataReader;
+
+    PhiCalculateFrameConfig calcConfig;
+    PhiChart chart;
+    ep_sp<GL::GL33Context> glCtx;
+    ep_sp<AudioEngine> audioEngine;
+    PhiCalculatedFrame calculatedFrame;
+
+    ep_u64 maxSfxPlaying = 16;
+
+    void check() {
+        auto checkBool = [](bool cond, const std::string& err) {
+            if (!cond) {
+                throw std::runtime_error(err);
+            }
+        };
+
+        checkBool(!!textureDeocder, "textureDeocder is not set");
+        checkBool(!!textRenderer, "textRenderer is not set");
+        checkBool(!!noteTextureDataReader, "noteTextureDataReader is not set");
+        checkBool(!!hitEffectDataReader, "hitEffectDataReader is not set");
+        checkBool(!!audioDecoder, "audioDecoder is not set");
+        checkBool(!!hitsoundDataReader, "hitsoundDataReader is not set");
+        checkBool(!!storyboardDataReader, "storyboardDataReader is not set");
+        checkBool(!!shaderDataReader, "shaderDataReader is not set");
+        checkBool(!!glCtx, "glCtx is not set");
+        checkBool(!!audioEngine, "audioEngine is not set");
+    }
+
+    void loadIllustion(const Data& data) {
+        auto decoded = textureDeocder(data);
+        rawIllustionTexture = loadTextureFromDecoded(decoded);
+        bluredIllustionCache.key = -1.0;
+        calcConfig.backgroundTextureSize = { rawIllustionTexture->width, rawIllustionTexture->height };
+    }
+
+    void loadIllustion(const std::string& path) {
+        Data data;
+        if (!Data::FromFile(&data, path)) throw std::runtime_error("failed to read file");
+        loadIllustion(data);
+    }
+
+    void loadAudio(const Data& data) {
+        bgmAudio = audioDecoder(data);
+        if (!bgmAudio) throw std::runtime_error("audioDecoder failed");
+        calcConfig.songLength = bgmAudio->getLengthInSeconds();
+    }
+
+    void loadAudio(const std::string& path) {
+        Data data;
+        if (!Data::FromFile(&data, path)) throw std::runtime_error("failed to read file");
+        loadAudio(data);
+    }
+
+    void loadResources() {
+        clearResources();
+
+        for (const auto type : {
+            EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
+            EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
+        }) {
+            noteTextures[type] = { nullptr, nullptr };
+            calcConfig.noteTextureInfos[type] = {};
+
+            for (const auto isSimul : { false, true }) {
+                auto loadResult = noteTextureDataReader(NoteTextureDataReaderConfig {
+                    .type = type,
+                    .isSimul = isSimul
+                });
+
+                auto decoded = textureDeocder(loadResult.encoded);
+                auto tex = loadTextureFromDecoded(decoded);
+                if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding *= decoded.height;
+                if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.height, (ep_f64)decoded.height } / 2;
+
+                if (!isSimul) noteTextures[type].first = tex;
+                else noteTextures[type].second = tex;
+
+                PhiCalculateFrameConfig::NoteTextureInfo::Item item {
+                    .textureSize = Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height },
+                    .cutPadding = loadResult.cutPadding
+                };
+
+                if (!isSimul) calcConfig.noteTextureInfos[type].single = item;
+                else calcConfig.noteTextureInfos[type].simul = item;
+            }
+
+            auto& info = calcConfig.noteTextureInfos[type];
+            auto simulScale = (ep_f64)info.simul.textureSize.x / info.single.textureSize.x;
+            info.simul.scaling = { simulScale, simulScale };
+        }
+
+        auto hitEffectDatas = hitEffectDataReader();
+        for (const auto& data : hitEffectDatas) {
+            auto decoded = textureDeocder(data);
+            auto tex = loadTextureFromDecoded(decoded);
+            hitEffectTextures.push_back(tex);
+        }
+
+        for (const auto type : {
+            EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
+            EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
+        }) {
+            auto data = hitsoundDataReader(type);
+            auto decoded = audioDecoder(data);
+            if (!decoded) throw std::runtime_error("audioDecoder failed");
+            hitsoundAudios[type] = decoded;
+        }
+    }
+
+    void startBgm() {
+        if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
+        if (bgmAudioTask) bgmAudioTask->stopped = true;
+        bgmAudioTask = audioEngine->createTask(bgmAudio);
+    }
+
+    ep_f64 getBgmTime() {
+        if (!bgmAudioTask) return 0.0;
+        return audioEngine->getTaskTime(bgmAudioTask);
+    }
+
+    bool getBpmIsEnded() {
+        if (!bgmAudioTask) return false;
+        return audioEngine->getTaskEnded(bgmAudioTask);
+    }
+
+    void stopBgm() {
+        if (!bgmAudioTask) return;
+        bgmAudioTask->stopped = true;
+        bgmAudioTask = nullptr;
+    }
+
+    void setBgmVolume(ep_f64 vol) {
+        bgmVolume = vol;
+        if (bgmAudioTask) {
+            bgmAudioTask->volume = bgmVolume;
+        }
+    }
+
+    void setSfxVolume(ep_f64 vol) {
+        sfxVolume = vol;
+    }
+
+    struct MixBgmConfig {
+        ep_f64 musicVol = 1.0, sfxVol = 1.0;
+        bool sfxRandshake = false;
+    };
+
+    ep_sp<DecodedAudio> mixFinalBgm(const PhiChart& chart, const MixBgmConfig& config) {
+        if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
+
+        auto result = bgmAudio->copy();
+        result->applyVolume(config.musicVol);
+        
+        std::mt19937 rng { std::random_device {} () };
+        std::uniform_real_distribution<double> sfxRandshakeDist { 0.0, 0.02 };
+
+        for (const auto& line : chart.lines) {
+            for (const auto& note : line.notes) {
+                if (note.isFake) continue;
+
+                ep_f64 t = note.time + chart.meta.offset;
+                if (config.sfxRandshake) t += sfxRandshakeDist(rng);
+
+                auto sfx = hitsoundAudios.at(note.type);
+                result->overlapSecond(sfx, t, config.sfxVol);
+            }
+        }
+
+        return result;
+    }
+
+    using ChartIniter = std::function<void(PhiChart&)>;
+
+    struct LoadChartResultInfo {
+        bool success = true;
+        std::vector<std::string> errors;
+
+        ep_f64 createObjectTook;
+        ep_f64 initTook;
+
+        void checkAndThrow() const {
+            if (success) return;
+            std::string messages = "";
+            for (const auto& error : errors) messages += error + "\n";
+            throw std::runtime_error("failed to load chart: " + messages);
+        }
+    };
+
+    LoadChartResultInfo loadChart(const Data& data, const ChartIniter& initer = [](PhiChart& chart) {
+        chart.init();
+    }) {
+        LoadChartResultInfo resultInfo {};
+
+        {
+            auto startTime = globalTimer();
+            auto loadResult = loadPhiChartFromData(data);
+            resultInfo.createObjectTook = globalTimer() - startTime;
+
+            if (!loadResult.success) {
+                resultInfo.success = false;
+                resultInfo.errors = std::move(loadResult.errors);
+                return resultInfo;
+            }
+
+            chart = std::move(loadResult.chart);
+        }
+
+        ep_u64 storyboardTextureId = 0;
+
+        chart.storyboardAssets.clearTextures();
+        chart.storyboardAssets.textureLoader = [&, this](const std::string& name) {
+            auto data = storyboardDataReader(name);
+            auto decoded = textureDeocder(data);
+            auto tex = loadTextureFromDecoded(decoded);
+            auto id = storyboardTextureId++;
+            storyboardTextures[id] = tex;
+            return std::make_pair(id, Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height });
+        };
+        chart.storyboardAssets.textureDestroyer = [this](ep_u64 id) {
+            storyboardTextures.erase(id);
+        };
+
+        chart.storyboardAssets.shaderPreloader = [this](const std::string& name) {
+            auto shaderString = shaderDataReader(name);
+
+            // TODO: ...
+        };
+
+        {
+            auto startTime = globalTimer();
+            initer(chart);
+            resultInfo.initTook = globalTimer() - startTime;
+        }
+
+        return resultInfo;
+    }
+
+    struct RenderConfig {
+        std::optional<ep_f64> time;
+        bool flushGl = true;
+        bool disableHitsound = false;
+    };
+
+    struct RenderResultInfo {
+        ep_f64 calculatedTook;
+        ep_f64 glOperationsTook;
+    };
+
+    RenderResultInfo& render(
+        const RenderConfig& renderConfig
+    ) {
+        auto t = renderConfig.time.value_or(getBgmTime());
+
+        {
+            auto startTime = globalTimer();
+            calculatePhiFrame(chart, t, calcConfig, calculatedFrame);
+            renderResultInfoCache.calculatedTook = globalTimer() - startTime;
+        }
+
+        auto glOpsStartTime = globalTimer();
+
+        using namespace GL;
+
+        glCtx->setViewport(calcConfig.screenSize.x, calcConfig.screenSize.y);
+        glCtx->setClearColor(0.0, 0.0, 0.0, 0.0);
+        glCtx->clear(GL_COLOR_BUFFER_BIT);
+
+        auto illuTex = bluredIllustionCache.get(calculatedFrame.backgroundImageBlurRadius, [&]() {
+            auto tex = glCtx->createTexture();
+            glCtx->copyTexture(rawIllustionTexture.get(), tex.get());
+            glCtx->gaussianBlurToTexture(tex.get(), calculatedFrame.backgroundImageBlurRadius);
+            return tex;
+        });
+
+        auto cvs = glCtx->getCanvas();
+
+        cvs.drawRect({
+            .position = { calculatedFrame.unsafeBackgroundRect.x, calculatedFrame.unsafeBackgroundRect.y },
+            .size = { calculatedFrame.unsafeBackgroundRect.w, calculatedFrame.unsafeBackgroundRect.h },
+            .color = GLvec4::Gray(1.0 - calculatedFrame.unsafeAreaDim),
+            .texture = illuTex.get()
+        });
+
+        glCtx->setViewport(
+            calculatedFrame.objectsClipRect.x, calculatedFrame.objectsClipRect.y,
+            calculatedFrame.objectsClipRect.w, calculatedFrame.objectsClipRect.h
+        );
+
+        cvs.drawRect({
+            .position = { calculatedFrame.backgroundRect.x, calculatedFrame.backgroundRect.y },
+            .size = { calculatedFrame.backgroundRect.w, calculatedFrame.backgroundRect.h },
+            .color = GLvec4::Gray(1.0 - calculatedFrame.backgroundDim),
+            .texture = illuTex.get()
+        });
+
+        for (auto& obj : calculatedFrame.objects) {
+            if (std::holds_alternative<PhiCalculatedFrame::CalculatedNote>(obj)) {
+                auto& note = std::get<PhiCalculatedFrame::CalculatedNote>(obj);
+                auto& img = note.isSimul ? noteTextures[note.type].second : noteTextures[note.type].first;
+                auto& imgInfo = note.isSimul ? calcConfig.noteTextureInfos[note.type].simul : calcConfig.noteTextureInfos[note.type].single;
+
+                cvs.save();
+                cvs.translate(note.position);
+                cvs.rotateDegrees(note.rotation);
+
+                auto mesh = glCtx->requestMesh(6 * 3);
+                mesh.color = note.color;
+                mesh.texture = img.get();
+
+                mesh.addRect(
+                    { -note.width / 2, 0.0 }, { note.width, note.head },
+                    GLvec2 { 0.0, imgInfo.textureSize.y - imgInfo.cutPadding.x } / imgInfo.textureSize,
+                    GLvec2 { imgInfo.textureSize.x, imgInfo.cutPadding.x } / imgInfo.textureSize
+                );
+
+                mesh.addRect(
+                    { -note.width / 2, -note.body },
+                    { note.width, note.body },
+                    GLvec2 { 0.0, imgInfo.cutPadding.y } / imgInfo.textureSize,
+                    GLvec2 { imgInfo.textureSize.x, imgInfo.textureSize.y - imgInfo.cutPadding.sum() } / imgInfo.textureSize
+                );
+
+                mesh.addRect(
+                    { -note.width / 2, -note.body - note.tail },
+                    { note.width, note.tail },
+                    GLvec2 { 0.0, 0.0 },
+                    GLvec2 { imgInfo.textureSize.x, imgInfo.cutPadding.y } / imgInfo.textureSize
+                );
+
+                cvs.drawMesh(mesh);
+                cvs.restore();
+            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedText>(obj)) {
+                auto& text = std::get<PhiCalculatedFrame::CalculatedText>(obj);
+
+                Vec2 anchor;
+
+                if (text.align == EnumTextAlign::Left) anchor.x = 0.0;
+                else if (text.align == EnumTextAlign::Center) anchor.x = 0.5;
+                else if (text.align == EnumTextAlign::Right) anchor.x = 1.0;
+
+                if (text.baseline == EnumTextBaseline::Top) anchor.y = 0.0;
+                else if (text.baseline == EnumTextBaseline::Middle) anchor.y = 0.5;
+                else if (text.baseline == EnumTextBaseline::Bottom) anchor.y = 1.0;
+
+                DrawTextConfig config {
+                    .text = text.text,
+                    .fontSize = text.fontSize,
+                    .pos = text.position,
+                    .anchor = anchor,
+                    .rotation = text.rotation,
+                    .scale = text.scale,
+                    .color = text.color
+                };
+
+                drawText(cvs, config);
+            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedStoryboardTexture>(obj)) {
+                auto& sbTexture = std::get<PhiCalculatedFrame::CalculatedStoryboardTexture>(obj);
+                auto& img = storyboardTextures[sbTexture.texture];
+
+                cvs.save();
+                cvs.translate(sbTexture.position);
+                cvs.rotateDegrees(sbTexture.rotation);
+                cvs.scale(sbTexture.scale);
+                cvs.drawRect({
+                    .position = -sbTexture.size * sbTexture.anchor,
+                    .size = sbTexture.size,
+                    .color = sbTexture.color,
+                    .texture = img.get()
+                });
+                cvs.restore();
+            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedHitEffectTexture>(obj)) {
+                auto& effect = std::get<PhiCalculatedFrame::CalculatedHitEffectTexture>(obj);
+                auto& img = hitEffectTextures[std::clamp<ep_u64>(effect.progress * hitEffectTextures.size(), 0, hitEffectTextures.size() - 1)];
+
+                cvs.save();
+                cvs.translate(effect.position);
+                cvs.rotateDegrees(effect.rotation);
+                cvs.drawRect({
+                    .position = -effect.size / 2,
+                    .size = effect.size,
+                    .color = effect.color,
+                    .texture = img.get()
+                });
+                cvs.restore();
+            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedRect>(obj)) {
+                auto& effect = std::get<PhiCalculatedFrame::CalculatedRect>(obj);
+
+                cvs.save();
+                cvs.translate(effect.position);
+                cvs.rotateDegrees(effect.rotation);
+                cvs.drawRect({
+                    .position = -effect.size / 2,
+                    .size = effect.size,
+                    .color = effect.color
+                });
+                cvs.restore();
+            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedPoly>(obj)) {
+                auto& poly = std::get<PhiCalculatedFrame::CalculatedPoly>(obj);
+
+                auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
+                mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
+                mesh.color = poly.color;
+                cvs.drawMesh(mesh);
+            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedShader>(obj)) {
+                auto& shader = std::get<PhiCalculatedFrame::CalculatedShader>(obj);
+            }
+        }
+
+        if (renderConfig.flushGl) {
+            glCtx->flush();
+        }
+
+        renderResultInfoCache.glOperationsTook = globalTimer() - glOpsStartTime;
+
+        if (!renderConfig.disableHitsound && maxSfxPlaying > 0) {
+            for (ep_u64 i = std::max<ep_i64>(0, calculatedFrame.hitsounds.size() - maxSfxPlaying); i < calculatedFrame.hitsounds.size(); ++i) {
+                playSfx(hitsoundAudios.at(calculatedFrame.hitsounds[i].first));
+            }
+        }
+
+        return renderResultInfoCache;
+    }
+
+    private:
+    ep_sp<GL::TextureInfo> rawIllustionTexture;
+    SKVCache<ep_f64, ep_sp<GL::TextureInfo>> bluredIllustionCache;
+    ep_sp<DecodedAudio> bgmAudio;
+    ep_sp<AudioEngine::Task> bgmAudioTask;
+    ep_f64 bgmVolume = 1.0, sfxVolume = 1.0;
+    std::vector<ep_sp<AudioEngine::Task>> playingSfxs;
+    std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
+    std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
+    std::unordered_map<EnumPhiNoteType, ep_sp<DecodedAudio>> hitsoundAudios;
+    std::unordered_map<ep_u64, ep_sp<GL::TextureInfo>> storyboardTextures;
+    ep_u64 maxTextTextures = 128;
+    std::map<std::pair<std::string, ep_u64>, ep_sp<GL::TextureInfo>> cachedTextTextures;
+    RenderResultInfo renderResultInfoCache;
+
+    ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedRGBATexture& decoded) {
+        if (!decoded.valid()) throw std::runtime_error("texture is invalid");
+
+        auto tex = glCtx->createTexture();
+        tex->use().image2D(decoded);
+        return tex;
+    }
+
+    void clearResources() {
+        noteTextures.clear();
+        hitEffectTextures.clear();
+        storyboardTextures.clear();
+    }
+
+    ep_sp<GL::TextureInfo> getTextTexture(const std::string& text, ep_u64 fontSize) {
+        auto key = std::make_pair(text, fontSize);
+
+        if (cachedTextTextures.find(key) == cachedTextTextures.end()) {
+            if (cachedTextTextures.size() >= maxTextTextures) {
+                static std::mt19937 rng { std::random_device {} () };
+                std::uniform_int_distribution<ep_u64> dist { 0, cachedTextTextures.size() - 1 };
+                
+                auto it = cachedTextTextures.begin();
+                std::advance(it, dist(rng));
+                cachedTextTextures.erase(it);
+            }
+
+            auto decoded = textRenderer(text, fontSize);
+            auto tex = loadTextureFromDecoded(decoded);
+            cachedTextTextures[key] = tex;
+        }
+
+        return cachedTextTextures[key];
+    }
+
+    struct DrawTextConfig {
+        std::string text; ep_f64 fontSize;
+        GL::GLvec2 pos, anchor;
+        ep_f64 rotation;
+        GL::GLvec2 scale;
+        GL::GLvec4 color;
+
+        void normScale() {
+            auto wScale = std::min<ep_f64>(std::max(scale.x, scale.y), 16.0);
+
+            if (wScale > 1.0) {
+                scale /= wScale;
+                fontSize *= wScale;
+            }
+        }
+    };
+
+    void drawText(
+        GL::GL33Context::Canvas& cvs,
+        DrawTextConfig& config
+    ) {
+        config.normScale();
+
+        ep_u64 isize = std::ceil(config.fontSize / 48) * 48;
+        auto tex = getTextTexture(config.text, isize);
+        ep_f64 scale = config.fontSize / isize;
+
+        auto size = tex->size() * scale * config.scale;
+
+        cvs.save();
+        cvs.translate(config.pos);
+        cvs.rotateDegrees(config.rotation);
+        cvs.drawRect({
+            .position = -size * config.anchor,
+            .size = size,
+            .color = config.color,
+            .texture = tex.get()
+        });
+        cvs.restore();
+    }
+
+    void playSfx(const ep_sp<DecodedAudio>& audio) {
+        if (!maxSfxPlaying) return;
+
+        while (playingSfxs.size() >= maxSfxPlaying) {
+            auto& task = playingSfxs.front();
+            task->stopped = true;
+            playingSfxs.erase(playingSfxs.begin());
+        }
+
+        auto task = audioEngine->createTask(audio);
+        task->volume = sfxVolume;
+    }
+};
 
 } // namespace easy_phi
 

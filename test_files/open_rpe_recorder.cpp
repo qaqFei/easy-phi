@@ -522,18 +522,17 @@ int main() {
             return true;
         };
 
-        if (!check(backendWin.loadChart(chartPath, chartRoot, &loadingChartTook), L"无法加载谱面")) return false;
+        backendWin.loadChart(chartPath, chartRoot, &loadingChartTook);
 
         if (chartInfo.has_value()) {
             auto& info = chartInfo.value();
-            backendWin.chart.meta.title = info.name;
-            backendWin.chart.meta.difficulty = info.level;
+            backendWin.renderer->chart.meta.title = info.name;
+            backendWin.renderer->chart.meta.difficulty = info.level;
         }
 
-        backendWin.chart.options.noteScaling *= settings.noteScaling;
-
-        if (!check(backendWin.loadBgImage(imagePath), L"无法加载曲绘")) return false;
-        if (!check(backendWin.loadMainSound(audioPath), L"无法加载音频")) return false;
+        backendWin.renderer->chart.options.noteScaling *= settings.noteScaling;
+        backendWin.renderer->loadIllustion(imagePath);
+        backendWin.renderer->loadAudio(audioPath);
 
         return true;
     };
@@ -550,21 +549,19 @@ int main() {
 
         TelemetryDeckClient::Performance::ChartPlayback::Completed performanceInfo {
             .baseInfo = TelemetryDeckClient::Performance::BaseInfo::make(),
-            .chartHash = backendWin.chart.rawHash,
+            .chartHash = backendWin.renderer->chart.rawHash,
             .loadingTook = loadingChartTook
         };
 
         backendWin.setHidden(false);
         backendWin.setVSync(true);
-        backendWin.startMainSound();
+        backendWin.renderer->startBgm();
 
         backendWin.renderer->setBgmVolume(settings.musicVol);
         backendWin.renderer->setSfxVolume(settings.sfxVol);
 
         while (!backendWin.renderer->getBpmIsEnded()) {
-            double t = backendWin.renderer->getBgmTime();
-
-            if (!backendWin.mainloopFrame(t, {
+            if (!backendWin.mainloopFrame({
                 .pccfi = &performanceInfo.frames.emplace_back()
             })) {
                 backendWin.renderer->stopBgm();
@@ -640,7 +637,7 @@ int main() {
         
         TelemetryDeckClient::Performance::VideoRender::Completed performanceInfo {
             .baseInfo = TelemetryDeckClient::Performance::BaseInfo::make(),
-            .chartHash = backendWin.chart.rawHash,
+            .chartHash = backendWin.renderer->chart.rawHash,
             .loadingTook = loadingChartTook,
             .screenSize = { (double)settings.recordWidth, (double)settings.recordHeight },
             .frameRate = settings.recordFPS,
@@ -649,7 +646,7 @@ int main() {
         double renderSt = globalTimer();
 
         pd.setLine(1, L"渲染音频...");
-        auto mixedAudio = backendWin.renderer->mixFinalBgm(backendWin.chart, {
+        auto mixedAudio = backendWin.renderer->mixFinalBgm(backendWin.renderer->chart, {
             .musicVol = settings.musicVol,
             .sfxVol = settings.sfxVol,
             .sfxRandshake = settings.recordSfxRandshake
@@ -671,17 +668,18 @@ int main() {
         
         while (true) {
             double t = frameCut / cap.fps;
-            if (t > backendWin.calculateFrameConfig.songLength) break;
+            if (t > backendWin.renderer->calcConfig.songLength) break;
 
             auto reGuard = videoRecorder->useFrame();
-            backendWin.mainloopFrame(t, {
+            backendWin.mainloopFrame({
+                .time = t,
                 .isRenderingVideo = true
             });
 
             frameCut++;
             fpsCalc.frame();
 
-            uint64_t totalFrames = backendWin.calculateFrameConfig.songLength * cap.fps;
+            uint64_t totalFrames = backendWin.renderer->calcConfig.songLength * cap.fps;
             pd.setProgress(frameCut, totalFrames);
 
             {
