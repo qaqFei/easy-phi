@@ -8254,12 +8254,11 @@ void calculatePhiFrame(
     );
 
     frame.addPoly(
-        { 0.0, 0.0 },
+        { progressBarWidth - progressBarPointWidth, 0.0 },
         { progressBarPointWidth, progressBarHeight },
         chart.options.progressBarDefaultColor.second * progressBarAttachUIData.color,
         Transform2D()
             .translate(safeAreaPosition)
-            .translate(progressBarWidth - progressBarPointWidth, 0.0)
             .translate(progressBarAttachUIData.position)
             .scale(progressBarAttachUIData.scale)
             .rotateDegrees(progressBarAttachUIData.rotation)
