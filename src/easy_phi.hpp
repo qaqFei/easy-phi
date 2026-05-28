@@ -243,14 +243,6 @@ struct Vec2 {
     }
 };
 
-enum class EnumTextAlign {
-    Left, Center, Right
-};
-
-enum class EnumTextBaseline {
-    Top, Middle, Bottom
-};
-
 static const ep_f64 INF_TIME = 99999.0;
 static const Vec2 INF_TZ = { -INF_TIME, INF_TIME };
 static const ep_f64 INF_EV = 1e9;
@@ -7777,8 +7769,7 @@ struct PhiCalculatedFrame {
 
     struct CalculatedText {
         std::string text;
-        Vec2 position, scale;
-        EnumTextAlign align; EnumTextBaseline baseline;
+        Vec2 position, scale, anchor;
         ep_f64 fontSize, rotation;
         Color color;
     };
@@ -8017,8 +8008,7 @@ void calculatePhiFrame(
                         .text = lineText.value(),
                         .position = lineScreenPosition,
                         .scale = lineScale,
-                        .align = EnumTextAlign::Center,
-                        .baseline = EnumTextBaseline::Middle,
+                        .anchor = line.anchor,
                         .fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum(),
                         .rotation = lineRotation,
                         .color = lineColor.applyAlpha(lineAlpha)
@@ -8295,8 +8285,7 @@ void calculatePhiFrame(
             .text = std::to_string(combo),
             .position = toScreen({ safeAreaSize.x / 2, safeAreaSize.x * 0.027083 }),
             .scale = { 1.0, 1.0 },
-            .align = EnumTextAlign::Center,
-            .baseline = EnumTextBaseline::Middle,
+            .anchor = { 0.5, 0.5 },
             .fontSize = safeAreaSize.x * 0.0393081,
             .rotation = 0.0,
             .color = Color::White()
@@ -8306,8 +8295,7 @@ void calculatePhiFrame(
             .text = "AUTOPLAY",
             .position = toScreen({ safeAreaSize.x / 2, safeAreaSize.x * 0.0478125 }),
             .scale = { 1.0, 1.0 },
-            .align = EnumTextAlign::Center,
-            .baseline = EnumTextBaseline::Top,
+            .anchor = { 0.5, 0.0 },
             .fontSize = safeAreaSize.x * 0.0130208,
             .rotation = 0.0,
             .color = Color::White()
@@ -8319,8 +8307,7 @@ void calculatePhiFrame(
         .text = formatToStdString("%07llu", score),
         .position = toScreen({ safeAreaSize.x * (1 - ((ep_f64)40 / 1920)), safeAreaSize.x * 0.01614583 }),
         .scale = { 1.0, 1.0 },
-        .align = EnumTextAlign::Right,
-        .baseline = EnumTextBaseline::Top,
+        .anchor = { 1.0, 0.0 },
         .fontSize = safeAreaSize.x * 0.0277778,
         .rotation = 0.0,
         .color = Color::White()
@@ -8330,8 +8317,7 @@ void calculatePhiFrame(
         .text = chart.meta.title,
         .position = toScreen({ safeAreaSize.x * 0.0225, safeAreaSize.y - safeAreaSize.x * 0.0196875 }),
         .scale = { 1.0, 1.0 },
-        .align = EnumTextAlign::Left,
-        .baseline = EnumTextBaseline::Bottom,
+        .anchor = { 0.0, 1.0 },
         .fontSize = safeAreaSize.x * 0.018115942,
         .rotation = 0.0,
         .color = Color::White()
@@ -8341,8 +8327,7 @@ void calculatePhiFrame(
         .text = chart.meta.difficulty,
         .position = toScreen({ safeAreaSize.x * 0.9775, safeAreaSize.y - safeAreaSize.x * 0.0196875 }),
         .scale = { 1.0, 1.0 },
-        .align = EnumTextAlign::Right,
-        .baseline = EnumTextBaseline::Bottom,
+        .anchor = { 1.0, 1.0 },
         .fontSize = safeAreaSize.x * 0.018115942,
         .rotation = 0.0,
         .color = Color::White()
@@ -8668,9 +8653,7 @@ struct PhiTakeOverer {
         ep_f64 glOperationsTook;
     };
 
-    RenderResultInfo& render(
-        const RenderConfig& renderConfig
-    ) {
+    RenderResultInfo& render(const RenderConfig& renderConfig) {
         auto t = renderConfig.time.value_or(getBgmTime());
 
         {
@@ -8754,21 +8737,11 @@ struct PhiTakeOverer {
             } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedText>(obj)) {
                 auto& text = std::get<PhiCalculatedFrame::CalculatedText>(obj);
 
-                Vec2 anchor;
-
-                if (text.align == EnumTextAlign::Left) anchor.x = 0.0;
-                else if (text.align == EnumTextAlign::Center) anchor.x = 0.5;
-                else if (text.align == EnumTextAlign::Right) anchor.x = 1.0;
-
-                if (text.baseline == EnumTextBaseline::Top) anchor.y = 0.0;
-                else if (text.baseline == EnumTextBaseline::Middle) anchor.y = 0.5;
-                else if (text.baseline == EnumTextBaseline::Bottom) anchor.y = 1.0;
-
                 DrawTextConfig config {
                     .text = text.text,
                     .fontSize = text.fontSize,
                     .pos = text.position,
-                    .anchor = anchor,
+                    .anchor = text.anchor,
                     .rotation = text.rotation,
                     .scale = text.scale,
                     .color = text.color
