@@ -684,6 +684,7 @@ struct Window {
     double frameBusyWaitPercentage;
     std::string chartDir;
     bool fullscreen;
+    double mouseX, mouseY;
 
     ep_sp<GL33Context> glCtx;
     ep_sp<easy_phi::PhiTakeOverer> renderer;
@@ -804,6 +805,27 @@ struct Window {
         renderer->audioEngine = easy_phi::makeAudioEngineMiniaudio();
         renderer->check();
         renderer->loadResources();
+
+        glfwSetWindowUserPointer(window, this);
+
+        glfwSetCursorPosCallback(window, [](GLFWwindow* glfwWindow, double x, double y) {
+            auto* window = (Window*)glfwGetWindowUserPointer(glfwWindow);
+            window->mouseX = x;
+            window->mouseY = y;
+        });
+
+        glfwSetMouseButtonCallback(window, [](GLFWwindow* glfwWindow, int button, int action, int mods) {
+            auto* window = (Window*)glfwGetWindowUserPointer(glfwWindow);
+
+            if (action == GLFW_PRESS) {
+                if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                    window->renderer->seekBgm(
+                        window->renderer->getBgmLength()
+                        * window->mouseX / window->width
+                    );
+                }
+            }
+        });
     }
 
     void setHidden(bool newValue) {

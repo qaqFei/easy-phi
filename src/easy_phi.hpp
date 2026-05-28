@@ -7686,6 +7686,10 @@ struct AudioEngine {
         return (task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset) || task->stopped;
     }
 
+    void seekTask(const ep_sp<Task>& task, ep_f64 time) const {
+        task->offset = currentOffset - (ep_i64)(time * sampleRate);
+    }
+
     void callback(ep_i16* buffer, ep_i64 frameCount) {
         /* !docs
         Fills the buffer with audio data.
@@ -8540,6 +8544,16 @@ struct PhiTakeOverer {
 
     void setSfxVolume(ep_f64 vol) {
         sfxVolume = vol;
+    }
+
+    void seekBgm(ep_f64 time) {
+        if (!bgmAudioTask) return;
+        audioEngine->seekTask(bgmAudioTask, time);
+    }
+
+    ep_f64 getBgmLength() {
+        if (!bgmAudio) return 0.0;
+        return bgmAudio->getLengthInSeconds();
     }
 
     struct MixBgmConfig {
