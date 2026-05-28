@@ -3044,6 +3044,15 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
         auto& line = chart.lines.emplace_back();
         line.bpms = sharedBpmEvents;
 
+        if (judgeLineNode.hasKey("bpmfactor")) {
+            if (!judgeLineNode["bpmfactor"].isNumber()) CHART_LOAD_FAILED("rpe", "bpmfactor is not a number");
+            auto factor = judgeLineNode["bpmfactor"].getNumber();
+
+            for (auto& e : line.bpms) {
+                e.bpm /= factor;
+            }
+        }
+
         if (!judgeLineNode.hasKey("eventLayers")) CHART_LOAD_FAILED("rpe", "missing eventLayers field");
         if (!judgeLineNode["eventLayers"].isArray()) CHART_LOAD_FAILED("rpe", "eventLayers is not an array");
         auto& eventLayersNode = judgeLineNode["eventLayers"];
