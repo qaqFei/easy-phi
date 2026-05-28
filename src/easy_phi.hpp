@@ -850,7 +850,8 @@ struct PhiEvent {
     A event item for the phigros chart.
     */
 
-    Vec2 timeZone, valueZone; // !inline-docs| timeZone is a second value.
+    Vec2 timeZone; // !inline-docs| A second value.
+    Vec2 valueZone;
     EnumPhiEventType type;
 
     /* !docs
@@ -879,10 +880,6 @@ struct PhiEvent {
                     p = (easingFunc(easingFuncContext, p * (easingZone.y - easingZone.x) + easingZone.x) - s) / (e - s);
                 }
             }
-        }
-
-        if (type == EnumPhiEventType::Color || type == EnumPhiEventType::Text || type == EnumPhiEventType::PhiShaderUniform) {
-            p = std::clamp(p, 0.0, 1.0);
         }
 
         return valueZone.x + p * (valueZone.y - valueZone.x);
@@ -956,6 +953,7 @@ struct PhiAnimLayer {
             );
         }
 
+        currentValueZones[type] = e.valueZone;
         lastUpdatedTimes[type] = t;
     }
 
@@ -1008,10 +1006,19 @@ struct PhiAnimLayer {
         return fixedValue;
     }
 
+    std::optional<Vec2> get_zone(EnumPhiEventType type) {
+        /* !docs
+        Get the current valueZone of a event type.
+        */
+
+        return currentValueZones[(ep_u64)type];
+    }
+
     private:
     ep_f64 lastUpdatedTimes[(ep_u64)EnumPhiEventType::MAX];
     ep_u64 currentIndexs[(ep_u64)EnumPhiEventType::MAX];
     ep_f64 currentValues[(ep_u64)EnumPhiEventType::MAX];
+    std::optional<Vec2> currentValueZones[(ep_u64)EnumPhiEventType::MAX];
 
     void initSpeedCumul() {
         auto& speedEvents = getEvents(EnumPhiEventType::Speed);
@@ -1090,6 +1097,20 @@ struct PhiAnimGroup {
         }
 
         return value;
+    }
+
+    Vec2 get_zone(EnumPhiEventType type) {
+        /* !docs
+        Get the event valueZone of a event type.
+        **It only supports single layer event types.**
+        */
+
+        for (auto& layer : layers) {
+            auto z = layer.get_zone(type);
+            if (z.has_value()) return z.value();
+        }
+
+        return {};
     }
 
     std::optional<ep_f64> getAlwaysHashValue(EnumPhiEventType type) {
@@ -1179,6 +1200,25 @@ struct PhiAnimator {
     template <typename T>
     ep_f64 get(T& obj, ep_f64 t, EnumPhiEventType type) {
         return get(obj.indexer.get(), t, type);
+    }
+
+    Vec2 get_zone(ep_u64 index, ep_f64 t, EnumPhiEventType type) {
+        /* !docs
+        Get the event valueZone of the type of a object at a time.
+        **It only supports single layer event types.**
+        */
+
+        auto group_it = groups.find(index);
+        if (group_it == groups.end()) return {};
+
+        auto& group = group_it->second;
+        group.updateType(type, t);
+        return group.get_zone(type);
+    }
+
+    template <typename T>
+    Vec2 get_zone(T& obj, ep_f64 t, EnumPhiEventType type) {
+        return get_zone(obj.indexer.get(), t, type);
     }
 
     // std::nullopt means it is unpredictable
@@ -1609,37 +1649,32 @@ struct PhiStoryboardAssets {
         return requestShaderUniformPair(PhiShaderUniform(start), PhiShaderUniform(end));
     }
 
-    std::optional<std::string> getText(ep_f64 index) noexcept {
-        if (index < kTextIndexOffset) return std::nullopt;
-        index -= kTextIndexOffset;
+    std::optional<std::string> getText(ep_f64 index, const Vec2& valueZone) {
+        if (valueZone.x < kTextIndexOffset) return std::nullopt;
 
-        if (index >= texts.size()) return std::nullopt;
-        return texts[(ep_u64)index];
+        auto start = texts[(ep_u64)valueZone.x - kTextIndexOffset];
+        auto end = texts[(ep_u64)valueZone.y - kTextIndexOffset];
+        auto p = index - valueZone.x;
+
+        // TODO: text interpolation
+        return start;
     }
 
-    Color getColor(ep_f64 index, const Color& defaultValue) noexcept {
-        if (index < kColorIndexOffset) return defaultValue;
-        index -= kColorIndexOffset;
+    Color getColor(ep_f64 index, const Color& defaultValue, const Vec2& valueZone) {
+        if (valueZone.x < kColorIndexOffset) return defaultValue;
 
-        if (index >= colors.size()) return defaultValue;
-
-        auto start = colors[(ep_u64)index];
-        auto end = colors[(ep_u64)std::ceil(index)];
-        auto p = std::fmod(index, 1.0);
-
+        auto start = colors[(ep_u64)valueZone.x - kColorIndexOffset];
+        auto end = colors[(ep_u64)valueZone.y - kColorIndexOffset];
+        auto p = index - valueZone.x;
         return start * (1.0 - p) + end * p;
     }
 
-    PhiShaderUniform getShaderUniform(ep_f64 index, const PhiShaderUniform& defaultValue) noexcept {
-        if (index < kShaderUniformIndexOffset) return defaultValue;
-        index -= kShaderUniformIndexOffset;
+    PhiShaderUniform getShaderUniform(ep_f64 index, const PhiShaderUniform& defaultValue, const Vec2& valueZone) {
+        if (valueZone.x < kShaderUniformIndexOffset) return defaultValue;
 
-        if (index >= shaderUniforms.size()) return defaultValue;
-
-        auto start = shaderUniforms[(ep_u64)index];
-        auto end = shaderUniforms[(ep_u64)std::ceil(index)];
-        auto p = std::fmod(index, 1.0);
-        
+        auto start = shaderUniforms[(ep_u64)valueZone.x - kShaderUniformIndexOffset];
+        auto end = shaderUniforms[(ep_u64)valueZone.y - kShaderUniformIndexOffset];
+        auto p = index - valueZone.x;
         return PhiShaderUniform::Interpolate(start, end, p);
     }
 
@@ -1888,7 +1923,8 @@ struct PhiChart {
         auto noteRotation = animator.get(note, time, EnumPhiEventType::SelfRotation);
         auto noteAxisRotation = animator.get(note, time, EnumPhiEventType::AxisRotation);
         auto noteColorIndex = animator.get(note, time, EnumPhiEventType::Color);
-        auto noteColor = storyboardAssets.getColor(noteColorIndex, { 1.0, 1.0, 1.0, 1.0 });
+        auto noteColorIndexZone = animator.get_zone(note, time, EnumPhiEventType::Color);
+        auto noteColor = storyboardAssets.getColor(noteColorIndex, { 1.0, 1.0, 1.0, 1.0 }, noteColorIndexZone);
         auto noteAlpha = animator.get_alpha(note, time, 1.0);
         auto noteScaling = Vec2 {
             animator.get(note, time, EnumPhiEventType::ScaleX),
@@ -8000,13 +8036,16 @@ void calculatePhiFrame(
         auto lineRotation = chart.animator.get(line, time, EnumPhiEventType::SelfRotation);
         auto lineAlpha = chart.animator.get_alpha(line, time, 0.0);
         auto lineTextIndex = chart.animator.get(line, time, EnumPhiEventType::Text);
-        auto lineText = chart.storyboardAssets.getText(lineTextIndex);
+        auto lineTextIndexZone = chart.animator.get_zone(line, time, EnumPhiEventType::Text);
+        auto lineText = chart.storyboardAssets.getText(lineTextIndex, lineTextIndexZone);
         auto lineColorIndex = chart.animator.get(line, time, EnumPhiEventType::Color);
+        auto lineColorIndexZone = chart.animator.get_zone(line, time, EnumPhiEventType::Color);
         auto lineColor = chart.storyboardAssets.getColor(
             lineColorIndex,
             (line.attachUI.has_value() || lineText.has_value() || line.textureName.has_value())
                 ? Color::White()
-                : chart.options.lineDefaultColor
+                : chart.options.lineDefaultColor,
+            lineColorIndexZone
         );
         auto lineScale = Vec2 {
             chart.animator.get(line, time, EnumPhiEventType::ScaleX),
@@ -8225,7 +8264,8 @@ void calculatePhiFrame(
             for (auto& [uniformName, layer] : effect.uniforms) {
                 layer.updateType(EnumPhiEventType::PhiShaderUniform, time);
                 auto uniformIndex = layer.get(EnumPhiEventType::PhiShaderUniform);
-                auto uniformValue = chart.storyboardAssets.getShaderUniform(uniformIndex, PhiShaderUniform());
+                auto uniformIndexZone = layer.get_zone(EnumPhiEventType::PhiShaderUniform).value_or({});
+                auto uniformValue = chart.storyboardAssets.getShaderUniform(uniformIndex, PhiShaderUniform(), uniformIndexZone);
                 shader.uniforms[uniformName] = uniformValue;
             }
 
