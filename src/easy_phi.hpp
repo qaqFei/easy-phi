@@ -3019,8 +3019,13 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
         auto progressEventGroup = [&](EventGroupType group) -> std::pair<bool, std::string> {
             auto& [eventsNode, hasEasing, type, converter] = group;
             if (!eventsNode->isArray()) return { false, "XXXEvents is not an array" };
+            
+            auto& arr =  eventsNode->getArray();
+            if (arr.empty()) return { true, "" };
 
-            for (auto& eventNode : eventsNode->getArray()) {
+            ep_f64 earliestTime = INF_TIME;
+
+            for (auto& eventNode : arr) {
                 if (!eventNode.isObject()) return { false, "XXXEvents item is not an object" };
 
                 if (!eventNode.hasKey("startTime")) return { false, "missing startTime field" };
@@ -3091,6 +3096,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
                 startTime = line.beat2sec(startTime);
                 endTime = line.beat2sec(endTime);
+                earliestTime = std::min(earliestTime, startTime);
 
                 PhiEvent e {};
                 e.timeZone = { startTime, endTime };
@@ -3118,6 +3124,15 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                     }
                 }
 
+                chart.animator.addEvent(line, e);
+            }
+
+            if (type == EnumPhiEventType::Text) {
+                PhiEvent e {};
+                e.timeZone = { -INF_TIME, earliestTime };
+                e.valueZone = chart.storyboardAssets.requestTextPair("", "");
+                e.type = type;
+                e.layerIndex = PhiEventLayerIndexs::LINE_DEFAULT + eventLayerIndex;
                 chart.animator.addEvent(line, e);
             }
 
