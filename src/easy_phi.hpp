@@ -3331,6 +3331,35 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                     }
                 }
 
+                if (noteNode.hasKey("tint")) {
+                    if (!noteNode["tint"].isArray()) CHART_LOAD_FAILED("rpe", "tint is not an array");
+
+                    auto& arr = noteNode["tint"].getArray();
+                    if (arr.size() < 3) CHART_LOAD_FAILED("rpe", "tint array is too small");
+
+                    auto& n1 = arr[0];
+                    auto& n2 = arr[1];
+                    auto& n3 = arr[2];
+
+                    if (!n1.isNumber()) CHART_LOAD_FAILED("rpe", "tint[0] is not a number");
+                    if (!n2.isNumber()) CHART_LOAD_FAILED("rpe", "tint[1] is not a number");
+                    if (!n3.isNumber()) CHART_LOAD_FAILED("rpe", "tint[2] is not a number");
+
+                    auto color = Color {
+                        n1.getNumber() / 255,
+                        n2.getNumber() / 255,
+                        n3.getNumber() / 255,
+                        1.0
+                    };
+
+                    chart.animator.addEvent(note, PhiEvent {
+                        .timeZone = INF_TZ,
+                        .valueZone = chart.storyboardAssets.requestColorPair(color, color),
+                        .type = EnumPhiEventType::Color,
+                        .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS
+                    });
+                }
+
                 note.type = type;
                 note.time = startTime;
                 note.holdTime = endTime - startTime;
