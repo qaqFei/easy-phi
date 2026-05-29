@@ -8192,60 +8192,60 @@ void calculatePhiFrame(
                 .rotation = lineRotation,
                 .color = lineColor.applyAlpha(lineAlpha)
             };
-        } else {
-            if (lineAlpha * lineColor.a > 0) {
-                if (lineText.has_value()) {
-                    frame.objects.push_back(PhiCalculatedFrame::CalculatedText {
-                        .text = lineText.value(),
-                        .position = lineScreenPosition,
-                        .scale = lineScale,
-                        .anchor = line.anchor,
-                        .fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum(),
-                        .rotation = lineRotation,
-                        .color = lineColor.applyAlpha(lineAlpha)
-                    });
-                } else {
-                    if (line.textureName.has_value()) {
-                        auto& textureName = line.textureName.value();
+        }
 
-                        if (chart.storyboardAssets.isTextureLoaded(textureName)) {
-                            auto& texture = chart.storyboardAssets.getTexture(textureName);
-                            ep_f64 textureWidth, textureHeight;
+        if (lineAlpha * lineColor.a > 0) {
+            if (lineText.has_value()) {
+                frame.objects.push_back(PhiCalculatedFrame::CalculatedText {
+                    .text = lineText.value(),
+                    .position = lineScreenPosition,
+                    .scale = lineScale,
+                    .anchor = line.anchor,
+                    .fontSize = (chart.options.storyboardTextBaseSize * safeAreaSize).sum(),
+                    .rotation = lineRotation,
+                    .color = lineColor.applyAlpha(lineAlpha)
+                });
+            } else if (!line.attachUI.has_value()) {
+                if (line.textureName.has_value()) {
+                    auto& textureName = line.textureName.value();
 
-                            if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::AboutWidth) {
-                                textureWidth = texture.second.x / std::abs(chart.meta.worldViewport.x) * safeAreaSize.x;
-                                textureHeight = textureWidth / texture.second.x * texture.second.y;
-                            } else if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::AboutHeight) {
-                                textureHeight = texture.second.y / std::abs(chart.meta.worldViewport.y) * safeAreaSize.y;
-                                textureWidth = textureHeight / texture.second.y * texture.second.x;
-                            } else if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::Stretch) {
-                                textureWidth = texture.second.x / std::abs(chart.meta.worldViewport.x) * safeAreaSize.x;
-                                textureHeight = texture.second.y / std::abs(chart.meta.worldViewport.y) * safeAreaSize.y;
-                            } else textureWidth = textureHeight = 0;
+                    if (chart.storyboardAssets.isTextureLoaded(textureName)) {
+                        auto& texture = chart.storyboardAssets.getTexture(textureName);
+                        ep_f64 textureWidth, textureHeight;
 
-                            textureWidth *= chart.options.storyboardTextureScaling.x;
-                            textureHeight *= chart.options.storyboardTextureScaling.y;
+                        if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::AboutWidth) {
+                            textureWidth = texture.second.x / std::abs(chart.meta.worldViewport.x) * safeAreaSize.x;
+                            textureHeight = textureWidth / texture.second.x * texture.second.y;
+                        } else if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::AboutHeight) {
+                            textureHeight = texture.second.y / std::abs(chart.meta.worldViewport.y) * safeAreaSize.y;
+                            textureWidth = textureHeight / texture.second.y * texture.second.x;
+                        } else if (chart.options.storyboardTextureSclaingBehavior == PhiChart::UserOptions::EnumStoryboardTextureSclaingBehavior::Stretch) {
+                            textureWidth = texture.second.x / std::abs(chart.meta.worldViewport.x) * safeAreaSize.x;
+                            textureHeight = texture.second.y / std::abs(chart.meta.worldViewport.y) * safeAreaSize.y;
+                        } else textureWidth = textureHeight = 0;
 
-                            frame.objects.push_back(PhiCalculatedFrame::CalculatedStoryboardTexture {
-                                .texture = texture.first,
-                                .position = lineScreenPosition,
-                                .size = Vec2 { textureWidth, textureHeight },
-                                .scale = lineScale,
-                                .anchor = line.anchor,
-                                .rotation = lineRotation,
-                                .color = lineColor.applyAlpha(lineAlpha)
-                            });
-                        }
-                    } else {
-                        frame.addPoly(
-                            Vec2 { -lineWidth, -lineHeight } * line.anchor * lineScale,
-                            Vec2 { lineWidth, lineHeight } * lineScale,
-                            lineColor.applyAlpha(lineAlpha),
-                            Transform2D()
-                                .translate(lineScreenPosition)
-                                .rotateDegrees(lineRotation)
-                        );
+                        textureWidth *= chart.options.storyboardTextureScaling.x;
+                        textureHeight *= chart.options.storyboardTextureScaling.y;
+
+                        frame.objects.push_back(PhiCalculatedFrame::CalculatedStoryboardTexture {
+                            .texture = texture.first,
+                            .position = lineScreenPosition,
+                            .size = Vec2 { textureWidth, textureHeight },
+                            .scale = lineScale,
+                            .anchor = line.anchor,
+                            .rotation = lineRotation,
+                            .color = lineColor.applyAlpha(lineAlpha)
+                        });
                     }
+                } else {
+                    frame.addPoly(
+                        Vec2 { -lineWidth, -lineHeight } * line.anchor * lineScale,
+                        Vec2 { lineWidth, lineHeight } * lineScale,
+                        lineColor.applyAlpha(lineAlpha),
+                        Transform2D()
+                            .translate(lineScreenPosition)
+                            .rotateDegrees(lineRotation)
+                    );
                 }
             }
         }
