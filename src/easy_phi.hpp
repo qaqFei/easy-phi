@@ -7821,7 +7821,7 @@ struct AudioEngine {
 
     ep_i64 currentOffset;
     ep_f64 currentOffsetTime;
-    std::list<ep_sp<Task>> tasks;
+    std::vector<ep_sp<Task>> tasks;
     ep_f64 volume = 1.0;
 
     static ep_sp<AudioEngine> Make() {
@@ -7856,13 +7856,20 @@ struct AudioEngine {
         Fills the buffer with audio data.
         */
 
-        std::lock_guard<std::mutex> guard(mtx);
+        {
+            std::lock_guard<std::mutex> guard(mtx);
+            tasks.erase(std::remove_if(
+                tasks.begin(),
+                tasks.end(),
+                [&](const auto& task) { return getTaskEnded(task); }
+            ), tasks.end());
+            tasksCopied = tasks;
+        }
 
-        memset(buffer, 0, frameCount * channels * sizeof(ep_i16));
+        bufferCache.resize(frameCount * channels);
+        std::fill(bufferCache.begin(), bufferCache.end(), 0);
 
-        tasks.remove_if([&](const auto& task) { return getTaskEnded(task); });
-
-        for (const auto& task : tasks) {
+        for (const auto& task : tasksCopied) {
             ep_i64 startSample = currentOffset - task->offset;
             ep_i64 endSample = startSample + frameCount;
 
@@ -7875,14 +7882,13 @@ struct AudioEngine {
             for (ep_i64 i = startSample; i < endSample; i++) {
                 for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
                     ep_i16 sample = task->audio->sampleAt(i, j, channels, sampleRate);
-                    auto* ptr = buffer + (i - startSample) * channels + j;
-                    *ptr = typed_clamp<ep_i16, ep_i32>((ep_f64)*ptr + sample * task->volume);
+                    bufferCache[(i - startSample) * channels + j] += (ep_i32)sample * task->volume;
                 }
             }
         }
 
         for (ep_i64 i = 0; i < (ep_i64)(frameCount * channels); i++) {
-            buffer[i] = typed_clamp<ep_i16, ep_f64>(buffer[i] * volume);
+            buffer[i] = typed_clamp<ep_i16, ep_i32>(bufferCache[i] * volume);
         }
 
         currentOffset += frameCount;
@@ -7897,6 +7903,8 @@ struct AudioEngine {
 
     private:
     std::mutex mtx;
+    std::vector<ep_sp<Task>> tasksCopied;
+    std::vector<ep_i32> bufferCache;
 };
 
 struct PhiLineAttachUIData {
