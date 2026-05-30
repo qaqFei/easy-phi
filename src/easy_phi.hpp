@@ -7859,7 +7859,6 @@ struct AudioEngine {
 
     void* audioContext;
     std::function<void(void*)> audioContextDestructor;
-    std::function<ep_f64(void*)> audioContextTimer;
 
     ep_u64 channels;
     ep_u64 sampleRate;
