@@ -537,6 +537,73 @@ bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& scre
     return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg, screenArea.center());
 }
 
+std::string formatToStdString(const char* fmt, ...) {
+    /* !docs
+    Format a string with the same syntax as `printf`.
+    */
+
+    va_list args;
+
+    va_start(args, fmt);
+    int len = vsnprintf(nullptr, 0, fmt, args);
+    va_end(args);
+
+    if (len < 0) return "";
+
+    std::vector<char> buf(len + 1);
+    va_start(args, fmt);
+    vsnprintf(buf.data(), buf.size(), fmt, args);
+    va_end(args);
+
+    return std::string(buf.data(), len);
+}
+
+void stripString(std::string& str) {
+    /* !docs
+    Strip a string like python's `str.strip()`.
+    */
+
+    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+    auto tail = std::ranges::find_if(str | std::views::reverse, not_space);
+    str.erase(tail.base(), str.end());
+    auto head = std::ranges::find_if(str, not_space);
+    str.erase(str.begin(), head);
+}
+
+void splitString(const std::string& str, std::vector<std::string>& lines, char delimiter = '\n') {
+    /* !docs
+    Split a string to lines like python's `str.split(delimiter)`.
+    */
+
+    for (auto&& subrange : str | std::views::split(delimiter)) {
+        lines.emplace_back(subrange.begin(), subrange.end());
+    }
+}
+
+bool stringIsStartsWith(const std::string& str, const std::string& prefix) {
+    return str.size() >= prefix.size() && str.substr(0, prefix.size()) == prefix;
+}
+
+std::string replaceStringWith(const std::string& str, const std::string& target, const std::string& replacement) {
+    if (target.empty()) return str;
+
+    std::string result;
+    size_t start = 0;
+    size_t pos;
+    while ((pos = str.find(target, start)) != std::string::npos) {
+        result.append(str, start, pos - start);
+        result.append(replacement);
+        start = pos + target.size();
+    }
+    result.append(str, start, std::string::npos);
+    return result;
+}
+
+std::string stringSliceProgress(const std::string& str, ep_f64 p) {
+    p = std::clamp(p, 0.0, 1.0);
+    return str.substr(0, (ep_u64)(str.size() * p));
+}
+
 template <typename T1, typename T2>
 struct SKVCache {
     /* !docs
@@ -1729,6 +1796,33 @@ struct PhiStoryboardAssets {
         return requestShaderUniformPair(PhiShaderUniform(start), PhiShaderUniform(end));
     }
 
+    static std::string textInterplate(const std::string& s, const std::string& e, ep_f64 p) {
+        auto sps = s.find("%P%");
+        auto eps = e.find("%P%");
+        
+        if (sps != std::string::npos && eps != std::string::npos) {
+            ep_f64 sv = 0.0, ev = 0.0;
+            try { sv = std::stod(replaceStringWith(s, "%P%", "")); } catch (...) {}
+            try { ev = std::stod(replaceStringWith(e, "%P%", "")); } catch (...) {}
+            auto v = (ev - sv) * p + sv;
+
+            if (std::fmod(sv, 1.0) == 0.0 && std::fmod(ev, 1.0) == 0.0) {
+                return formatToStdString("%.0f", v);
+            } else {
+                return formatToStdString("%.3f", v);
+            }
+        } else if (s.empty() && e.empty()) return "";
+        else if (e.empty()) return textInterplate(e, replaceStringWith(s, "%P%", ""), 1.0 - p);
+        else if (s.empty()) return stringSliceProgress(e, p);
+        else {
+            ep_i64 ml = std::min(s.size(), e.size());
+            if (s.substr(0, ml) == e.substr(0, ml)) {
+                auto take = (ep_i64)std::round((ep_f64)((e.size() - s.size()) * p)) + s.size();
+                return s + stringSliceProgress(e.substr(ml, e.size() - ml), p);
+            } else return replaceStringWith(s, "%P%", "");
+        }
+    }
+
     std::optional<std::string> getText(ep_f64 index, const Vec2& valueZone) {
         if (valueZone.x < kTextIndexOffset) return std::nullopt;
 
@@ -1737,7 +1831,7 @@ struct PhiStoryboardAssets {
         auto p = index - valueZone.x;
 
         // TODO: text interpolation
-        return start;
+        return textInterplate(start, end, p);
     }
 
     Color getColor(ep_f64 index, const Color& defaultValue, const Vec2& valueZone) {
@@ -2184,27 +2278,6 @@ std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
     }
     
     return result;
-}
-
-std::string formatToStdString(const char* fmt, ...) {
-    /* !docs
-    Format a string with the same syntax as `printf`.
-    */
-
-    va_list args;
-
-    va_start(args, fmt);
-    int len = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if (len < 0) return "";
-
-    std::vector<char> buf(len + 1);
-    va_start(args, fmt);
-    vsnprintf(buf.data(), buf.size(), fmt, args);
-    va_end(args);
-
-    return std::string(buf.data(), len);
 }
 
 struct JsonNode {
@@ -4169,32 +4242,6 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
     }
 
     return extra;
-}
-
-void stripString(std::string& str) {
-    /* !docs
-    Strip a string like python's `str.strip()`.
-    */
-
-    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
-    auto tail = std::ranges::find_if(str | std::views::reverse, not_space);
-    str.erase(tail.base(), str.end());
-    auto head = std::ranges::find_if(str, not_space);
-    str.erase(str.begin(), head);
-}
-
-void splitString(const std::string& str, std::vector<std::string>& lines, char delimiter = '\n') {
-    /* !docs
-    Split a string to lines like python's `str.split(delimiter)`.
-    */
-
-    for (auto&& subrange : str | std::views::split(delimiter)) {
-        lines.emplace_back(subrange.begin(), subrange.end());
-    }
-}
-
-bool stringIsStartsWith(const std::string& str, const std::string& prefix) {
-    return str.size() >= prefix.size() && str.substr(0, prefix.size()) == prefix;
 }
 
 struct PhiStoryboardHelpers {
@@ -9218,6 +9265,8 @@ namespace easy_phi {
                     codepoint = c & 0x07;
                     bytes = 4;
                 }
+
+                if (i + bytes > text.size()) break;
 
                 for (ep_u8 j = 1; j < bytes; j++) {
                     codepoint = (codepoint << 6) | (text[i + j] & 0x3F);

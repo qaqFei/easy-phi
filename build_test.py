@@ -65,9 +65,9 @@ build_cmds = [
     
     *sum(libraries.values(), []),
     
-    "-lgdi32", "-lpthread", "-lopengl32", "-lole32",
+    "-lgdi32", "-lopengl32", "-lole32",
     "-lshell32", "-luuid", "-lbcrypt",
-    "-lws2_32", "-lcrypt32", "-lsecur32",
+    "-lws2_32", "-lcrypt32",
     "-lcomctl32",
     
     "-o", "./build/test"
