@@ -8523,7 +8523,6 @@ void calculatePhiFrame(
     calculateExtra(true);
 }
 
-
 struct PhiTakeOverer {
     /* !docs
     The take overer for phigros.

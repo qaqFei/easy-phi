@@ -16,28 +16,9 @@ extern "C" {
 
 #include <condition_variable>
 #include <queue>
-#include <mutex>
-#include <thread>
-#include <set>
-#include <cctype>
-#include <sstream>
-#include <stdexcept>
-#include <unordered_set>
-#include <string_view>
-#include <utility>
-#include <regex>
-#include <map>
-#include <charconv>
 
-using namespace easy_phi::GL;
-using easy_phi::ep_sp;
-
-double globalTimer() {
-    return std::chrono::duration<double>(
-        std::chrono::system_clock::now()
-        .time_since_epoch()
-    ).count();
-}
+using namespace easy_phi;
+using namespace GL;
 
 #define PCM_FIXED_SAMPLE_RATE 44100
 #define PCM_FIXED_CHANNELS 2
@@ -279,7 +260,7 @@ struct VideoCap {
         av_packet_free(&packet);
     }
 
-    bool writeAudio(const ep_sp<easy_phi::DecodedAudio>& audio) {
+    bool writeAudio(const ep_sp<DecodedAudio>& audio) {
         if (wroteAudio) return false;
         if ((int)audio->sampleRate != aCodecCtx->sample_rate || (int)audio->channels != aCodecCtx->ch_layout.nb_channels) return false;
 
@@ -410,8 +391,6 @@ struct VideoCap {
 };
 
 struct TelemetryDeckClient {
-    using JsonNode = easy_phi::JsonNode;
-
     static constexpr uint64_t version = 1;
 
     static void postSignal(const std::string& type, const JsonNode& rawPayload) {
@@ -676,7 +655,7 @@ struct TelemetryDeckClient {
 
 struct Window {
     GLFWwindow* window;
-    ep_sp<easy_phi::TextRenderer> textRenderer;
+    ep_sp<TextRenderer> textRenderer;
     int width, height;
     bool hidden;
     double frameBusyWaitPercentage = 0.8;
@@ -685,7 +664,7 @@ struct Window {
     double mouseX, mouseY;
 
     ep_sp<GL33Context> glCtx;
-    ep_sp<easy_phi::PhiTakeOverer> renderer;
+    ep_sp<PhiTakeOverer> renderer;
 
     void init() {
         glfwInit();
@@ -714,29 +693,29 @@ struct Window {
         glfwMakeContextCurrent(window);
         glCtx = GL33Context::Make(MakeGL33CoreInterface( [](const char* name) { return (void*)glfwGetProcAddress(name); } ));
 
-        textRenderer = easy_phi::PhiStaticResourceHelpers::createTextRenderer();
+        textRenderer = PhiStaticResourceHelpers::createTextRenderer();
 
-        renderer = easy_phi::PhiTakeOverer::Make();
+        renderer = PhiTakeOverer::Make();
 
-        renderer->textureDeocder = easy_phi::decodeImage;
-        renderer->textRenderer = [this](const std::string& text, easy_phi::ep_u64 size) -> easy_phi::DecodedRGBATexture { return textRenderer->render(text, size); };
-        renderer->noteTextureDataReader = easy_phi::PhiStaticResourceHelpers::noteTextureDataReader;
-        renderer->hitEffectDataReader = easy_phi::PhiStaticResourceHelpers::hitEffectDataReader;
-        renderer->audioDecoder = easy_phi::decodeAudioMiniaudio;
-        renderer->hitsoundDataReader = easy_phi::PhiStaticResourceHelpers::hitsoundDataReader;
+        renderer->textureDeocder = decodeImage;
+        renderer->textRenderer = [this](const std::string& text, ep_u64 size) -> DecodedRGBATexture { return textRenderer->render(text, size); };
+        renderer->noteTextureDataReader = PhiStaticResourceHelpers::noteTextureDataReader;
+        renderer->hitEffectDataReader = PhiStaticResourceHelpers::hitEffectDataReader;
+        renderer->audioDecoder = decodeAudioMiniaudio;
+        renderer->hitsoundDataReader = PhiStaticResourceHelpers::hitsoundDataReader;
 
-        renderer->storyboardDataReader = [this](const std::string& name) -> easy_phi::Data {
-            auto path = easy_phi::PhiStoryboardHelpers::textureNameToPath(chartDir, name);
-            easy_phi::Data data;
-            easy_phi::Data::FromFile(&data, path);
+        renderer->storyboardDataReader = [this](const std::string& name) -> Data {
+            auto path = PhiStoryboardHelpers::textureNameToPath(chartDir, name);
+            Data data;
+            Data::FromFile(&data, path);
             return data;
         };
 
         renderer->shaderDataReader = [this](const std::string& name) -> std::string {
-            easy_phi::Data shaderText {};
+            Data shaderText {};
 
-            if (!easy_phi::PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
-                if (!easy_phi::Data::FromFile(&shaderText, std::filesystem::path(chartDir + "/" + name).lexically_normal().string())) {
+            if (!PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
+                if (!Data::FromFile(&shaderText, std::filesystem::path(chartDir + "/" + name).lexically_normal().string())) {
                     std::cout << "failed to read shader file: " << name << std::endl;
                 }
             }
@@ -745,7 +724,7 @@ struct Window {
         };
 
         renderer->glCtx = glCtx;
-        renderer->audioEngine = easy_phi::makeAudioEngineMiniaudio();
+        renderer->audioEngine = makeAudioEngineMiniaudio();
         renderer->check();
         renderer->loadResources();
 
@@ -778,17 +757,17 @@ struct Window {
     }
 
     void loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
-        easy_phi::Data data;
-        if (!easy_phi::Data::FromFile(&data, path)) throw std::runtime_error("failed to read chart file");
+        Data data;
+        if (!Data::FromFile(&data, path)) throw std::runtime_error("failed to read chart file");
 
         this->chartDir = chartDir;
 
         auto resultInfo = renderer->loadChart(data, [&](auto& chart) {
-            easy_phi::Data extraData;
-            if (easy_phi::Data::FromFile(&extraData, chartDir + "extra.json")) {
-                auto extraLoadResult = easy_phi::loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
-                if (std::holds_alternative<easy_phi::PhiExtra>(extraLoadResult)) {
-                    chart.extra = std::move(std::get<easy_phi::PhiExtra>(extraLoadResult));
+            Data extraData;
+            if (Data::FromFile(&extraData, chartDir + "extra.json")) {
+                auto extraLoadResult = loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
+                if (std::holds_alternative<PhiExtra>(extraLoadResult)) {
+                    chart.extra = std::move(std::get<PhiExtra>(extraLoadResult));
                     std::cout << "loaded extra" << std::endl;
                 } else if (std::holds_alternative<std::string>(extraLoadResult)) {
                     std::cout << "failed to load extra: " << std::get<std::string>(extraLoadResult) << std::endl;
