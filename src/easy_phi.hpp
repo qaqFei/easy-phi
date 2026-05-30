@@ -6778,6 +6778,24 @@ void main() {
                 prog->fragConfig.colorUniformName = std::nullopt;
                 return prog;
             }
+            
+            static ep_sp<ProgramInfo> yFliper(GL33Context* glCtx) {
+                auto prog = glCtx->createConfiguredProgram(R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+
+uniform sampler2D uTexture;
+
+out vec4 outColor;
+
+void main() {
+    outColor = texture(uTexture, vec2(fragTexCoord.x, 1.0 - fragTexCoord.y));
+}
+)");
+                prog->fragConfig.colorUniformName = std::nullopt;
+                return prog;
+            }
         };
 
         void drawMesh(Mesh& mesh) noexcept {
@@ -6955,6 +6973,7 @@ void main() {
         struct {
             ep_sp<ProgramInfo> gaussianBlur;
             ep_sp<ProgramInfo> yuvConverter;
+            ep_sp<ProgramInfo> yFliper;
         } preloadedPrograms; // !inline-docs| Preloaded programs.
 
         void frameEnded() {
@@ -7219,20 +7238,12 @@ void main() {
             Flips the current framebuffer vertically.
             */
 
-            auto tempTexGuard = allocTempTexture(width, height);
-            auto tempTex = tempTexGuard.get();
-            copyCurrentToTexture(tempTex.get());
+            auto mesh = requestMesh(6);
+            mesh.program = preloadedPrograms.yFliper.get();
+            mesh.color = GLvec4::White();
 
-            {
-                auto kfboGuard = getFBOGuard();
-                auto texFboGuard = tempTex->frameBuffer->use(tempTex.get(), GL_READ_FRAMEBUFFER);
-                gl.glBlitFramebuffer(
-                    0, 0, width, height,
-                    0, height, width, 0,
-                    GL_COLOR_BUFFER_BIT,
-                    GL_NEAREST
-                );
-            }
+            auto progGuard = mesh.program->use();
+            renderToDrawFbo(width, height, mesh);
         }
 
         void convertToYUV(ep_u64 width, ep_u64 height) {
@@ -7271,6 +7282,7 @@ void main() {
             defaultProgram = createConfiguredProgram(defaultFragmentShaderSource);
             preloadedPrograms.gaussianBlur = ProgramPresets::gaussianBlur(this);
             preloadedPrograms.yuvConverter = ProgramPresets::yuvConverter(this);
+            preloadedPrograms.yFliper = ProgramPresets::yFliper(this);
 
             unsigned char whiteTextureData[16] = {
                 255, 255, 255, 255,
