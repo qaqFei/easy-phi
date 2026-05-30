@@ -768,7 +768,6 @@ struct Window {
                 auto extraLoadResult = loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
                 if (std::holds_alternative<PhiExtra>(extraLoadResult)) {
                     chart.extra = std::move(std::get<PhiExtra>(extraLoadResult));
-                    std::cout << "loaded extra" << std::endl;
                 } else if (std::holds_alternative<std::string>(extraLoadResult)) {
                     std::cout << "failed to load extra: " << std::get<std::string>(extraLoadResult) << std::endl;
                 }

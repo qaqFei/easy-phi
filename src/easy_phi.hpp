@@ -4036,8 +4036,13 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
         }
 
         if (!(2 <= arr.size() && arr.size() <= 4)) return false;
+
         dst->used = arr.size();
-        for (ep_u8 i = 0; i < arr.size(); i++) dst->value[i] = arr[i].getNumber();
+
+        for (ep_u8 i = 0; i < dst->used; i++) {
+            dst->value[i] = arr[i].getNumber();
+            if (dst->used >= 3) dst->value[i] /= 255.0;
+        }
 
         return true;
     };
