@@ -965,7 +965,9 @@ struct PhiEvent {
             }
         }
 
-        return (timeZone.y - timeZone.x) * (valueZone.x * p + (valueZone.y - valueZone.x) * iv);
+        ep_f64 res = (timeZone.y - timeZone.x) * (valueZone.x * p + (valueZone.y - valueZone.x) * iv);
+        if (t > timeZone.y) res += valueZone.y * (t - timeZone.y);
+        return res;
     }
 
     private:
@@ -1028,10 +1030,7 @@ struct PhiAnimLayer {
         auto& e = typed_events[currentIndexs[type]];
 
         if (type == (ep_u64)EnumPhiEventType::Speed) {
-            currentValues[type] = e.cumulativeValueAtStart + (
-                e.getIntegralValue(t)
-                + std::max(t - e.timeZone.y, 0.0) * e.valueZone.y
-            );
+            currentValues[type] = e.cumulativeValueAtStart + e.getIntegralValue(t);
         } else {
             currentValues[type] = e.valueAtTime(t);
         }
@@ -1110,11 +1109,9 @@ struct PhiAnimLayer {
         for (ep_u64 i = 0; i < speedEvents.size(); i++) {
             auto& e = speedEvents[i];
             e.cumulativeValueAtStart = cumulativeValue;
-            cumulativeValue += e.getIntegralValue(e.timeZone.y);
 
-            if (i < speedEvents.size() - 1) {
-                cumulativeValue += e.valueZone.y * (speedEvents[i + 1].timeZone.x - e.timeZone.y);
-            }
+            ep_f64 endTime = i < speedEvents.size() - 1 ? speedEvents[i + 1].timeZone.x : e.timeZone.y;
+            cumulativeValue += e.getIntegralValue(endTime);
         }
     }
 };
