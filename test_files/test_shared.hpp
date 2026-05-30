@@ -1,6 +1,7 @@
 #define EASY_PHI_TEXT_RENDERER
 #define EASY_PHI_IMAGE_DECODER
 #define EASY_PHI_MINIAUDIO_AUDIO_ENGINE
+#define EASY_PHI_PHI_RESOURCE
 #include <easy_phi.hpp>
 
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -12,8 +13,6 @@ extern "C" {
     #include <libavutil/imgutils.h>
 }
 #include <cpr/cpr.h>
-
-#include "./resources/inlined_resources.cpp"
 
 #include <condition_variable>
 #include <queue>
@@ -677,11 +676,10 @@ struct TelemetryDeckClient {
 
 struct Window {
     GLFWwindow* window;
-    easy_phi::TextRenderer textRenderer;
-    double globalScale;
+    ep_sp<easy_phi::TextRenderer> textRenderer;
     int width, height;
     bool hidden;
-    double frameBusyWaitPercentage;
+    double frameBusyWaitPercentage = 0.8;
     std::string chartDir;
     bool fullscreen;
     double mouseX, mouseY;
@@ -696,6 +694,7 @@ struct Window {
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_SAMPLES, 4);
         if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+
         auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
         width = vm->width * 0.6;
         height = vm->height * 0.6;
@@ -713,66 +712,18 @@ struct Window {
         window = glfwCreateWindow(width, height, "", nullptr, nullptr);
 
         glfwMakeContextCurrent(window);
-        glCtx = GL33Context::Make(MakeGL33CoreInterface(
-            [](const char* name) { return (void*)glfwGetProcAddress(name); }
-        ));
+        glCtx = GL33Context::Make(MakeGL33CoreInterface( [](const char* name) { return (void*)glfwGetProcAddress(name); } ));
 
-        globalScale = 1.0;
-        frameBusyWaitPercentage = 0.8;
-
-        textRenderer.loadFont(StaticResource::get("/font.ttf"));
+        textRenderer = easy_phi::PhiStaticResourceHelpers::createTextRenderer();
 
         renderer = easy_phi::PhiTakeOverer::Make();
 
         renderer->textureDeocder = easy_phi::decodeImage;
-        renderer->textRenderer = [this](const std::string& text, easy_phi::ep_u64 size) -> easy_phi::DecodedRGBATexture { return textRenderer.render(text, size); };
-
-        renderer->noteTextureDataReader = [](const easy_phi::PhiTakeOverer::NoteTextureDataReaderConfig config) -> easy_phi::PhiTakeOverer::NoteTextureDataReaderResult {
-            static const std::unordered_map<easy_phi::EnumPhiNoteType, std::string> nameMap = {
-                { easy_phi::EnumPhiNoteType::Tap, "click" },
-                { easy_phi::EnumPhiNoteType::Drag, "drag" },
-                { easy_phi::EnumPhiNoteType::Flick, "flick" },
-                { easy_phi::EnumPhiNoteType::Hold, "hold" }
-            };
-
-            auto name = nameMap.at(config.type);
-
-            std::string key("/");
-            key += name;
-            key += config.isSimul ? "_mh.png" : ".png";
-
-            auto data = StaticResource::get(key);
-            double cutPadding = config.isSimul ? 100.0 : 50.0;
-
-            return {
-                .encoded = std::move(data),
-                .cutPadding = easy_phi::Vec2 { cutPadding, cutPadding },
-                .cutPaddingIsPixel = true,
-                .ignoreCutPadding = config.type != easy_phi::EnumPhiNoteType::Hold
-            };
-        };
-
-        renderer->hitEffectDataReader = []() -> std::vector<easy_phi::Data> {
-            std::vector<easy_phi::Data> result;
-            for (int i = 0; i < 60; i++) {
-                result.push_back(StaticResource::get(std::string("/") + "hit_fx_" + std::to_string(i + 1) + ".png"));
-            }
-            return result;
-        };
-
+        renderer->textRenderer = [this](const std::string& text, easy_phi::ep_u64 size) -> easy_phi::DecodedRGBATexture { return textRenderer->render(text, size); };
+        renderer->noteTextureDataReader = easy_phi::PhiStaticResourceHelpers::noteTextureDataReader;
+        renderer->hitEffectDataReader = easy_phi::PhiStaticResourceHelpers::hitEffectDataReader;
         renderer->audioDecoder = easy_phi::decodeAudioMiniaudio;
-
-        renderer->hitsoundDataReader = [this](easy_phi::EnumPhiNoteType type) -> easy_phi::Data {
-            std::unordered_map<easy_phi::EnumPhiNoteType, std::string> nameMap = {
-                { easy_phi::EnumPhiNoteType::Tap, "click" },
-                { easy_phi::EnumPhiNoteType::Drag, "drag" },
-                { easy_phi::EnumPhiNoteType::Flick, "flick" },
-                { easy_phi::EnumPhiNoteType::Hold, "click" }
-            };
-
-            auto name = nameMap.at(type);
-            return StaticResource::get(std::string("/") + name + ".wav");
-        };
+        renderer->hitsoundDataReader = easy_phi::PhiStaticResourceHelpers::hitsoundDataReader;
 
         renderer->storyboardDataReader = [this](const std::string& name) -> easy_phi::Data {
             auto path = easy_phi::PhiStoryboardHelpers::textureNameToPath(chartDir, name);
@@ -782,17 +733,9 @@ struct Window {
         };
 
         renderer->shaderDataReader = [this](const std::string& name) -> std::string {
-            static const std::unordered_set<std::string> builtinShaders = {
-                "chromatic", "circleBlur", "fisheye",
-                "glitch", "grayscale", "noise",
-                "pixel", "radialBlur", "shockwave", "vignette"
-            };
-            
             easy_phi::Data shaderText {};
 
-            if (builtinShaders.contains(name)) {
-                shaderText = StaticResource::get(std::string("/shaders/") + name + ".glsl");
-            } else {
+            if (!easy_phi::PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
                 if (!easy_phi::Data::FromFile(&shaderText, std::filesystem::path(chartDir + "/" + name).lexically_normal().string())) {
                     std::cout << "failed to read shader file: " << name << std::endl;
                 }

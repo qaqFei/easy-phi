@@ -956,10 +956,6 @@ struct PhiEvent {
         if (hasAllEasing()) {
             if (easingZone == Vec2 { 0.0, 1.0 } ) {
                 iv = easingIntFunc(easingFuncContext, p);
-
-                if ((ep_u64)easingFuncContext != 1) {
-                    std::cout << iv << std::endl;
-                }
             } else if (easingZone.x < easingZone.y) {
                 ep_f64 is = easingIntFunc(easingFuncContext, easingZone.x);
                 ep_f64 tp = (easingZone.y - easingZone.x) * p + easingZone.x;
@@ -9156,6 +9152,15 @@ namespace easy_phi {
         A text renderer by `stb_truetype`.
         */
 
+        TextRenderer() = default;
+        TextRenderer(const TextRenderer&) = delete;
+        TextRenderer& operator=(const TextRenderer&) = delete;
+
+        static ep_sp<TextRenderer> Make() {
+            auto* tr = new TextRenderer();
+            return ep_sp<TextRenderer>(tr);
+        }
+
         void loadFont(const Data& data, ep_u64 index = 0) {
             /* !docs
             Load a font from a data.
@@ -9419,5 +9424,87 @@ namespace easy_phi {
     }
 }
 #endif // EASY_PHI_MINIAUDIO_AUDIO_ENGINE
+
+#ifdef EASY_PHI_PHI_RESOURCE
+namespace easy_phi {
+    #include "helpers/resources/phigros.cpp"
+
+    struct PhiStaticResourceHelpers {
+        static PhiTakeOverer::NoteTextureDataReaderResult noteTextureDataReader(const PhiTakeOverer::NoteTextureDataReaderConfig& config) {
+            std::unordered_map<EnumPhiNoteType, std::string> nameMap = {
+                { EnumPhiNoteType::Tap, "click" },
+                { EnumPhiNoteType::Drag, "drag" },
+                { EnumPhiNoteType::Flick, "flick" },
+                { EnumPhiNoteType::Hold, "hold" }
+            };
+
+            auto name = nameMap.at(config.type);
+            auto key = std::string("/notes/") + name + (config.isSimul ? "_mh.png" : ".png");
+            auto data = PhiStaticResource::get(key);
+
+            double cutPadding = config.isSimul ? 100.0 : 50.0;
+
+            return {
+                .encoded = std::move(data),
+                .cutPadding = Vec2 { cutPadding, cutPadding },
+                .cutPaddingIsPixel = true,
+                .ignoreCutPadding = config.type != EnumPhiNoteType::Hold
+            };
+        }
+
+        static std::vector<Data> hitEffectDataReader() {
+            std::vector<easy_phi::Data> result;
+
+            for (ep_u64 i = 0; i < 60; i++) {
+                auto key = std::string("/hittexs/") + std::to_string(i + 1) + ".png";
+                result.push_back(PhiStaticResource::get(key));
+            }
+
+            return result;
+        }
+
+        static Data hitsoundDataReader(EnumPhiNoteType type) {
+            std::unordered_map<EnumPhiNoteType, std::string> nameMap = {
+                { EnumPhiNoteType::Tap, "click" },
+                { EnumPhiNoteType::Drag, "drag" },
+                { EnumPhiNoteType::Flick, "flick" },
+                { EnumPhiNoteType::Hold, "click" }
+            };
+
+            auto name = nameMap.at(type);
+            auto key = std::string("/hitsounds/") + name + ".wav";
+            return PhiStaticResource::get(key);
+        }
+
+        static bool getBuiltinShader(const std::string& name, Data& dst) {
+            std::unordered_set<std::string> builtinShaders = {
+                "chromatic", "circleBlur", "fisheye",
+                "glitch", "grayscale", "noise",
+                "pixel", "radialBlur", "shockwave", "vignette"
+            };
+
+            if (builtinShaders.contains(name)) {
+                auto key = std::string("/shaders/") + name + ".glsl";
+                dst = PhiStaticResource::get(key);
+                return true;
+            }
+
+            return false;
+        }
+
+        static Data getFontData() {
+            return PhiStaticResource::get("/font.ttf");
+        }
+
+        #ifdef EASY_PHI_TEXT_RENDERER
+        static ep_sp<TextRenderer> createTextRenderer() {
+            auto tr = TextRenderer::Make();
+            tr->loadFont(getFontData());
+            return tr;
+        }
+        #endif
+    };
+}
+#endif // EASY_PHI_PHI_RESOURCE
 
 #endif // EASY_PHI_HPP
