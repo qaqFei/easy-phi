@@ -2,12 +2,27 @@ import subprocess
 import os
 import sys
 import time
+import struct
 
 def run(cmds: list[str]):
     cmds = list(filter(bool, cmds))
     print(cmds)
     subprocess.run(cmds, check=True)
 
+def change_pe_to_gui_subsystem(path: str):
+    with open(path, "r+b") as f:
+        f.seek(0x3C)
+        pe_offset = struct.unpack("<I", f.read(4))[0]
+        
+        f.seek(pe_offset)
+        if f.read(4) != b"PE\x00\x00":
+            return
+        
+        subsystem_offset = pe_offset + 4 + 20 + 0x44
+        
+        f.seek(subsystem_offset)
+        f.write(struct.pack("<H", 2))
+    
 os.makedirs("build", exist_ok=True)
 
 with open("./dev.flag", "w"):
@@ -44,6 +59,7 @@ libraries = {
 
 short_commit_hash = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode("utf-8").strip()
 repo_github = "https://github.com/qaqFei/easy-phi"
+exec_ext = ".exe" if os.name == "nt" else ""
 
 build_cmds = [
     "g++", "-std=c++20",
@@ -70,10 +86,16 @@ build_cmds = [
     "-lws2_32", "-lcrypt32",
     "-lcomctl32",
     
-    "-o", "./build/test"
+    "-o", f"./build/test{exec_ext}"
 ]
 
 run(build_cmds)
+
+if "--no-console" in sys.argv:
+    if os.name == "nt":
+        change_pe_to_gui_subsystem(f"./build/test{exec_ext}")
+    else:
+        print("WARNING: --no-console is not supported on non-Windows systems")
 
 if "--run" in sys.argv:
     run_cmds = [
