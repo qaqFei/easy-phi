@@ -47,7 +47,7 @@ libraries = {
         "-I./test_files/externals/ffmpeg/include",
         "-L./test_files/externals/ffmpeg/lib",
         "-lavformat", "-lavcodec", "-lavutil",
-        "-lx264", "-lfdk-aac", "-lmfx",
+        "-lx264", "-lfdk-aac", "-lmfx"
     ],
     
     "cpr": [

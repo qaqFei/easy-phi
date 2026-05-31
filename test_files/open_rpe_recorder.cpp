@@ -214,8 +214,6 @@ struct Settings {
         api.readDouble(L"recordFPS", recordFPS);
         api.readBool(L"recordSfxRandshake", recordSfxRandshake);
 
-        api.readBool(L"disableH264QSV", disableH264QSV);
-
         clampValues();
     }
 
@@ -231,8 +229,6 @@ struct Settings {
         api.writeDword(L"recordHeight", recordHeight);
         api.writeDouble(L"recordFPS", recordFPS);
         api.writeBool(L"recordSfxRandshake", recordSfxRandshake);
-
-        api.writeBool(L"disableH264QSV", disableH264QSV);
     }
 
     void clampValues() {
@@ -277,7 +273,6 @@ int main() {
     int noteScalingInput;
     int recordWidthInput, recordHeightInput, recordFPSInput;
     int recordSfxRandshakeCheckBox;
-    int disableH264QSVCheckBox;
 
     Settings settings {};
     settings.fromRegistry();
@@ -409,8 +404,6 @@ int main() {
         doubleInput(recordFPSInput, settings.recordFPS);
         checkbox(recordSfxRandshakeCheckBox, settings.recordSfxRandshake);
 
-        checkbox(disableH264QSVCheckBox, settings.disableH264QSV);
-
         isSyncingSettings = false;
     };
 
@@ -498,18 +491,6 @@ int main() {
 
     win->nextRow();
 
-    win->registerWidget(Widgets::Label({ .text = L"设置 (视频编码器)" }));
-    win->nextRow();
-
-    disableH264QSVCheckBox = win->registerWidget(Widgets::CheckBox({ .text = L"禁用 H.264 QSV 编码器", .onChange = [&](bool checked) {
-        if (isSyncingSettings) return;
-        settings.disableH264QSV = checked;
-        settingsChanged();
-    } }));
-    win->nextRow();
-
-    win->nextRow();
-
     double loadingChartTook;
 
     auto load = [&]() {
@@ -583,9 +564,7 @@ int main() {
         pd.setLine(1, L"初始化...");
         WinHiddenGuard whguard(win.get());
 
-        VideoCap cap(videoPath.c_str(), settings.recordWidth, settings.recordHeight, settings.recordFPS, VideoCap::Config {
-            .disableH264QSV = settings.disableH264QSV
-        });
+        VideoCap cap(videoPath.c_str(), settings.recordWidth, settings.recordHeight, settings.recordFPS);
         
         using FrameType = std::optional<uint64_t>;
         using FrameQueueType = ThreadSafeQueue<FrameType>;
@@ -680,9 +659,7 @@ int main() {
             pd.setProgress(frameCut, totalFrames);
 
             {
-                std::wstring msg = L"渲染视频... (";
-                msg += cap.getCodecName();
-                msg += L") ";
+                std::wstring msg = L"渲染视频... ";
                 msg += std::to_wstring(frameCut) + L"/" + std::to_wstring(totalFrames) + L" (" + std::to_wstring((uint64_t)fpsCalc.fps) + L" fps)";
                 pd.setLine(1, msg.c_str());
             }

@@ -10,7 +10,6 @@
 extern "C" {
     #include <libavcodec/avcodec.h>
     #include <libavformat/avformat.h>
-    #include <libavutil/imgutils.h>
 }
 #include <cpr/cpr.h>
 
@@ -23,32 +22,6 @@ using namespace GL;
 #define PCM_FIXED_SAMPLE_RATE 44100
 #define PCM_FIXED_CHANNELS 2
 
-void interleave_uv_16(uint8_t* dst, uint8_t* u, uint8_t* v) {
-    __m128i u16 = _mm_loadu_si128((const __m128i*)u);
-    __m128i v16 = _mm_loadu_si128((const __m128i*)v);
-    __m128i lo = _mm_unpacklo_epi8(u16, v16);
-    __m128i hi = _mm_unpackhi_epi8(u16, v16);
-    _mm_storeu_si128((__m128i*)(dst +  0), lo);
-    _mm_storeu_si128((__m128i*)(dst + 16), hi);
-}
-
-void interleave_uv(uint8_t* dst, uint8_t* u, uint8_t* v, uint64_t count) {
-    uint64_t i = 0;
-    for (; i + 15 < count; i += 16) {
-        interleave_uv_16(dst + i * 2, u + i, v + i);
-    }
-    for (; i < count; ++i) {
-        dst[i * 2 + 0] = u[i];
-        dst[i * 2 + 1] = v[i];
-    }
-}
-
-std::string av_error_string(int errnum) {
-    std::array<char, AV_ERROR_MAX_STRING_SIZE> buf{};
-    av_make_error_string(buf.data(), buf.size(), errnum);
-    return std::string(buf.data());
-}
-
 struct VideoCap {
     const char* path;
     int width; int height; double fps;
@@ -56,19 +29,11 @@ struct VideoCap {
 
     AVFormatContext* fmtCtx;
 
-    enum class VCodecType {
-        LIBX264,
-        H264_QSV
-    };
-
     AVCodecContext* vCodecCtx = nullptr;
     AVStream* vStream = nullptr;
     int vFrameIdx = 0;
     uint64_t writtenVideoFrameCount = 0;
-    VCodecType vCodecType;
 
-    AVBufferRef* hw_device_ctx = nullptr;
-    AVBufferRef* hw_frames_ctx = nullptr;
     AVFrame* vSwFrame = nullptr;
 
     AVStream* aStream = nullptr;
@@ -76,137 +41,42 @@ struct VideoCap {
     int aFramePts = 0;
     bool wroteAudio = false;
 
-    struct Config {
-        bool disableH264QSV = false;
-    };
-
     VideoCap(
         const char* path,
-        int width, int height, double fps,
-        const std::optional<Config>& cfg = std::nullopt
+        int width, int height, double fps
     ) {
-        auto actual_cfg = cfg.value_or({});
-
-        int err;
         this->path = path;
         this->width = width; this->height = height; this->fps = fps;
 
-        auto init = [&]() {
-            fmtCtx = avformat_alloc_context();
-            fmtCtx->oformat = av_guess_format("mp4", nullptr, nullptr);
-        };
+        AVCodec* vCodec = (AVCodec*)avcodec_find_encoder(AV_CODEC_ID_H264);
+        fmtCtx = avformat_alloc_context();
+        fmtCtx->oformat = av_guess_format("mp4", nullptr, nullptr);
+        vStream = avformat_new_stream(fmtCtx, vCodec);
+        vCodecCtx = avcodec_alloc_context3(vCodec);
+        vCodecCtx->width = width;
+        vCodecCtx->height = height;
+        vCodecCtx->time_base = {1, (int)fps};
+        vCodecCtx->framerate = {(int)fps, 1};
+        vCodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+        vCodecCtx->gop_size = std::max(10, (int)fps * 2);
+        vCodecCtx->max_b_frames = 2;
+        vCodecCtx->rc_min_rate = 0;
+        vCodecCtx->rc_max_rate = 0;
 
-        AVCodec* vCodec = nullptr;        
-        if (!actual_cfg.disableH264QSV && !vCodec && (vCodec = (AVCodec*)avcodec_find_encoder_by_name("h264_qsv"))) {
-            init();
-            vStream = avformat_new_stream(fmtCtx, vCodec);
-            vCodecCtx = avcodec_alloc_context3(vCodec);
-            vCodecCtx->width = width;
-            vCodecCtx->height = height;
-            vCodecCtx->time_base = {1, (int)fps};
-            vCodecCtx->framerate = {(int)fps, 1};
-            vCodecCtx->pix_fmt = AV_PIX_FMT_QSV;
-            vCodecCtx->gop_size = std::max(10, (int)fps / 4);
-            vCodecCtx->max_b_frames = 1;
+        AVDictionary* vopts = nullptr;
+        av_dict_set(&vopts, "preset", "superfast", 0);
+        av_dict_set(&vopts, "tune", "film", 0);
+        av_dict_set(&vopts, "crf", "23", 0);
+        av_dict_set(&vopts, "refs", "1", 0);
+        av_dict_set(&vopts, "rc-lookahead", "20", 0);
+        avcodec_open2(vCodecCtx, vCodec, &vopts);
+        av_dict_free(&vopts);
 
-            AVBufferRef* qsv_hw_dev = nullptr;
-            AVDictionary* qsv_opts = nullptr;
-            av_dict_set(&qsv_opts, "child_device_type", "dxva2", 0);
-            err = av_hwdevice_ctx_create(&qsv_hw_dev, AV_HWDEVICE_TYPE_QSV, nullptr, qsv_opts, 0);
-            av_dict_free(&qsv_opts);
-            if (err < 0) {
-                std::cerr << "failed to create qsv device context: " << av_error_string(err) << std::endl;
-                goto h264_qsv_failed;
-            }
-            hw_device_ctx = qsv_hw_dev;
-            vCodecCtx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
-
-            hw_frames_ctx = av_hwframe_ctx_alloc(hw_device_ctx);
-            AVHWFramesContext* hwfc = (AVHWFramesContext*)hw_frames_ctx->data;
-            hwfc->format = vCodecCtx->pix_fmt;
-            hwfc->sw_format = AV_PIX_FMT_NV12;
-            hwfc->width = vCodecCtx->width;
-            hwfc->height = vCodecCtx->height;
-            hwfc->initial_pool_size = 32;
-            hwfc->device_ctx = (AVHWDeviceContext*)hw_device_ctx->data;
-            err = av_hwframe_ctx_init(hw_frames_ctx);
-            if (err < 0) {
-                std::cerr << "failed to init hw frame context: " << av_error_string(err) << std::endl;
-                goto h264_qsv_failed;
-            }
-            vCodecCtx->hw_frames_ctx = av_buffer_ref(hw_frames_ctx);
-
-            AVDictionary* vopts = nullptr;
-            av_dict_set_int(&vopts, "global_quality", 25, 0);
-            av_dict_set(&vopts, "async_depth", "4", 0);
-            err = avcodec_open2(vCodecCtx, vCodec, &vopts);
-            av_dict_free(&vopts);
-            if (err < 0) {
-                std::cerr << "failed to open h264_qsv encoder: " << av_error_string(err) << std::endl;
-                goto h264_qsv_failed;
-            }
-
-            vSwFrame = av_frame_alloc();
-            vSwFrame->format = AV_PIX_FMT_NV12;
-            vSwFrame->width = width;
-            vSwFrame->height = height;
-            av_frame_get_buffer(vSwFrame, 0);
-            
-            vCodecType = VCodecType::H264_QSV;
-        }
-        goto h264_qsv_success;
-        h264_qsv_failed:
-        std::cout << "h264_qsv failed, fallback to libx264\n";
-        vCodec = nullptr;
-        FreeResource();
-        h264_qsv_success:
+        vSwFrame = av_frame_alloc();
+        vSwFrame->format = AV_PIX_FMT_YUV420P;
+        vSwFrame->width = width;
+        vSwFrame->height = height;
         
-        if (!vCodec && (vCodec = (AVCodec*)avcodec_find_encoder(AV_CODEC_ID_H264))) {
-            init();
-            vStream = avformat_new_stream(fmtCtx, vCodec);
-            vCodecCtx = avcodec_alloc_context3(vCodec);
-            vCodecCtx->width = width;
-            vCodecCtx->height = height;
-            vCodecCtx->time_base = {1, (int)fps};
-            vCodecCtx->framerate = {(int)fps, 1};
-            vCodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-            vCodecCtx->gop_size = std::max(10, (int)fps * 2);
-            vCodecCtx->max_b_frames = 2;
-            vCodecCtx->rc_min_rate = 0;
-            vCodecCtx->rc_max_rate = 0;
-
-            AVDictionary* vopts = nullptr;
-            av_dict_set(&vopts, "preset", "superfast", 0);
-            av_dict_set(&vopts, "tune", "film", 0);
-            av_dict_set(&vopts, "crf", "23", 0);
-            av_dict_set(&vopts, "refs", "1", 0);
-            av_dict_set(&vopts, "rc-lookahead", "20", 0);
-            err = avcodec_open2(vCodecCtx, vCodec, &vopts);
-            av_dict_free(&vopts);
-            if (err < 0) {
-                std::cerr << "failed to open libx264 vcodec: " << av_error_string(err) << std::endl;
-                return;
-            }
-
-            vSwFrame = av_frame_alloc();
-            vSwFrame->format = AV_PIX_FMT_YUV420P;
-            vSwFrame->width = width;
-            vSwFrame->height = height;
-            
-            vCodecType = VCodecType::LIBX264;
-        }
-        goto libx264_success;
-        libx264_failed:
-        std::cout << "libx264 failed\n";
-        vCodec = nullptr;
-        FreeResource();
-        libx264_success:
-
-        if (!vCodec) {
-            std::cerr << "no encoder found\n";
-            return;
-        }
-
         avcodec_parameters_from_context(vStream->codecpar, vCodecCtx);
 
         const AVCodec* aCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
@@ -221,26 +91,11 @@ struct VideoCap {
         aCodecCtx->time_base = {1, PCM_FIXED_SAMPLE_RATE};
 
         AVDictionary* aopts = nullptr;
-        err = avcodec_open2(aCodecCtx, aCodec, &aopts);
+        avcodec_open2(aCodecCtx, aCodec, &aopts);
         av_dict_free(&aopts);
-        if (err < 0) {
-            std::cerr << "failed to open acodec: " << av_error_string(err) << std::endl;
-            return;
-        }
-
         avcodec_parameters_from_context(aStream->codecpar, aCodecCtx);
-
-        err = avio_open(&fmtCtx->pb, path, AVIO_FLAG_WRITE);
-        if (err < 0) {
-            std::cerr << "failed to open file: " << av_error_string(err) << std::endl;
-            return;
-        }
-
-        err = avformat_write_header(fmtCtx, nullptr);
-        if (err < 0) {
-            std::cerr << "failed to write header: " << av_error_string(err) << std::endl;
-            return;
-        }
+        avio_open(&fmtCtx->pb, path, AVIO_FLAG_WRITE);
+        avformat_write_header(fmtCtx, nullptr) < 0;
 
         isOpened = true;
     }
@@ -299,77 +154,21 @@ struct VideoCap {
     ) {
         writtenVideoFrameCount++;
 
-        if (vCodecType == VCodecType::LIBX264) {
-            vSwFrame->pts = vFrameIdx++;
-            vSwFrame->data[0] = (uint8_t*)y;
-            vSwFrame->data[1] = (uint8_t*)u;
-            vSwFrame->data[2] = (uint8_t*)v;
-            vSwFrame->linesize[0] = lsy;
-            vSwFrame->linesize[1] = lsu;
-            vSwFrame->linesize[2] = lsv;
+        vSwFrame->pts = vFrameIdx++;
+        vSwFrame->data[0] = (uint8_t*)y;
+        vSwFrame->data[1] = (uint8_t*)u;
+        vSwFrame->data[2] = (uint8_t*)v;
+        vSwFrame->linesize[0] = lsy;
+        vSwFrame->linesize[1] = lsu;
+        vSwFrame->linesize[2] = lsv;
 
-            if (avcodec_send_frame(vCodecCtx, vSwFrame) < 0) {
-                std::cerr << "failed to send frame" << std::endl;
-                return false;
-            }
-
-            flush();
-        } else if (vCodecType == VCodecType::H264_QSV) {
-            uint64_t pts = vFrameIdx++;
-
-            vSwFrame->pts = pts;
-
-            memcpy(vSwFrame->data[0], y, lsy * vCodecCtx->height);
-            interleave_uv(
-                vSwFrame->data[1],
-                (uint8_t*)u, (uint8_t*)v,
-                vCodecCtx->width * vCodecCtx->height / 4
-            );
-
-            // 不能复用 hw 的 AVFrame, 会申请buffer失败/画面抖动
-            AVFrame* hw = av_frame_alloc();
-            hw->width = vCodecCtx->width;
-            hw->height = vCodecCtx->height;
-            hw->format = vCodecCtx->pix_fmt;
-            hw->pts = pts;
-            hw->hw_frames_ctx = vCodecCtx->hw_frames_ctx;
-
-            if (av_hwframe_get_buffer(vCodecCtx->hw_frames_ctx, hw, 0) < 0) {
-                std::cerr << "failed to get hw buffer\n";
-                av_frame_free(&hw);
-                return false;
-            }
-
-            if (av_hwframe_transfer_data(hw, vSwFrame, 0) < 0) {
-                std::cerr << "failed to transfer data\n";
-                av_frame_free(&hw);
-                return false;
-            }
-
-            if (avcodec_send_frame(vCodecCtx, hw) < 0) {
-                std::cerr << "failed to send frame\n";
-                av_frame_free(&hw);
-                return false;
-            }
-
-            flush();
-            av_frame_free(&hw);
-        } else {
-            std::cerr << "unsupported pixel format" << std::endl;
+        if (avcodec_send_frame(vCodecCtx, vSwFrame) < 0) {
+            std::cerr << "failed to send frame" << std::endl;
             return false;
         }
 
+        flush();
         return true;
-    }
-
-    const wchar_t* getCodecName() {
-        if (vCodecType == VCodecType::LIBX264) {
-            return L"libx264";
-        } else if (vCodecType == VCodecType::H264_QSV) {
-            return L"h264_qsv";
-        } else {
-            return L"unknown";
-        }
     }
 
     ~VideoCap() {
@@ -386,8 +185,6 @@ struct VideoCap {
 
     private:
     void FreeResource() {
-        if (hw_frames_ctx) av_buffer_unref(&hw_frames_ctx);
-        if (hw_device_ctx) av_buffer_unref(&hw_device_ctx);
         if (vSwFrame) av_frame_free(&vSwFrame);
         if (vCodecCtx) avcodec_free_context(&vCodecCtx);
         if (aCodecCtx) avcodec_free_context(&aCodecCtx);
