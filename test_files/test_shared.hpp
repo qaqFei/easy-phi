@@ -170,12 +170,17 @@ struct VideoCap {
             vCodecCtx->time_base = {1, (int)fps};
             vCodecCtx->framerate = {(int)fps, 1};
             vCodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-            vCodecCtx->gop_size = std::max(10, (int)fps / 4);
-            vCodecCtx->max_b_frames = 1;
+            vCodecCtx->gop_size = std::max(10, (int)fps * 2);
+            vCodecCtx->max_b_frames = 2;
+            vCodecCtx->rc_min_rate = 0;
+            vCodecCtx->rc_max_rate = 0;
 
             AVDictionary* vopts = nullptr;
-            av_dict_set(&vopts, "preset", "ultrafast", 0);
-            av_dict_set(&vopts, "tune", "zerolatency", 0);
+            av_dict_set(&vopts, "preset", "superfast", 0);
+            av_dict_set(&vopts, "tune", "film", 0);
+            av_dict_set(&vopts, "crf", "23", 0);
+            av_dict_set(&vopts, "refs", "1", 0);
+            av_dict_set(&vopts, "rc-lookahead", "20", 0);
             err = avcodec_open2(vCodecCtx, vCodec, &vopts);
             av_dict_free(&vopts);
             if (err < 0) {
@@ -797,7 +802,7 @@ struct Window {
     bool mainloopFrame(const MainloopConfig& mainloopConfig) {
         auto frameSt = globalTimer();
 
-        if (!mainloopConfig.isRenderingVideo && glfwWindowShouldClose(window)) {
+        if (glfwWindowShouldClose(window)) {
             glfwSetWindowShouldClose(window, GLFW_FALSE);
             return false;
         }
@@ -813,8 +818,10 @@ struct Window {
             .disableHitsound = mainloopConfig.isRenderingVideo
         });
 
-        std::cout << "calculate took: " << (resultInfo.calculatedTook * 1000) << " ms" << std::endl;
-        std::cout << "gl operations took: " << (resultInfo.glOperationsTook * 1000) << " ms" << std::endl;
+        if (!mainloopConfig.isRenderingVideo) {
+            std::cout << "calculate took: " << (resultInfo.calculatedTook * 1000) << " ms" << std::endl;
+            std::cout << "gl operations took: " << (resultInfo.glOperationsTook * 1000) << " ms" << std::endl;
+        }
         
         if (mainloopConfig.pccfi) {
             mainloopConfig.pccfi->calculationTook = resultInfo.calculatedTook * 1000;
@@ -833,21 +840,27 @@ struct Window {
                 while ((globalTimer() - frameSt) < frameBusyWaitPercentage / vm->refreshRate) {
                     dummy++;
                 }
-                std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+
+                if (!mainloopConfig.isRenderingVideo) {
+                    std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+                }
             }
 
             double waitSt = globalTimer();
             glfwSwapBuffers(window);
-            std::cout << "swap took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+            if (!mainloopConfig.isRenderingVideo) {
+                std::cout << "swap took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+            }
         }
 
-        std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
-        std::cout << "draw calls count: " << glCtx->drawCallsCount << std::endl;
+        
+        if (!mainloopConfig.isRenderingVideo) {
+            std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
+            std::cout << "draw calls count: " << glCtx->drawCallsCount << std::endl;
+            std::cout << std::string(80, '.') << std::endl;
+        }
 
         glCtx->frameEnded();
-
-        std::cout << std::string(80, '.') << std::endl;
-
         return true;
     }
 

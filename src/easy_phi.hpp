@@ -62,7 +62,7 @@ bool ptrIsAligned16(void* ptr) {
 }
 
 template <typename T1, typename T2>
-T1 typed_clamp(T2 v) {
+T1 typed_clamp(T2 v) noexcept {
     return (T1)std::clamp(v, (T2)std::numeric_limits<T1>::min(), (T2)std::numeric_limits<T1>::max());
 }
 
@@ -102,9 +102,7 @@ struct HashBucket {
         }
     }
     
-    void submitBool(bool b) {
-        mix(b ? 1 : 0);
-    }
+    void submitBool(bool b) { mix(b ? 1 : 0); }
 
     template <typename T>
     void submitOptionalNumber(std::optional<T> v) {
@@ -114,9 +112,7 @@ struct HashBucket {
         } else submitBool(false);
     }
     
-    ep_u64 getHash() const {
-        return hash;
-    }
+    ep_u64 getHash() const { return hash; }
 };
 
 struct Data {
@@ -187,60 +183,44 @@ struct Vec2 {
     Vec2() = default;
     template <typename A, typename B> Vec2(A a, B b) : x((ep_f64)a), y((ep_f64)b) {}
 
-    ep_f64 sum() const { return x + y; }
-    ep_f64 length() const { return std::sqrt(x * x + y * y); }
-    ep_f64 lengthSquared() const { return x * x + y * y; }
-    ep_f64 xyDiff() const { return std::abs(x - y); }
+    ep_f64 sum() const noexcept { return x + y; }
+    ep_f64 length() const noexcept { return std::sqrt(x * x + y * y); }
+    ep_f64 lengthSquared() const noexcept { return x * x + y * y; }
+    ep_f64 xyDiff() const noexcept { return std::abs(x - y); }
+    ep_f64 max() const noexcept { return std::max(x, y); }
+    ep_f64 min() const noexcept { return std::min(x, y); }
 
-    Vec2 operator+(const Vec2& v) const { return Vec2 { x + v.x, y + v.y }; }
-    Vec2 operator-(const Vec2& v) const { return Vec2 { x - v.x, y - v.y }; }
-    Vec2 operator*(const Vec2& v) const { return Vec2 { x * v.x, y * v.y }; }
-    Vec2 operator/(const Vec2& v) const { return Vec2 { x / v.x, y / v.y }; }
-    Vec2 operator+(ep_f64 v) const { return Vec2 { x + v, y + v }; }
-    Vec2 operator-(ep_f64 v) const { return Vec2 { x - v, y - v }; }
-    Vec2 operator*(ep_f64 v) const { return Vec2 { x * v, y * v }; }
-    Vec2 operator/(ep_f64 v) const { return Vec2 { x / v, y / v }; }
-    Vec2 operator-() const { return Vec2 { -x, -y }; }
+    Vec2 operator+(const Vec2& v) const noexcept { return Vec2 { x + v.x, y + v.y }; }
+    Vec2 operator-(const Vec2& v) const noexcept { return Vec2 { x - v.x, y - v.y }; }
+    Vec2 operator*(const Vec2& v) const noexcept { return Vec2 { x * v.x, y * v.y }; }
+    Vec2 operator/(const Vec2& v) const noexcept { return Vec2 { x / v.x, y / v.y }; }
+    Vec2 operator+(ep_f64 v) const noexcept { return Vec2 { x + v, y + v }; }
+    Vec2 operator-(ep_f64 v) const noexcept { return Vec2 { x - v, y - v }; }
+    Vec2 operator*(ep_f64 v) const noexcept { return Vec2 { x * v, y * v }; }
+    Vec2 operator/(ep_f64 v) const noexcept { return Vec2 { x / v, y / v }; }
+    Vec2 operator-() const noexcept { return Vec2 { -x, -y }; }
 
-    Vec2& operator+=(const Vec2& v) { x += v.x; y += v.y; return *this; }
-    Vec2& operator-=(const Vec2& v) { x -= v.x; y -= v.y; return *this; }
-    Vec2& operator*=(const Vec2& v) { x *= v.x; y *= v.y; return *this; }
-    Vec2& operator/=(const Vec2& v) { x /= v.x; y /= v.y; return *this; }
-    Vec2& operator+=(ep_f64 v) { x += v; y += v; return *this; }
-    Vec2& operator-=(ep_f64 v) { x -= v; y -= v; return *this; }
-    Vec2& operator*=(ep_f64 v) { x *= v; y *= v; return *this; }
-    Vec2& operator/=(ep_f64 v) { x /= v; y /= v; return *this; }
+    Vec2& operator+=(const Vec2& v) noexcept { x += v.x; y += v.y; return *this; }
+    Vec2& operator-=(const Vec2& v) noexcept { x -= v.x; y -= v.y; return *this; }
+    Vec2& operator*=(const Vec2& v) noexcept { x *= v.x; y *= v.y; return *this; }
+    Vec2& operator/=(const Vec2& v) noexcept { x /= v.x; y /= v.y; return *this; }
+    Vec2& operator+=(ep_f64 v) noexcept { x += v; y += v; return *this; }
+    Vec2& operator-=(ep_f64 v) noexcept { x -= v; y -= v; return *this; }
+    Vec2& operator*=(ep_f64 v) noexcept { x *= v; y *= v; return *this; }
+    Vec2& operator/=(ep_f64 v) noexcept { x /= v; y /= v; return *this; }
 
-    bool operator==(const Vec2& v) const { return x == v.x && y == v.y; }
-    bool operator!=(const Vec2& v) const { return x != v.x || y != v.y; }
+    bool operator==(const Vec2& v) const noexcept { return x == v.x && y == v.y; }
+    bool operator!=(const Vec2& v) const noexcept { return x != v.x || y != v.y; }
 
-    ep_f64 max() const { return std::max(x, y); }
-    ep_f64 min() const { return std::min(x, y); }
-
-    Vec2 rotate(ep_f64 angle, ep_f64 length) const {
-        ep_f64 c = std::cos(angle);
-        ep_f64 s = std::sin(angle);
-        return Vec2 {
-            x + c * length,
-            y + s * length
-        };
+    Vec2 rotate(ep_f64 angle, ep_f64 length) const noexcept {
+        ep_f64 c = std::cos(angle); ep_f64 s = std::sin(angle);
+        return Vec2 { x + c * length, y + s * length };
     }
 
-    Vec2 rotateDegrees(ep_f64 angle, ep_f64 length) const {
-        return rotate(angle / 180.0 * std::numbers::pi, length);
-    }
-
-    bool isZeroZone() const {
-        return x == y;
-    }
-
-    bool include(ep_f64 v) const {
-        return x <= v && v <= y;
-    }
-    
-    std::pair<ep_f64, ep_f64> toPair() const {
-        return { x, y };
-    }
+    Vec2 rotateDegrees(ep_f64 angle, ep_f64 length) const noexcept { return rotate(angle / 180.0 * std::numbers::pi, length); }
+    bool isZeroZone() const noexcept { return x == y; }
+    bool include(ep_f64 v) const noexcept { return x <= v && v <= y; }
+    std::pair<ep_f64, ep_f64> toPair() const noexcept { return { x, y }; }
 };
 
 static const ep_f64 INF_TIME = 99999.0;
@@ -250,15 +230,11 @@ static const ep_f64 INF_EV = 1e9;
 struct Rect {
     ep_f64 x, y, w, h;
 
-    Vec2 position() const {
-        return { x, y };
-    }
+    Vec2 position() const noexcept { return { x, y }; }
+    Vec2 size() const noexcept { return { w, h }; }
+    Vec2 center() const noexcept { return { x + w / 2, y + h / 2 }; }
 
-    Vec2 size() const {
-        return { w, h };
-    }
-
-    Rect extend(ep_f64 padding) const {
+    Rect extend(ep_f64 padding) const noexcept {
         /* !docs
         Returns a new rect with the padding applied to all sides.
         */
@@ -270,40 +246,19 @@ struct Rect {
             .h = h + padding * 2
         };
     }
-
-    Vec2 center() const {
-        return { x + w / 2, y + h / 2 };
-    }
 };
 
 struct Color {
     ep_f64 r, g, b, a;
 
-    static Color White() {
-        return Color { 1.0, 1.0, 1.0, 1.0 };
-    }
+    static Color White() noexcept { return Color { 1.0, 1.0, 1.0, 1.0 }; }
+    static Color Black() noexcept { return Color { 0.0, 0.0, 0.0, 1.0 }; }
+    static Color Red() noexcept { return Color { 1.0, 0.0, 0.0, 1.0 }; }
+    static Color Green() noexcept { return Color { 0.0, 1.0, 0.0, 1.0 }; }
+    static Color Blue() noexcept { return Color { 0.0, 0.0, 1.0, 1.0 }; }
+    static Color Transparent() noexcept { return Color { 0.0, 0.0, 0.0, 0.0 }; }
 
-    static Color Black() {
-        return Color { 0.0, 0.0, 0.0, 1.0 };
-    }
-
-    static Color Red() {
-        return Color { 1.0, 0.0, 0.0, 1.0 };
-    }
-
-    static Color Green() {
-        return Color { 0.0, 1.0, 0.0, 1.0 };
-    }
-
-    static Color Blue() {
-        return Color { 0.0, 0.0, 1.0, 1.0 };
-    }
-
-    static Color Transparent() {
-        return Color { 0.0, 0.0, 0.0, 0.0 };
-    }
-
-    Color applyAlpha(ep_f64 alpha) {
+    Color applyAlpha(ep_f64 alpha) const noexcept {
         /* !docs
         Returns a new color with the alpha multiplied by `alpha`.
         */
@@ -311,26 +266,26 @@ struct Color {
         return Color { r, g, b, a * alpha };
     }
 
-    Color operator*(const Color& c) const { return Color { r * c.r, g * c.g, b * c.b, a * c.a }; }
-    Color operator*(ep_f64 v) const { return Color { r * v, g * v, b * v, a * v }; }
-    Color operator+(const Color& c) const { return Color { r + c.r, g + c.g, b + c.b, a + c.a }; }
-    Color operator+(ep_f64 v) const { return Color { r + v, g + v, b + v, a + v }; }
-    Color operator-(const Color& c) const { return Color { r - c.r, g - c.g, b - c.b, a - c.a }; }
-    Color operator-(ep_f64 v) const { return Color { r - v, g - v, b - v, a - v }; }
-    Color operator/(const Color& c) const { return Color { r / c.r, g / c.g, b / c.b, a / c.a }; }
-    Color operator/(ep_f64 v) const { return Color { r / v, g / v, b / v, a / v }; }
+    Color operator*(const Color& c) const noexcept { return Color { r * c.r, g * c.g, b * c.b, a * c.a }; }
+    Color operator*(ep_f64 v) const noexcept { return Color { r * v, g * v, b * v, a * v }; }
+    Color operator+(const Color& c) const noexcept { return Color { r + c.r, g + c.g, b + c.b, a + c.a }; }
+    Color operator+(ep_f64 v) const noexcept { return Color { r + v, g + v, b + v, a + v }; }
+    Color operator-(const Color& c) const noexcept { return Color { r - c.r, g - c.g, b - c.b, a - c.a }; }
+    Color operator-(ep_f64 v) const noexcept { return Color { r - v, g - v, b - v, a - v }; }
+    Color operator/(const Color& c) const noexcept { return Color { r / c.r, g / c.g, b / c.b, a / c.a }; }
+    Color operator/(ep_f64 v) const noexcept { return Color { r / v, g / v, b / v, a / v }; }
 
-    Color& operator*=(const Color& c) { r *= c.r; g *= c.g; b *= c.b; a *= c.a; return *this; }
-    Color& operator*=(ep_f64 v) { r *= v; g *= v; b *= v; a *= v; return *this; }
-    Color& operator+=(const Color& c) { r += c.r; g += c.g; b += c.b; a += c.a; return *this; }
-    Color& operator+=(ep_f64 v) { r += v; g += v; b += v; a += v; return *this; }
-    Color& operator-=(const Color& c) { r -= c.r; g -= c.g; b -= c.b; a -= c.a; return *this; }
-    Color& operator-=(ep_f64 v) { r -= v; g -= v; b -= v; a -= v; return *this; }
-    Color& operator/=(const Color& c) { r /= c.r; g /= c.g; b /= c.b; a /= c.a; return *this; }
-    Color& operator/=(ep_f64 v) { r /= v; g /= v; b /= v; a /= v; return *this; }
+    Color& operator*=(const Color& c) noexcept { r *= c.r; g *= c.g; b *= c.b; a *= c.a; return *this; }
+    Color& operator*=(ep_f64 v) noexcept { r *= v; g *= v; b *= v; a *= v; return *this; }
+    Color& operator+=(const Color& c) noexcept { r += c.r; g += c.g; b += c.b; a += c.a; return *this; }
+    Color& operator+=(ep_f64 v) noexcept { r += v; g += v; b += v; a += v; return *this; }
+    Color& operator-=(const Color& c) noexcept { r -= c.r; g -= c.g; b -= c.b; a -= c.a; return *this; }
+    Color& operator-=(ep_f64 v) noexcept { r -= v; g -= v; b -= v; a -= v; return *this; }
+    Color& operator/=(const Color& c) noexcept { r /= c.r; g /= c.g; b /= c.b; a /= c.a; return *this; }
+    Color& operator/=(ep_f64 v) noexcept { r /= v; g /= v; b /= v; a /= v; return *this; }
 
-    bool operator==(const Color& c) const { return r == c.r && g == c.g && b == c.b && a == c.a; }
-    bool operator!=(const Color& c) const { return !(*this == c); }
+    bool operator==(const Color& c) const noexcept { return r == c.r && g == c.g && b == c.b && a == c.a; }
+    bool operator!=(const Color& c) const noexcept { return !(*this == c); }
 };
 
 struct Transform2D {
@@ -340,26 +295,26 @@ struct Transform2D {
 
     ep_f64 matrix[6];
 
-    Transform2D(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) {
+    Transform2D(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) noexcept {
         matrix[0] = a; matrix[1] = b;
         matrix[2] = c; matrix[3] = d;
         matrix[4] = e; matrix[5] = f;
     }
 
-    Transform2D() {
+    Transform2D() noexcept {
         matrix[0] = 1.0; matrix[1] = 0.0;
         matrix[2] = 0.0; matrix[3] = 1.0;
         matrix[4] = 0.0; matrix[5] = 0.0;
     }
 
-    Transform2D& set(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) {
+    Transform2D& set(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) noexcept {
         matrix[0] = a; matrix[1] = b;
         matrix[2] = c; matrix[3] = d;
         matrix[4] = e; matrix[5] = f;
         return *this;
     }
 
-    Transform2D& transform(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) {
+    Transform2D& transform(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) noexcept {
         set(
             matrix[0] * a + matrix[2] * b,
             matrix[1] * a + matrix[3] * b,
@@ -371,7 +326,7 @@ struct Transform2D {
         return *this;
     }
 
-    Transform2D& transform(const Transform2D& o) {
+    Transform2D& transform(const Transform2D& o) noexcept {
         transform(
             o.matrix[0], o.matrix[1],
             o.matrix[2], o.matrix[3],
@@ -380,50 +335,50 @@ struct Transform2D {
         return *this;
     }
 
-    Transform2D& scale(ep_f64 x, ep_f64 y) {
+    Transform2D& scale(ep_f64 x, ep_f64 y) noexcept {
         transform(x, 0.0, 0.0, y, 0.0, 0.0);
         return *this;
     }
 
-    Transform2D& scale(const Vec2& v) {
+    Transform2D& scale(const Vec2& v) noexcept {
         scale(v.x, v.y);
         return *this;
     }
 
-    Transform2D& translate(ep_f64 x, ep_f64 y) {
+    Transform2D& translate(ep_f64 x, ep_f64 y) noexcept {
         transform(1.0, 0.0, 0.0, 1.0, x, y);
         return *this;
     }
 
-    Transform2D& translate(const Vec2& v) {
+    Transform2D& translate(const Vec2& v) noexcept {
         translate(v.x, v.y);
         return *this;
     }
 
-    Transform2D& rotate(ep_f64 angle) {
+    Transform2D& rotate(ep_f64 angle) noexcept {
         ep_f64 c = std::cos(angle);
         ep_f64 s = std::sin(angle);
         transform(c, s, -s, c, 0.0, 0.0);
         return *this;
     }
 
-    Transform2D& rotateDegrees(ep_f64 angle) {
+    Transform2D& rotateDegrees(ep_f64 angle) noexcept {
         rotate(angle / 180.0 * std::numbers::pi);
         return *this;
     }
 
-    Vec2 transformPoint(ep_f64 x, ep_f64 y) const {
+    Vec2 transformPoint(ep_f64 x, ep_f64 y) const noexcept {
         return Vec2 {
             matrix[0] * x + matrix[2] * y + matrix[4],
             matrix[1] * x + matrix[3] * y + matrix[5]
         };
     }
 
-    Vec2 transformPoint(const Vec2& v) const {
+    Vec2 transformPoint(const Vec2& v) const noexcept {
         return transformPoint(v.x, v.y);
     }
 
-    Transform2D getInverse() const {
+    Transform2D getInverse() const noexcept {
         ep_f64 det = matrix[0] * matrix[3] - matrix[1] * matrix[2];
         ep_f64 invDet = det != 0 ? 1.0 / det : 1e9;
         return Transform2D(
@@ -435,7 +390,7 @@ struct Transform2D {
     }
 };
 
-bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
+bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) noexcept {
     /* !docs
     Checks if a point is strictly inside a convex quad.
     */
@@ -456,7 +411,7 @@ bool pointStrictlyInConvexQuad(const Vec2& p, const Vec2 quad[4]) {
     return false;
 }
 
-bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
+bool pointStrictlyInRect(const Vec2& p, const Rect& r) noexcept {
     /* !docs
     Checks if a point is strictly inside a rectangle.
     */
@@ -465,7 +420,7 @@ bool pointStrictlyInRect(const Vec2& p, const Rect& r) {
            r.y < p.y && p.y < r.y + r.h;
 }
 
-bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
+bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) noexcept {
     /* !docs
     Checks if a convex quad is strictly intersecting a rectangle.
     */
@@ -480,7 +435,7 @@ bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) {
            pointStrictlyInConvexQuad(Vec2 {r.x, r.y + r.h}, quad);
 }
 
-bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) {
+bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) noexcept {
     /* !docs
     Checks if a **line** is intersecting a **line segment**.
     */
@@ -505,7 +460,7 @@ bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 se
     return u >= -eps && u <= 1.0 + eps;
 }
 
-bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
+bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) noexcept {
     /* !docs
     Checks if a line is intersecting a rectangle.
     */
@@ -516,7 +471,7 @@ bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) {
            lineIsIntersectLineSeg(linePoint, lineDeg, (Vec2[2]) { Vec2 { r.x, r.y + r.h }, Vec2 { r.x, r.y } });
 }
 
-bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) {
+bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint) noexcept {
     /* !docs
     Checks if a point is leaving a target point.
     When it returns true, it means that the point is leaving the target point if it is moving in the given direction.
@@ -529,7 +484,7 @@ bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint)
     ) > 0;
 }
 
-bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) {
+bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& screenArea) noexcept {
     /* !docs
     Checks if a line is leaving the screen based on `@pointIsLeavingPoint`.
     */
@@ -615,7 +570,7 @@ struct SKVCache {
 
     template <typename F>
     [[gnu::always_inline, gnu::hot]]
-    const T2& get(const T1& k, F&& reseter) {
+    const T2& get(const T1& k, F&& reseter) noexcept {
         /* !docs
         Gets the value from the cache.
         If the key is different from the cached key, the value is reset by reseter function and the key is updated.
@@ -637,7 +592,7 @@ struct EaseSet {
 
     static constexpr ep_u64 ktIntegralTableSize = 128;
 
-    static ep_f64 getIntegralValue(const ep_f64* table, ep_u64 size, ep_f64 p) {
+    static ep_f64 getIntegralValue(const ep_f64* table, ep_u64 size, ep_f64 p) noexcept {
         p = std::clamp(p, 0.0, 1.0);
         if (p == 1.0) return table[size - 1];
         auto s = table[(ep_u64)(p * (size - 1))];
@@ -647,7 +602,7 @@ struct EaseSet {
     }
 
     struct Milthm {
-        static ep_f64 easing_in(ep_u64 press, ep_f64 p) {
+        static ep_f64 easing_in(ep_u64 press, ep_f64 p) noexcept {
             switch (press) {
                 case 0: return p;
                 case 1: return (1.0 - cos(((p * std::numbers::pi) / 2.0)));
@@ -664,7 +619,7 @@ struct EaseSet {
             }
         }
 
-        static ep_f64 easing_out(ep_u64 press, ep_f64 p) {
+        static ep_f64 easing_out(ep_u64 press, ep_f64 p) noexcept {
             switch (press) {
                 case 0: return p;
                 case 1: return sin(((p * std::numbers::pi) / 2.0));
@@ -681,7 +636,7 @@ struct EaseSet {
             }
         }
 
-        static ep_f64 easing_in_out(ep_u64 press, ep_f64 p) {
+        static ep_f64 easing_in_out(ep_u64 press, ep_f64 p) noexcept {
             switch (press) {
                 case 0: return p;
                 case 1: return ((-(cos((std::numbers::pi * p)) - 1.0)) / 2.0);
@@ -698,7 +653,7 @@ struct EaseSet {
             }
         }
 
-        static ep_f64 easing(ep_u64 ease, ep_u64 press, ep_f64 p) {
+        static ep_f64 easing(ep_u64 ease, ep_u64 press, ep_f64 p) noexcept {
             switch (ease) {
                 case 0: return easing_in(press, p);
                 case 1: return easing_out(press, p);
@@ -710,7 +665,7 @@ struct EaseSet {
 
     struct Phigros {
         struct Official {
-            static ep_f64 easing(ep_u64 ease, ep_f64 p) {
+            static ep_f64 easing(ep_u64 ease, ep_f64 p) noexcept {
                 switch (ease) {
                     case 0: return p;
                     case 1: return 1.0 - cos(p * std::numbers::pi / 2.0);
@@ -733,7 +688,7 @@ struct EaseSet {
         };
 
         struct RePhiEdit {
-            static ep_f64 easing(ep_u64 ease, ep_f64 p) {
+            static ep_f64 easing(ep_u64 ease, ep_f64 p) noexcept {
                 switch (ease) {
                     case 1: return p;
                     case 2: return sin(((p * std::numbers::pi) / 2.0));
@@ -800,7 +755,7 @@ struct EaseSet {
                 { 0, 1.14563e-06, 3.33872e-06, 6.68788e-06, 1.12507e-05, 1.70176e-05, 2.38959e-05, 3.16957e-05, 4.01192e-05, 4.87542e-05, 5.70736e-05, 6.44429e-05, 7.01365e-05, 7.3364e-05, 7.33074e-05, 6.91694e-05, 6.02313e-05, 4.59211e-05, 2.58871e-05, 7.5197e-08, -3.11945e-05, -6.71583e-05, -0.000106551, -0.00014757, -0.000187864, -0.000224554, -0.000254303, -0.000273425, -0.000278045, -0.000264315, -0.000228679, -0.000168179, -8.08036e-05, 3.41486e-05, 0.000175703, 0.000340864, 0.000524324, 0.000718252, 0.000912209, 0.0010932, 0.00124595, 0.0013533, 0.00139701, 0.00135862, 0.00122066, 0.00096808, 0.000589855, 8.06696e-05, -0.000557307, -0.00131275, -0.00216368, -0.00307639, -0.00400478, -0.00489047, -0.00566368, -0.00624517, -0.00654919, -0.00648766, -0.00597554, -0.00493719, -0.00331382, -0.00107147, 0.0017906, 0.00523181, 0.00916883, 0.0136017, 0.0186136, 0.0242453, 0.030496, 0.0373317, 0.0446936, 0.0525062, 0.0606842, 0.0691398, 0.077787, 0.0865467, 0.0953492, 0.104136, 0.112861, 0.12149, 0.130002, 0.138386, 0.146638, 0.154765, 0.162777, 0.170689, 0.178519, 0.186286, 0.194007, 0.2017, 0.20938, 0.217061, 0.224751, 0.23246, 0.240193, 0.247952, 0.255738, 0.263552, 0.27139, 0.279251, 0.287129, 0.295022, 0.302926, 0.310837, 0.318751, 0.326666, 0.33458, 0.34249, 0.350395, 0.358295, 0.366189, 0.374077, 0.38196, 0.389839, 0.397713, 0.405583, 0.413452, 0.421319, 0.429184, 0.43705, 0.444915, 0.452782, 0.460649, 0.468517, 0.476386, 0.484257, 0.492129, 0.500002 }
             };
 
-            static ep_f64 easing_int(ep_u64 ease, ep_f64 p) {
+            static ep_f64 easing_int(ep_u64 ease, ep_f64 p) noexcept {
                 if (ease == 0 || ease > 29) ease = 1;
                 return getIntegralValue(intTable[ease - 1], ktIntegralTableSize, p);
             }
@@ -824,7 +779,7 @@ enum class EnumPhiEventType : ep_u64 {
     MAX = PhiShaderUniform + 1
 };
 
-bool phiEventTypeIsMultiply(EnumPhiEventType type) {
+bool phiEventTypeIsMultiply(EnumPhiEventType type) noexcept {
     /* !docs
     Checks if the event type is a multiply type.
     If it returns true, it means that if there are there are `v1` and `v2` in the same time, the final value will be `v1 * v2`.
@@ -981,13 +936,13 @@ struct PhiEvent {
 
     ep_f64 cumulativeValueAtStart; // !inline-docs| It is like the `floorPosition` in official chart.
 
-    ep_f64 getProgressAtTime(ep_f64 t) {
+    ep_f64 getProgressAtTime(ep_f64 t) noexcept {
         // if (t < timeZone.x) return 0.0;
         ep_f64 p = std::clamp((t - timeZone.x) / (timeZone.y - timeZone.x), 0.0, 1.0);
         return p;
     }
 
-    ep_f64 valueAtTime(ep_f64 t) {
+    ep_f64 valueAtTime(ep_f64 t) noexcept {
         auto p = getProgressAtTime(t);
         
         if (hasValueEasing()) {
@@ -1007,7 +962,7 @@ struct PhiEvent {
         return valueZone.x + p * (valueZone.y - valueZone.x);
     }
 
-    static ep_f64 GetDefaultValue(EnumPhiEventType type) {
+    static ep_f64 GetDefaultValue(EnumPhiEventType type) noexcept {
         /* !docs
         Get the default value of a phigros event type.
         It means the event value will be set to this value if the there is no event.
@@ -1016,7 +971,7 @@ struct PhiEvent {
         return phiEventTypeIsMultiply(type) ? 1.0 : 0.0;
     }
 
-    ep_f64 getIntegralValue(ep_f64 t) {
+    ep_f64 getIntegralValue(ep_f64 t) noexcept {
         auto p = getProgressAtTime(t);
         ep_f64 iv = p * p / 2.0;
 
@@ -1038,13 +993,8 @@ struct PhiEvent {
     }
 
     private:
-    bool hasValueEasing() const {
-        return easingFunc != nullptr;
-    }
-
-    bool hasAllEasing() const {
-        return easingFunc != nullptr && easingIntFunc != nullptr;
-    }
+    bool hasValueEasing() const noexcept { return easingFunc != nullptr; }
+    bool hasAllEasing() const noexcept { return easingFunc != nullptr && easingIntFunc != nullptr; }
 };
 
 struct PhiAnimLayer {
@@ -1055,13 +1005,8 @@ struct PhiAnimLayer {
 
     std::vector<PhiEvent> events[(ep_u64)EnumPhiEventType::MAX];
 
-    void addEvent(const PhiEvent& e) {
-        events[(ep_u64)e.type].push_back(e);
-    }
-
-    std::vector<PhiEvent>& getEvents(EnumPhiEventType type) {
-        return events[(ep_u64)type];
-    }
+    void addEvent(const PhiEvent& e) { events[(ep_u64)e.type].push_back(e); }
+    std::vector<PhiEvent>& getEvents(EnumPhiEventType type) noexcept { return events[(ep_u64)type]; }
 
     void init() {
         /* !docs
@@ -1078,7 +1023,7 @@ struct PhiAnimLayer {
         initSpeedCumul();
     }
 
-    void updateType(ep_u64 type, ep_f64 t) {
+    void updateType(ep_u64 type, ep_f64 t) noexcept {
         /* !docs
         Update the event value of a event type at a time.
         */
@@ -1106,11 +1051,11 @@ struct PhiAnimLayer {
         lastUpdatedTimes[type] = t;
     }
 
-    void updateType(EnumPhiEventType type, ep_f64 t) {
+    void updateType(EnumPhiEventType type, ep_f64 t) noexcept {
         updateType((ep_u64)type, t);
     }
 
-    void update(ep_f64 t) {
+    void update(ep_f64 t) noexcept {
         /* !docs
         Update all event values at a time.
         */
@@ -1120,7 +1065,7 @@ struct PhiAnimLayer {
         }
     }
 
-    ep_f64 get(EnumPhiEventType type) {
+    ep_f64 get(EnumPhiEventType type) noexcept {
         /* !docs
         Get the event value of a event type.
         */
@@ -1129,7 +1074,7 @@ struct PhiAnimLayer {
         return currentValues[(ep_u64)type];
     }
 
-    std::optional<ep_f64> getAlwaysValue(EnumPhiEventType type) {
+    std::optional<ep_f64> getAlwaysValue(EnumPhiEventType type) noexcept {
         /* !docs
         Get a fixed value of a event type if it is exists.
         */
@@ -1155,7 +1100,7 @@ struct PhiAnimLayer {
         return fixedValue;
     }
 
-    std::optional<Vec2> get_zone(EnumPhiEventType type) {
+    std::optional<Vec2> get_zone(EnumPhiEventType type) noexcept {
         /* !docs
         Get the current valueZone of a event type.
         */
@@ -1211,7 +1156,7 @@ struct PhiAnimGroup {
         }
     }
 
-    void updateType(EnumPhiEventType type, ep_f64 t) {
+    void updateType(EnumPhiEventType type, ep_f64 t) noexcept {
         /* !docs
         Update the event value of a event type at a time.
         */
@@ -1221,7 +1166,7 @@ struct PhiAnimGroup {
         }
     }
 
-    void update(ep_f64 t) {
+    void update(ep_f64 t) noexcept {
         /* !docs
         Update all event values at a time.
         */
@@ -1231,7 +1176,7 @@ struct PhiAnimGroup {
         }
     }
 
-    ep_f64 get_based(EnumPhiEventType type, ep_f64 baseValue) {
+    ep_f64 get_based(EnumPhiEventType type, ep_f64 baseValue) noexcept {
         /* !docs
         Get the event value of a event type and it will be added/multiplied to the base value.
         */
@@ -1246,7 +1191,7 @@ struct PhiAnimGroup {
         return value;
     }
 
-    Vec2 get_zone(EnumPhiEventType type) {
+    Vec2 get_zone(EnumPhiEventType type) noexcept {
         /* !docs
         Get the event valueZone of a event type.
         **It only supports single layer event types.**
@@ -1318,7 +1263,7 @@ struct PhiAnimator {
         }
     }
 
-    ep_f64 get_based(ep_u64 index, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
+    ep_f64 get_based(ep_u64 index, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) noexcept {
         /* !docs
         Get the event value of the type of a object at a time and it will be added/multiplied to the base value.
         */
@@ -1332,11 +1277,11 @@ struct PhiAnimator {
     }
 
     template <typename T>
-    ep_f64 get_based(T& obj, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) {
+    ep_f64 get_based(T& obj, ep_f64 t, EnumPhiEventType type, ep_f64 baseValue) noexcept {
         return get_based(obj.indexer.get(), t, type, baseValue);
     }
 
-    ep_f64 get(ep_u64 index, ep_f64 t, EnumPhiEventType type) {
+    ep_f64 get(ep_u64 index, ep_f64 t, EnumPhiEventType type) noexcept {
         /* !docs
         Get the event value of the type of a object at a time.
         */
@@ -1345,11 +1290,11 @@ struct PhiAnimator {
     }
 
     template <typename T>
-    ep_f64 get(T& obj, ep_f64 t, EnumPhiEventType type) {
+    ep_f64 get(T& obj, ep_f64 t, EnumPhiEventType type) noexcept {
         return get(obj.indexer.get(), t, type);
     }
 
-    Vec2 get_zone(ep_u64 index, ep_f64 t, EnumPhiEventType type) {
+    Vec2 get_zone(ep_u64 index, ep_f64 t, EnumPhiEventType type) noexcept {
         /* !docs
         Get the event valueZone of the type of a object at a time.
         **It only supports single layer event types.**
@@ -1364,7 +1309,7 @@ struct PhiAnimator {
     }
 
     template <typename T>
-    Vec2 get_zone(T& obj, ep_f64 t, EnumPhiEventType type) {
+    Vec2 get_zone(T& obj, ep_f64 t, EnumPhiEventType type) noexcept {
         return get_zone(obj.indexer.get(), t, type);
     }
 
@@ -1402,7 +1347,7 @@ struct PhiAnimator {
         return hash.getHash();
     }
 
-    ep_f64 get_alpha(ep_u64 index, ep_f64 t, ep_f64 additionalDefault) {
+    ep_f64 get_alpha(ep_u64 index, ep_f64 t, ep_f64 additionalDefault) noexcept {
         /* !docs
         Get the alpha value of a object at a time and `EnumPhiEventType::AdditiveAlpha` value is based on the additionalDefault.
         */
@@ -1411,7 +1356,7 @@ struct PhiAnimator {
     }
 
     template <typename T>
-    ep_f64 get_alpha(T& obj, ep_f64 t, ep_f64 additionalDefault) {
+    ep_f64 get_alpha(T& obj, ep_f64 t, ep_f64 additionalDefault) noexcept {
         return get_alpha(obj.indexer.get(), t, additionalDefault);
     }
 };
@@ -1423,7 +1368,7 @@ struct PhiObjectIndexer {
 
     ep_u64 index;
 
-    ep_u64 get() {
+    ep_u64 get() noexcept {
         return index ? index : (index = reqGlobalCounter());
     }
 };
@@ -1439,7 +1384,7 @@ struct PhiNote {
         ep_f64 lastUpdateTime;
         bool playedHitsound;
 
-        void timeUpdated(ep_f64 t) {
+        void timeUpdated(ep_f64 t) noexcept {
             if (lastUpdateTime > t) {
                 playedHitsound = false;
             }
@@ -1447,7 +1392,7 @@ struct PhiNote {
             lastUpdateTime = t;
         }
 
-        bool onPlayHitsound() {
+        bool onPlayHitsound() noexcept {
             /* !docs
             Check if the note should play hitsound.
             */
@@ -1477,7 +1422,7 @@ struct PhiNote {
         floorPosition = { getFloorPositionAt(time, animator), getFloorPositionAt(time + holdTime, animator) };
     }
 
-    ep_f64 getFloorPositionAt(ep_f64 t, PhiAnimator& animator) {
+    ep_f64 getFloorPositionAt(ep_f64 t, PhiAnimator& animator) noexcept {
         /* !docs
         Get the floor position of the note at a time.
         */
@@ -1489,7 +1434,7 @@ struct PhiNote {
         return animator.get(lineIndex, t, EnumPhiEventType::Speed) + animator.get(*this, t, EnumPhiEventType::Speed);
     }
 
-    bool isHold() {
+    bool isHold() noexcept {
         return holdTime > 0.0 || type == EnumPhiNoteType::Hold;
     }
 
@@ -1507,7 +1452,7 @@ struct PhiNoteGroup {
         ep_f64 lastUpdateTime;
         ep_u64 firstNoteIndex;
 
-        void timeUpdated(ep_f64 t) {
+        void timeUpdated(ep_f64 t) noexcept {
             if (lastUpdateTime > t) {
                 firstNoteIndex = 0;
             }
@@ -1515,7 +1460,7 @@ struct PhiNoteGroup {
             lastUpdateTime = t;
         }
 
-        void passedNoteIndex(ep_u64 index) {
+        void passedNoteIndex(ep_u64 index) noexcept {
             if (firstNoteIndex == index) {
                 firstNoteIndex++;
             }
@@ -1574,7 +1519,7 @@ struct PhiLine {
         }
     }
 
-    ep_f64 beat2sec(ep_f64 beat) {
+    ep_f64 beat2sec(ep_f64 beat) const {
         if (bpms.size() == 1) return beat * (60.0 / bpms[0].bpm);
 
         ep_f64 t = 0.0;
@@ -1601,7 +1546,7 @@ struct PhiLine {
         return t;
     }
 
-    ep_f64 sec2beat(ep_f64 t) {
+    ep_f64 sec2beat(ep_f64 t) const {
         if (bpms.size() == 1) return t / (60.0 / bpms[0].bpm);
 
         ep_f64 beat = 0.0;
@@ -1629,7 +1574,7 @@ struct PhiLine {
         return beat;
     }
 
-    ep_f64 getBpmAtSecond(ep_f64 t) {
+    ep_f64 getBpmAtSecond(ep_f64 t) const noexcept {
         /* !docs
         Get the bpm at the given time.
         */
@@ -1728,7 +1673,7 @@ struct PhiShaderUniform {
         for (ep_u8 i = 0; i < v.size(); i++) value[i] = v[i];
     }
 
-    static PhiShaderUniform Interpolate(const PhiShaderUniform& a, const PhiShaderUniform& b, ep_f64 t) {
+    static PhiShaderUniform Interpolate(const PhiShaderUniform& a, const PhiShaderUniform& b, ep_f64 t) noexcept {
         PhiShaderUniform result;
         result.used = std::max(a.used, b.used);
         for (ep_u8 i = 0; i < 4; i++) result.value[i] = a.value[i] + (b.value[i] - a.value[i]) * t;
@@ -1823,7 +1768,7 @@ struct PhiStoryboardAssets {
         }
     }
 
-    std::optional<std::string> getText(ep_f64 index, const Vec2& valueZone) {
+    std::optional<std::string> getText(ep_f64 index, const Vec2& valueZone) noexcept {
         if (valueZone.x < kTextIndexOffset) return std::nullopt;
 
         auto start = texts[(ep_u64)valueZone.x - kTextIndexOffset];
@@ -1834,7 +1779,7 @@ struct PhiStoryboardAssets {
         return textInterplate(start, end, p);
     }
 
-    Color getColor(ep_f64 index, const Color& defaultValue, const Vec2& valueZone) {
+    Color getColor(ep_f64 index, const Color& defaultValue, const Vec2& valueZone) noexcept {
         if (valueZone.x < kColorIndexOffset) return defaultValue;
 
         auto start = colors[(ep_u64)valueZone.x - kColorIndexOffset];
@@ -1843,7 +1788,7 @@ struct PhiStoryboardAssets {
         return start * (1.0 - p) + end * p;
     }
 
-    PhiShaderUniform getShaderUniform(ep_f64 index, const PhiShaderUniform& defaultValue, const Vec2& valueZone) {
+    PhiShaderUniform getShaderUniform(ep_f64 index, const PhiShaderUniform& defaultValue, const Vec2& valueZone) noexcept {
         if (valueZone.x < kShaderUniformIndexOffset) return defaultValue;
 
         auto start = shaderUniforms[(ep_u64)valueZone.x - kShaderUniformIndexOffset];
@@ -1866,11 +1811,11 @@ struct PhiStoryboardAssets {
         return false;
     }
 
-    bool isTextureLoaded(const std::string& name) {
+    bool isTextureLoaded(const std::string& name) noexcept {
         return textures.contains(name);
     }
 
-    std::pair<ep_u64, Vec2>& getTexture(const std::string& name) {
+    std::pair<ep_u64, Vec2>& getTexture(const std::string& name) noexcept {
         return textures[name];
     }
 
@@ -1890,7 +1835,7 @@ struct PhiStoryboardAssets {
         return id;
     }
 
-    std::string getShaderName(ep_u64 id) {
+    std::string getShaderName(ep_u64 id) noexcept {
         return shaderNameMap[id];
     }
 
@@ -1908,7 +1853,7 @@ struct PhiChart {
         ep_f64 lastUpdateTime;
         ep_u64 firstHitEffectIndex;
 
-        void timeUpdated(ep_f64 t) {
+        void timeUpdated(ep_f64 t) noexcept {
             if (lastUpdateTime > t) {
                 firstHitEffectIndex = 0;
             }
@@ -1916,7 +1861,7 @@ struct PhiChart {
             lastUpdateTime = t;
         }
 
-        void passedHitEffectIndex(ep_u64 index) {
+        void passedHitEffectIndex(ep_u64 index) noexcept {
             if (firstHitEffectIndex == index) {
                 firstHitEffectIndex++;
             }
@@ -2017,7 +1962,7 @@ struct PhiChart {
         initZOrderSortedLines();
     }
 
-    Vec2 getLinePositionRaw(ep_f64 t, PhiLine& line) {
+    Vec2 getLinePositionRaw(ep_f64 t, PhiLine& line) noexcept {
         /* !docs
         Get the position of a line at a time.
         The result is not scaled and not processed father line.
@@ -2029,7 +1974,7 @@ struct PhiChart {
         };
     }
 
-    Vec2 getLinePositionRelOrigin(ep_f64 t, PhiLine& line, const Vec2& screenSize) {
+    Vec2 getLinePositionRelOrigin(ep_f64 t, PhiLine& line, const Vec2& screenSize) noexcept {
         /* !docs
         Get the position of a line at a time.
         The result is not scaled but processed father line and it is origin relative.
@@ -2055,7 +2000,7 @@ struct PhiChart {
         return pos;
     }
 
-    Vec2 getLinePosition(ep_f64 t, PhiLine& line, const Vec2& screenSize) {
+    Vec2 getLinePosition(ep_f64 t, PhiLine& line, const Vec2& screenSize) noexcept {
         /* !docs
         Get the position of a line at a time.
         The result is scaled and processed father line.
@@ -2083,7 +2028,7 @@ struct PhiChart {
     NoteFrameInfo getNoteFrameInfo(
         PhiLine& line, PhiNote& note,
         ep_f64 time, const Vec2& screenSize
-    ) {
+    ) noexcept {
         /* !docs
         Get the information of a note at a time.
         */
@@ -2143,7 +2088,7 @@ struct PhiChart {
         return info;
     }
 
-    ep_u64 getCombo(ep_f64 t) {
+    ep_u64 getCombo(ep_f64 t) const noexcept {
         /* !docs
         Get the combo at a time.
         */
@@ -2362,12 +2307,12 @@ struct JsonNode {
         };
     }
 
-    bool isString() const { return type == EnumType::String; }
-    bool isNumber() const { return type == EnumType::Number; }
-    bool isBool() const { return type == EnumType::Bool; }
-    bool isArray() const { return type == EnumType::Array; }
-    bool isObject() const { return type == EnumType::Object; }
-    bool isNull() const { return type == EnumType::Null; }
+    bool isString() const noexcept { return type == EnumType::String; }
+    bool isNumber() const noexcept { return type == EnumType::Number; }
+    bool isBool() const noexcept { return type == EnumType::Bool; }
+    bool isArray() const noexcept { return type == EnumType::Array; }
+    bool isObject() const noexcept { return type == EnumType::Object; }
+    bool isNull() const noexcept { return type == EnumType::Null; }
 
     std::string& getString() noexcept { return std::get<std::string>(value); }
     const std::string& getString() const noexcept { return std::get<std::string>(value); }
@@ -6751,6 +6696,7 @@ in vec2 fragTexCoord;
 
 uniform sampler2D uTexture;
 uniform ivec2 uResolution;
+uniform bool uFlipY;
 
 out vec4 outColor;
 
@@ -6798,7 +6744,7 @@ float getVI(int index) {
 void main() {
     int w = uResolution.x; int h = uResolution.y;
     ivec2 curr_pos = ivec2(fragTexCoord * vec2(uResolution));
-    curr_pos.y = h - curr_pos.y - 1;
+    if (!uFlipY) curr_pos.y = h - curr_pos.y - 1;
     int byte_index = (int(curr_pos.x) + int(curr_pos.y) * w) * 4;
 
     int y_bytes = w * h; int uv_bytes = y_bytes / 4;
@@ -6822,24 +6768,6 @@ void main() {
             getVI(pixel_index + 2), getVI(pixel_index + 3)
         );
     } else outColor = vec4(0);
-}
-)");
-                prog->fragConfig.colorUniformName = std::nullopt;
-                return prog;
-            }
-            
-            static ep_sp<ProgramInfo> yFliper(GL33Context* glCtx) {
-                auto prog = glCtx->createConfiguredProgram(R"(
-#version 330 core
-
-in vec2 fragTexCoord;
-
-uniform sampler2D uTexture;
-
-out vec4 outColor;
-
-void main() {
-    outColor = texture(uTexture, vec2(fragTexCoord.x, 1.0 - fragTexCoord.y));
 }
 )");
                 prog->fragConfig.colorUniformName = std::nullopt;
@@ -7022,7 +6950,6 @@ void main() {
         struct {
             ep_sp<ProgramInfo> gaussianBlur;
             ep_sp<ProgramInfo> yuvConverter;
-            ep_sp<ProgramInfo> yFliper;
         } preloadedPrograms; // !inline-docs| Preloaded programs.
 
         void frameEnded() {
@@ -7197,8 +7124,7 @@ void main() {
             }
 
             void readToSlotDirect(BufferSlot& slot) {
-                glCtx->convertToYUV(frameWidth, frameHeight);
-                glCtx->flipY(frameWidth, frameHeight);
+                glCtx->convertToYUV(frameWidth, frameHeight, true);
                 auto pboGuard = slot.buffer->use();
                 glCtx->gl.glReadPixels(0, 0, frameWidth, getBufferHeight(), GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
                 slot.sync = glCtx->createSync();
@@ -7282,20 +7208,7 @@ void main() {
             return FBOGuard(this);
         }
 
-        void flipY(ep_u64 width, ep_u64 height) {
-            /* !docs
-            Flips the current framebuffer vertically.
-            */
-
-            auto mesh = requestMesh(6);
-            mesh.program = preloadedPrograms.yFliper.get();
-            mesh.color = GLvec4::White();
-
-            auto progGuard = mesh.program->use();
-            renderToDrawFbo(width, height, mesh);
-        }
-
-        void convertToYUV(ep_u64 width, ep_u64 height) {
+        void convertToYUV(ep_u64 width, ep_u64 height, bool flipY = false) {
             /* !docs
             Converts the current framebuffer to YUV420 format.
             */
@@ -7306,6 +7219,7 @@ void main() {
 
             auto progGuard = mesh.program->use();
             mesh.program->getUniformLocation("uResolution").seti(width, height);
+            mesh.program->getUniformLocation("uFlipY").seti(flipY);
             renderToDrawFbo(width, height, mesh);
         }
 
@@ -7331,7 +7245,6 @@ void main() {
             defaultProgram = createConfiguredProgram(defaultFragmentShaderSource);
             preloadedPrograms.gaussianBlur = ProgramPresets::gaussianBlur(this);
             preloadedPrograms.yuvConverter = ProgramPresets::yuvConverter(this);
-            preloadedPrograms.yFliper = ProgramPresets::yFliper(this);
 
             unsigned char whiteTextureData[16] = {
                 255, 255, 255, 255,
@@ -7605,7 +7518,7 @@ void main() {
 
         ep_u64 allocYUVFrameSlot() {
             while (getYUVFrameSlotsInUse() > maxConcurrentYuvSlots) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
 
             std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
@@ -8070,7 +7983,7 @@ struct PhiCalculatedFrame {
         const Vec2& size,
         const Color& color,
         const Transform2D& transform = Transform2D()
-    ) {
+    ) noexcept {
         objects.push_back(CalculatedPoly {
             .p1 = transform.transformPoint(point),
             .p2 = transform.transformPoint(point + Vec2 { size.x, 0.0 }),
