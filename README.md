@@ -39,11 +39,11 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 - CPU:  Definitely worse than yours ;)
 - Commit: [click here](https://github.com/qaqFei/easy-phi/tree/08d2c8a414658a14c548153b62b82cdcf6386d00)
 - Build: Release
-- Chart: [click here](https://www.bilibili.com/video/BV1TN4y1x7rp)
+- Phigros Chart: [click here](https://www.bilibili.com/video/BV1TN4y1x7rp)
 
 ### Result
 
-![Benchmark Result](./benchmark.png)
+![Phigros Benchmark Result](./benchmark-phigros.png)
 
 ## Examples
 
