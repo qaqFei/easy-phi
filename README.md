@@ -31,6 +31,20 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 
 - **Supporting More Games**: We're working on supporting more rhythm games, such as [Milthm](https://milthm.com/) and [Rizline](https://store.steampowered.com/app/2272590/Rizline/).
 
+## Benchmark
+
+### Runtime Info
+
+- OS: Windows 10.0.19042
+- CPU:  Definitely worse than yours ;)
+- Commit: [click here](https://github.com/qaqFei/easy-phi/tree/08d2c8a414658a14c548153b62b82cdcf6386d00)
+- Build: Release
+- Chart: [click here](https://www.bilibili.com/video/BV1TN4y1x7rp)
+
+### Result
+
+![Benchmark Result](./benchmark.png)
+
 ## Examples
 
 For the completed example, check out [here](./test_files/test.cpp).
@@ -64,10 +78,6 @@ You can run the main test program by the following command:
 ```bash
 python ./build_test.py --run --debug
 ```
-
-## License
-
-This project is licensed under the [MIT License](./LICENSE).
 
 ## Other
 
