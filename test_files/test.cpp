@@ -89,7 +89,6 @@ int main(int argc, char** argv) {
     window.fullscreen = hasArg("--fullscreen");
     window.init();
     window.setVSync(!hasArg("--disable-vsync"));
-    if (hasArg("--extend-scale")) window.globalScale = 0.25;
 
     window.loadChart(chartPath, storyboardAssetsPath, nullptr);
 
@@ -100,6 +99,23 @@ int main(int argc, char** argv) {
 
     window.renderer->loadIllustion(imagePath);
     window.renderer->loadAudio(audioPath);
+
+    if (hasArg("--bench")) {
+        auto info = TelemetryDeckClient::Performance::BaseInfo::make().toJson();
+        info.getObject()["data"] = JsonNode::MakeArray();
+
+        ep_f64 t = 0.0;
+        while (t < window.renderer->getBgmLength()) {
+            auto& frameInfo = window.renderer->render({ .time = t });
+            info["data"].getArray().push_back(JsonNode::MakeNumber(frameInfo.calculatedTook * 1000));
+            t += 1.0 / 120.0;
+        }
+
+        info.Print();
+
+        return 0;
+    }
+
     window.renderer->startBgm();
 
     while (!window.renderer->getBpmIsEnded()) {

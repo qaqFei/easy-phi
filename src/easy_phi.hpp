@@ -2272,6 +2272,13 @@ struct JsonNode {
         };
     }
 
+    static JsonNode MakeArray() {
+        return JsonNode {
+            .type = EnumType::Array,
+            .value = std::vector<JsonNode>()
+        };
+    }
+
     static JsonNode MakeArray(const std::vector<JsonNode>& arr) {
         return JsonNode {
             .type = EnumType::Array,
@@ -2283,6 +2290,13 @@ struct JsonNode {
         return JsonNode {
             .type = EnumType::Array,
             .value = std::move(arr)
+        };
+    }
+
+    static JsonNode MakeObject() {
+        return JsonNode {
+            .type = EnumType::Object,
+            .value = std::unordered_map<std::string, JsonNode>()
         };
     }
 
@@ -2673,8 +2687,10 @@ struct JsonNode {
                 else stream << c;
             }
             stream << '"';
-        } else if (isNumber()) stream << formatToStdString("%.10g", getNumber());
-        else if (isBool()) stream << (getBool() ? "true" : "false");
+        } else if (isNumber()) {
+            auto number = getNumber();
+            stream << (std::fmod(number, 1.0) != 0.0 ? formatToStdString("%.10g", number) : std::to_string((ep_i64)number));
+        } else if (isBool()) stream << (getBool() ? "true" : "false");
         else if (isArray()) {
             stream << '[';
             for (ep_u64 i = 0; i < getArray().size(); i++) {
