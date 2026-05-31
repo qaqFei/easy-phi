@@ -75,6 +75,7 @@ build_cmds = [
     f"-DBUILD_TIME={time.time()}",
     f"-DBUILD_IS_DEBUG={1 if debug else 0}",
     f"-DBUILD_REPO_GITHUB=\"{repo_github}\"",
+    "-DEASY_PHI_IS_RELEASE" if not debug else "",
     
     f"./test_files/{source}",
     "-I./src",

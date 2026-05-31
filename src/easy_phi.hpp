@@ -27,6 +27,7 @@
 #include <cpuid.h>
 #include <cstdlib>
 #include <list>
+#include <cassert>
 
 namespace easy_phi {
 
@@ -57,10 +58,6 @@ bool cpuHasSSE2() {
     return (edx & (1u << 26)) != 0;
 }
 
-bool ptrIsAligned16(void* ptr) {
-    return (ep_u64)ptr % 16 == 0;
-}
-
 template <typename T1, typename T2>
 T1 typed_clamp(T2 v) noexcept {
     return (T1)std::clamp(v, (T2)std::numeric_limits<T1>::min(), (T2)std::numeric_limits<T1>::max());
@@ -74,6 +71,229 @@ T1 typed_clamp(T2 v) noexcept {
     inline void ep_aligned_free(void* ptr) { free(ptr); }
 #endif
 
+template <typename T, size_t Alignment>
+struct AlignedAllocator {
+    /* !docs
+    The aligned allocator.
+    */
+
+    using value_type = T;
+
+    AlignedAllocator() = default;
+    template <typename U>
+    AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+
+    template <typename U>
+    struct rebind {
+        using other = AlignedAllocator<U, Alignment>;
+    };
+
+    T* allocate(std::size_t n) {
+        if (n > std::numeric_limits<std::size_t>::max() / sizeof(T))
+            throw std::bad_array_new_length();
+
+        std::size_t bytes = ((n * sizeof(T) + Alignment - 1) / Alignment) * Alignment;
+        void* ptr = ep_aligned_alloc(Alignment, bytes);
+        if (!ptr)
+            throw std::bad_alloc();
+        return static_cast<T*>(ptr);
+    }
+
+    void deallocate(T* ptr, std::size_t) noexcept { ep_aligned_free(ptr); }
+};
+
+template <typename T, size_t A1, typename U, size_t A2>
+bool operator==(const AlignedAllocator<T, A1>&, const AlignedAllocator<U, A2>&) noexcept { return A1 == A2; }
+template <typename T, size_t A1, typename U, size_t A2>
+bool operator!=(const AlignedAllocator<T, A1>&, const AlignedAllocator<U, A2>&) noexcept { return A1 != A2; }
+
+template <typename T, size_t Alignment>
+using aligned_vector = std::vector<T, AlignedAllocator<T, Alignment>>;
+
+ep_f64 globalTimer() {
+    /* !docs
+    Get the current time in seconds since the program started.
+    */
+
+    return std::chrono::duration<ep_f64>(
+        std::chrono::steady_clock::now()
+        .time_since_epoch()
+    ).count();
+}
+
+std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
+    /* !docs
+    Convert a codepoint to a UTF-8 string.
+    */
+
+    ep_u32 codepoint;
+    
+    if (n >= 0xD800 && n <= 0xDBFF) {
+        if (n2 >= 0xDC00 && n2 <= 0xDFFF) {
+            codepoint = 0x10000 + ((n - 0xD800) << 10) | (n2 - 0xDC00);
+        } else {
+            return "\xEF\xBF\xBD";
+        }
+    } else if (n >= 0xDC00 && n <= 0xDFFF) {
+        return "\xEF\xBF\xBD";
+    } else {
+        codepoint = n;
+    }
+    
+    std::string result;
+    
+    if (codepoint <= 0x7F) {
+        result.push_back((char)(codepoint));
+    } 
+    else if (codepoint <= 0x7FF) {
+        result.push_back((char)(0xC0 | (codepoint >> 6)));
+        result.push_back((char)(0x80 | (codepoint & 0x3F)));
+    } 
+    else if (codepoint <= 0xFFFF) {
+        result.push_back((char)(0xE0 | (codepoint >> 12)));
+        result.push_back((char)(0x80 | ((codepoint >> 6) & 0x3F)));
+        result.push_back((char)(0x80 | (codepoint & 0x3F)));
+    } 
+    else {
+        result.push_back((char)(0xF0 | (codepoint >> 18)));
+        result.push_back((char)(0x80 | ((codepoint >> 12) & 0x3F)));
+        result.push_back((char)(0x80 | ((codepoint >> 6) & 0x3F)));
+        result.push_back((char)(0x80 | (codepoint & 0x3F)));
+    }
+    
+    return result;
+}
+
+std::string formatToStdString(const char* fmt, ...) {
+    /* !docs
+    Format a string with the same syntax as `printf`.
+    */
+
+    va_list args;
+
+    va_start(args, fmt);
+    int len = vsnprintf(nullptr, 0, fmt, args);
+    va_end(args);
+
+    if (len < 0) return "";
+
+    std::vector<char> buf(len + 1);
+    va_start(args, fmt);
+    vsnprintf(buf.data(), buf.size(), fmt, args);
+    va_end(args);
+
+    return std::string(buf.data(), len);
+}
+
+#ifdef EASY_PHI_IS_RELEASE
+    #define ep_assert(condition, msg) ((void)0)
+#else
+    #define ep_assert(condition, msg) \
+        do { \
+            if (!(condition)) { \
+                std::cerr << "Easy phi assertion failed: " << (msg) << std::endl; \
+                std::abort(); \
+            } \
+        } while (0)
+#endif
+
+template <typename T>
+struct ep_sp {
+    /* !docs
+    The small pointer class.
+    */
+
+    struct RefCnt {
+        T* ptr;
+        std::atomic<int> count{1};
+        
+        explicit RefCnt(T* p) : ptr(p) {}
+        void ref() noexcept { ++count; }
+        void unref() noexcept {
+            if (--count == 0) {
+                delete ptr;
+                delete this;
+            }
+        }
+    };
+    
+    RefCnt* fCtrl;
+
+    explicit ep_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
+    using element_type = T;
+    constexpr ep_sp() noexcept : fCtrl(nullptr) {}
+    constexpr ep_sp(std::nullptr_t) noexcept : fCtrl(nullptr) {}
+    explicit ep_sp(T* ptr) : fCtrl(ptr ? new RefCnt(ptr) : nullptr) {}
+    ep_sp(const ep_sp& o) noexcept : fCtrl(o.fCtrl) { if (fCtrl) fCtrl->ref(); }
+    ep_sp(ep_sp&& o) noexcept : fCtrl(o.fCtrl) { o.fCtrl = nullptr; }
+    template <typename U> ep_sp(const ep_sp<U>& o) noexcept : fCtrl(o.fCtrl) { if (fCtrl) fCtrl->ref(); }
+    template <typename U> ep_sp(ep_sp<U>&& o) noexcept : fCtrl(o.release_ctrl()) {}
+    ~ep_sp() { if (fCtrl) fCtrl->unref(); }
+
+    ep_sp& operator=(const ep_sp& o) noexcept {
+        if (o.fCtrl != fCtrl) {
+            if (o.fCtrl) o.fCtrl->ref();
+            auto* old = fCtrl;
+            fCtrl = o.fCtrl;
+            if (old) old->unref();
+        }
+        return *this;
+    }
+    
+    ep_sp& operator=(ep_sp&& o) noexcept {
+        if (o.fCtrl != fCtrl) {
+            auto* old = fCtrl;
+            fCtrl = o.fCtrl;
+            o.fCtrl = nullptr;
+            if (old) old->unref();
+        }
+        return *this;
+    }
+    
+    ep_sp& operator=(std::nullptr_t) noexcept {
+        reset();
+        return *this;
+    }
+
+    T& operator*() const { return *fCtrl->ptr; }
+    T* operator->() const { return fCtrl->ptr; }
+    T* get() const noexcept { return fCtrl ? fCtrl->ptr : nullptr; }
+    explicit operator bool() const noexcept { return fCtrl != nullptr; }
+
+    T* release() noexcept {
+        if (!fCtrl) return nullptr;
+        auto* p = fCtrl->ptr;
+        fCtrl->ptr = nullptr;
+        fCtrl->unref();
+        fCtrl = nullptr;
+        return p;
+    }
+    
+    void reset(T* ptr = nullptr) noexcept {
+        if (fCtrl && fCtrl->ptr == ptr) return;
+        auto* old = fCtrl;
+        fCtrl = ptr ? new RefCnt(ptr) : nullptr;
+        if (old) old->unref();
+    }
+    
+    void swap(ep_sp& o) noexcept {
+        std::swap(fCtrl, o.fCtrl);
+    }
+
+    auto* release_ctrl() noexcept {
+        auto* c = fCtrl;
+        fCtrl = nullptr;
+        return c;
+    }
+};
+
+template <typename T, typename U>
+bool operator==(const ep_sp<T>& a, const ep_sp<U>& b) noexcept { return a.get() == b.get(); }
+template <typename T>
+bool operator==(const ep_sp<T>& a, std::nullptr_t) noexcept { return !a; }
+template <typename T>
+bool operator==(std::nullptr_t, const ep_sp<T>& a) noexcept { return !a; }
+
 struct HashBucket {
     /* !docs
     A FNV-1a hash bucket, used to generate a hash from a sequence of numbers and booleans.
@@ -83,13 +303,13 @@ struct HashBucket {
     
     static constexpr ep_u64 FNV_PRIME = 0x100000001b3ULL;
     
-    void mix(ep_u64 value) {
+    void mix(ep_u64 value) noexcept {
         hash ^= value;
         hash *= FNV_PRIME;
     }
     
     template <typename T>
-    void submitNumber(T v) {
+    void submitNumber(T v) noexcept {
         static_assert(std::is_arithmetic_v<T>, "T must be numeric");
         
         if constexpr (std::is_floating_point_v<T>) {
@@ -102,17 +322,43 @@ struct HashBucket {
         }
     }
     
-    void submitBool(bool b) { mix(b ? 1 : 0); }
+    void submitBool(bool b) noexcept { mix(b ? 1 : 0); }
 
     template <typename T>
-    void submitOptionalNumber(std::optional<T> v) {
+    void submitOptionalNumber(std::optional<T> v) noexcept {
         if (v.has_value()) {
             submitBool(true);
             submitNumber(v.value());
         } else submitBool(false);
     }
     
-    ep_u64 getHash() const { return hash; }
+    ep_u64 getHash() const noexcept { return hash; }
+};
+
+template <typename T1, typename T2>
+struct SKVCache {
+    /* !docs
+    A simple key-value cache.
+    */
+
+    T1 key;
+    T2 value;
+
+    template <typename F>
+    [[gnu::always_inline, gnu::hot]]
+    const T2& get(const T1& k, F&& reseter) noexcept {
+        /* !docs
+        Gets the value from the cache.
+        If the key is different from the cached key, the value is reset by reseter function and the key is updated.
+        */
+
+        if (__builtin_expect(key != k, 0)) {
+            key = k;
+            value = reseter();
+        }
+
+        return value;
+    }
 };
 
 struct Data {
@@ -156,24 +402,852 @@ struct Data {
         return bucket.getHash();
     }
 
-    bool isStartsWith(const Data& other) const {
+    bool isStartsWith(const Data& other) const noexcept {
         if (data.size() < other.data.size()) return false;
         return std::memcmp(data.data(), other.data.data(), other.data.size()) == 0;
     }
 
-    bool isEndsWith(const Data& other) const {
+    bool isEndsWith(const Data& other) const noexcept {
         if (data.size() < other.data.size()) return false;
         return std::memcmp(data.data() + data.size() - other.data.size(), other.data.data(), other.data.size()) == 0;
     }
 
-    bool isStartsWith(const std::string& other) const {
+    bool isStartsWith(const std::string& other) const noexcept {
         if (data.size() < other.size()) return false;
         return std::memcmp(data.data(), other.data(), other.size()) == 0;
     }
 
-    bool isEndsWith(const std::string& other) const {
+    bool isEndsWith(const std::string& other) const noexcept {
         if (data.size() < other.size()) return false;
         return std::memcmp(data.data() + data.size() - other.size(), other.data(), other.size()) == 0;
+    }
+};
+
+enum class ByteEndian {
+    Native,
+    Little,
+    Big
+};
+
+template<ByteEndian E>
+struct ByteWriter {
+    /* !docs
+    A class for writing bytes to a vector.
+    */
+
+    std::vector<ep_u8> data;
+
+    static ep_sp<ByteWriter<E>> Make() {
+        auto* writer = new ByteWriter<E>();
+        return ep_sp<ByteWriter<E>>(writer);
+    }
+
+    void writeBytes(const Data& data) noexcept {
+        this->data.insert(this->data.end(), data.data.begin(), data.data.end());
+    }
+
+    void writeBytes(const ep_u8* data, ep_u64 size) noexcept {
+        this->data.insert(this->data.end(), data, data + size);
+    }
+
+    void writeBytes(const std::string& data) noexcept {
+        writeBytes((const ep_u8*)data.data(), data.size());
+    }
+
+    void writeBytes(const std::vector<ep_u8>& data) noexcept {
+        writeBytes(data.data(), data.size());
+    }
+
+    template<typename T>
+    static T byte_swap(T val) noexcept {
+        if constexpr (sizeof(T) == 1) return val;
+        else if constexpr (sizeof(T) == 2) {
+            ep_u16 ret;
+            memcpy(&ret, &val, sizeof(T));
+            ret = __builtin_bswap16(ret);
+            memcpy(&val, &ret, sizeof(T));
+            return val;
+        } else if constexpr (sizeof(T) == 4) {
+            ep_u32 ret;
+            memcpy(&ret, &val, sizeof(T));
+            ret = __builtin_bswap32(ret);
+            memcpy(&val, &ret, sizeof(T));
+            return val;
+        } else if constexpr (sizeof(T) == 8) {
+            ep_u64 ret;
+            memcpy(&ret, &val, sizeof(T));
+            ret = __builtin_bswap64(ret);
+            memcpy(&val, &ret, sizeof(T));
+            return val;
+        } else {
+            static_assert(!sizeof(T), "Unsupported size");
+            return val;
+        }
+    }
+
+    template<typename T>
+    static T from_native(T val) noexcept {
+        if constexpr (E == ByteEndian::Native) return val;
+        #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            else if constexpr (E == ByteEndian::Little) return val;
+            else return byte_swap(val);
+        #else
+            else if constexpr (E == ByteEndian::Big) return val;
+            else return byte_swap(val);
+        #endif
+    }
+
+    template<typename T>
+    void write(T value) noexcept {
+        static_assert(std::is_trivially_copyable_v<T>);
+        T write_val = from_native(value);
+        writeBytes((ep_u8*)&write_val, sizeof(T));
+    }
+
+    Data toData() const {
+        return { .data = data };
+    }
+};
+
+struct JsonNode {
+    /* !docs
+    A JSON node.
+    */
+
+    enum class EnumType {
+        String, Number, Bool, Array, Object, Null
+    };
+
+    EnumType type;
+    std::variant<
+        std::monostate,
+        std::string,
+        ep_f64,
+        bool,
+        std::vector<JsonNode>,
+        std::unordered_map<std::string, JsonNode>
+    > value;
+
+    static JsonNode MakeString(const std::string& str) noexcept {
+        return JsonNode {
+            .type = EnumType::String,
+            .value = str
+        };
+    }
+
+    static JsonNode MakeStringMove(std::string&& str) noexcept {
+        return JsonNode {
+            .type = EnumType::String,
+            .value = std::move(str)
+        };
+    }
+
+    static JsonNode MakeNumber(ep_f64 num) noexcept {
+        return JsonNode {
+            .type = EnumType::Number,
+            .value = num
+        };
+    }
+
+    static JsonNode MakeBool(bool b) noexcept {
+        return JsonNode {
+            .type = EnumType::Bool,
+            .value = b
+        };
+    }
+
+    static JsonNode MakeArray() noexcept {
+        return JsonNode {
+            .type = EnumType::Array,
+            .value = std::vector<JsonNode>()
+        };
+    }
+
+    static JsonNode MakeArray(const std::vector<JsonNode>& arr) noexcept {
+        return JsonNode {
+            .type = EnumType::Array,
+            .value = arr
+        };
+    }
+
+    static JsonNode MakeArrayMove(std::vector<JsonNode>&& arr) noexcept {
+        return JsonNode {
+            .type = EnumType::Array,
+            .value = std::move(arr)
+        };
+    }
+
+    static JsonNode MakeObject() noexcept {
+        return JsonNode {
+            .type = EnumType::Object,
+            .value = std::unordered_map<std::string, JsonNode>()
+        };
+    }
+
+    static JsonNode MakeObject(const std::unordered_map<std::string, JsonNode>& obj) noexcept {
+        return JsonNode {
+            .type = EnumType::Object,
+            .value = obj
+        };
+    }
+
+    static JsonNode MakeObjectMove(std::unordered_map<std::string, JsonNode>&& obj) noexcept {
+        return JsonNode {
+            .type = EnumType::Object,
+            .value = std::move(obj)
+        };
+    }
+
+    static JsonNode MakeNull() noexcept {
+        return JsonNode {
+            .type = EnumType::Null,
+            .value = std::monostate{}
+        };
+    }
+
+    bool isString() const noexcept { return type == EnumType::String; }
+    bool isNumber() const noexcept { return type == EnumType::Number; }
+    bool isBool() const noexcept { return type == EnumType::Bool; }
+    bool isArray() const noexcept { return type == EnumType::Array; }
+    bool isObject() const noexcept { return type == EnumType::Object; }
+    bool isNull() const noexcept { return type == EnumType::Null; }
+
+    std::string& getString() noexcept { return std::get<std::string>(value); }
+    const std::string& getString() const noexcept { return std::get<std::string>(value); }
+    ep_f64 getNumber() const noexcept { return std::get<ep_f64>(value); }
+    bool getBool() const noexcept { return std::get<bool>(value); }
+    std::vector<JsonNode>& getArray() noexcept { return std::get<std::vector<JsonNode>>(value); }
+    const std::vector<JsonNode>& getArray() const noexcept { return std::get<std::vector<JsonNode>>(value); }
+    std::unordered_map<std::string, JsonNode>& getObject() noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
+    const std::unordered_map<std::string, JsonNode>& getObject() const noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
+    
+    struct StringReader {
+        std::string_view str;
+        ep_u64 pos;
+
+        StringReader(std::string_view str) : str(str), pos(0) {}
+
+        void eatWhitespace() {
+            while (pos < str.size() && (str[pos] == ' ' || str[pos] == '\n' || str[pos] == '\t' || str[pos] == '\r')) {
+                pos++;
+            }
+        }
+
+        bool nextIs(const char c) {
+            return pos < str.size() && str[pos] == c;
+        }
+
+        bool nextIsAny(const std::string& s) {
+            for (ep_u64 i = 0; i < s.size(); i++) {
+                if (nextIs(s[i])) return true;
+            }
+            return false;
+        }
+
+        bool nextIsSub(const std::string& s) {
+            return pos + s.size() <= str.size() && str.substr(pos, s.size()) == s;
+        }
+
+        bool nextIsSubAny(const std::vector<std::string>& ss) {
+            for (const auto& s : ss) {
+                if (nextIsSub(s)) return true;
+            }
+            return false;
+        }
+
+        std::string getNextCharToString() {
+            return pos < str.size() ? (std::string() + str[pos++]) : "";
+        }
+
+        std::string generatePositionString() {
+            return "at " + std::to_string(pos) + " of " + std::to_string(str.size());
+        }
+
+        bool eof() {
+            return pos >= str.size();
+        }
+
+        bool readUnicodeEscape(ep_u16* dst) {
+            if (pos + 4 > str.size()) return false;
+
+            auto c1 = str[pos++];
+            auto c2 = str[pos++];
+            auto c3 = str[pos++];
+            auto c4 = str[pos++];
+
+            if ('0' <= c1 && c1 <= '9') {
+                *dst = (ep_u16)(c1 - '0') << 12;
+            } else if ('A' <= c1 && c1 <= 'F') {
+                *dst = (ep_u16)(c1 - 'A' + 10) << 12;
+            } else if ('a' <= c1 && c1 <= 'f') {
+                *dst = (ep_u16)(c1 - 'a' + 10) << 12;
+            } else return false;
+
+            if ('0' <= c2 && c2 <= '9') {
+                *dst |= (ep_u16)(c2 - '0') << 8;
+            } else if ('A' <= c2 && c2 <= 'F') {
+                *dst |= (ep_u16)(c2 - 'A' + 10) << 8;
+            } else if ('a' <= c2 && c2 <= 'f') {
+                *dst |= (ep_u16)(c2 - 'a' + 10) << 8;
+            } else return false;
+
+            if ('0' <= c3 && c3 <= '9') {
+                *dst |= (ep_u16)(c3 - '0') << 4;
+            } else if ('A' <= c3 && c3 <= 'F') {
+                *dst |= (ep_u16)(c3 - 'A' + 10) << 4;
+            } else if ('a' <= c3 && c3 <= 'f') {
+                *dst |= (ep_u16)(c3 - 'a' + 10) << 4;
+            } else return false;
+
+            if ('0' <= c4 && c4 <= '9') {
+                *dst |= (ep_u16)(c4 - '0');
+            } else if ('A' <= c4 && c4 <= 'F') {
+                *dst |= (ep_u16)(c4 - 'A' + 10);
+            } else if ('a' <= c4 && c4 <= 'f') {
+                *dst |= (ep_u16)(c4 - 'a' + 10);
+            } else return false;
+
+            return true;
+        }
+        
+        std::string getNextToString(ep_u64 len) {
+            return std::string(str.substr(pos, len));
+        }
+
+        char getNextChar() {
+            return pos < str.size() ? str[pos++] : '\0';
+        }
+    };
+
+    static std::pair<bool, std::string> Parse(JsonNode* dst, StringReader& reader) {
+        /* !docs
+        Parse a JSON string into a JsonNode.
+        The result is a pair of a boolean indicating success and a string containing an error message if failed.
+        */
+
+        #define FAILED(err, msg) \
+            { \
+                return { false, std::string(err) + ": " + msg + " " + reader.generatePositionString() }; \
+            }
+        
+        reader.eatWhitespace();
+
+        if (reader.nextIs('"')) {
+            reader.pos++;
+            std::string str;
+            str.reserve(64);
+            bool isInBackslash = false;
+
+            while (!reader.eof()) {
+                if (reader.nextIs('"') && !isInBackslash) {
+                    reader.pos++;
+                    str.shrink_to_fit();
+                    *dst = MakeStringMove(std::move(str));
+                    return { true, "" };
+                } else if (reader.nextIs('\\') && !isInBackslash) {
+                    isInBackslash = true;
+                    reader.pos++;
+                } else if (isInBackslash) {
+                    if (reader.nextIsAny("\"\\/")) {
+                        str += reader.getNextChar();
+                    } else if (reader.nextIs('b')) {
+                        str += '\b';
+                        reader.pos++;
+                    } else if (reader.nextIs('f')) {
+                        str += '\f';
+                        reader.pos++;
+                    } else if (reader.nextIs('n')) {
+                        str += '\n';
+                        reader.pos++;
+                    } else if (reader.nextIs('r')) {
+                        str += '\r';
+                        reader.pos++;
+                    } else if (reader.nextIs('t')) {
+                        str += '\t';
+                        reader.pos++;
+                    } else if (reader.nextIs('u')) {
+                        reader.pos++;
+
+                        ep_u16 u1;
+                        if (!reader.readUnicodeEscape(&u1)) FAILED("invalid unicode escape", reader.getNextCharToString());
+
+                        ep_u16 u2 = 0;
+                        if (u1 >= 0xD800 && u1 <= 0xDBFF) {
+                            if (!reader.nextIsSub("\\u")) FAILED("expected \\u for surrogate pair", reader.getNextCharToString());
+                            reader.pos += 2;
+
+                            if (!reader.readUnicodeEscape(&u2)) FAILED("invalid unicode escape", reader.getNextCharToString());
+                            if (u2 < 0xDC00 || u2 > 0xDFFF) FAILED("invalid surrogate pair", reader.getNextCharToString());
+                        } else if (u1 >= 0xDC00 && u1 <= 0xDFFF) {
+                            FAILED("invalid low surrogate", reader.getNextCharToString());
+                        }
+
+                        str += toUtfChar(u1, u2);
+                    } else {
+                        FAILED("unexpected char after backslash", reader.getNextCharToString());
+                    }
+
+                    isInBackslash = false;
+                } else {
+                    str += reader.getNextChar();
+                }
+            }
+
+            FAILED("unexpected eof", "");
+        } else if (reader.nextIsAny("0123456789-")) {
+            ep_f64 num = 0;
+            bool isNegative = reader.nextIs('-');
+            if (isNegative) reader.pos++;
+
+            bool afterDot = false;
+            ep_u64 decimal = 1;
+            ep_f64 fraction = 0;
+            bool hasFraction = false;
+
+            while (!reader.eof()) {
+                ep_u8 c = reader.getNextChar();
+
+                if ('0' <= c && c <= '9') {
+                    if (!afterDot) {
+                        num *= 10;
+                        num += (ep_f64)(c - '0');
+                    } else {
+                        fraction = fraction * 10 + (ep_f64)(c - '0');
+                        decimal *= 10;
+                        hasFraction = true;
+                    }
+                } else if (c == '.') {
+                    if (afterDot) FAILED("unexpected dot", reader.getNextCharToString());
+                    afterDot = true;
+                } else if (c == 'e' || c == 'E') {
+                    if (hasFraction) num += fraction / (ep_f64)decimal;
+                    
+                    bool isNegativeExp = reader.nextIs('-');
+                    if (isNegativeExp) reader.pos++;
+                    else if (reader.nextIs('+')) reader.pos++;
+
+                    ep_u64 exp = 0;
+                    bool hasExp = false;
+                    while (!reader.eof()) {
+                        ep_u8 c = reader.getNextChar();
+
+                        if ('0' <= c && c <= '9') {
+                            exp *= 10;
+                            exp += (ep_u64)(c - '0');
+                            hasExp = true;
+                        } else {
+                            reader.pos--;
+                            break;
+                        }
+                    }
+                    
+                    if (!hasExp) FAILED("expected exponent digits", reader.getNextCharToString());
+
+                    if (isNegativeExp) num /= std::pow<ep_f64>(10, exp);
+                    else num *= std::pow<ep_f64>(10, exp);
+                    *dst = MakeNumber(num * (isNegative ? -1 : 1));
+                    return { true, "" };
+                } else {
+                    reader.pos--;
+                    if (hasFraction) num += fraction / (ep_f64)decimal;
+                    *dst = MakeNumber(num * (isNegative ? -1 : 1));
+                    return { true, "" };
+                }
+            }
+            
+            if (hasFraction) num += fraction / (ep_f64)decimal;
+            *dst = MakeNumber(num * (isNegative ? -1 : 1));
+            return { true, "" };
+        } else if (reader.nextIsSubAny({ "true", "false" })) {
+            bool b = reader.nextIsSub("true");
+            *dst = MakeBool(b);
+            reader.pos += b ? 4 : 5;
+            return { true, "" };
+        } else if (reader.nextIs('[')) {
+            reader.pos++;
+            std::vector<JsonNode> arr;
+            arr.reserve(8);
+
+            while (!reader.eof()) {
+                reader.eatWhitespace();
+
+                if (reader.nextIs(']')) {
+                    *dst = MakeArrayMove(std::move(arr));
+                    reader.pos++;
+                    return { true, "" };
+                }
+
+                if (arr.size()) {
+                    if (!reader.nextIs(',')) FAILED("expected comma", reader.getNextCharToString());
+                    reader.pos++;
+                    reader.eatWhitespace();
+                }
+
+                JsonNode node;
+                auto [success, err] = Parse(&node, reader);
+                if (!success) return { false, err };
+
+                arr.push_back(std::move(node));
+            }
+
+            FAILED("unexpected eof", "");
+        } else if (reader.nextIs('{')) {
+            reader.pos++;
+            std::unordered_map<std::string, JsonNode> obj;
+            obj.reserve(8);
+
+            while (!reader.eof()) {
+                reader.eatWhitespace();
+
+                if (reader.nextIs('}')) {
+                    *dst = MakeObjectMove(std::move(obj));
+                    reader.pos++;
+                    return { true, "" };
+                }
+
+                if (obj.size()) {
+                    if (!reader.nextIs(',')) FAILED("expected comma", reader.getNextCharToString());
+                    reader.pos++;
+                    reader.eatWhitespace();
+                }
+
+                JsonNode key;
+                {
+                    auto [success, err] = Parse(&key, reader);
+                    if (!success) return { false, err };
+                }
+
+                if (!key.isString()) FAILED("expected string", key.getString());
+
+                reader.eatWhitespace();
+                if (!reader.nextIs(':')) FAILED("expected colon", reader.getNextCharToString());
+                reader.pos++;
+                reader.eatWhitespace();
+
+                JsonNode value;
+                {
+                    auto [success, err] = Parse(&value, reader);
+                    if (!success) return { false, err };
+                }
+
+                obj.emplace(std::move(key.getString()), std::move(value));
+            }
+
+            FAILED("unexpected eof", "");
+        } else if (reader.nextIsSub("null")) {
+            *dst = MakeNull();
+            reader.pos += 4;
+            return { true, "" };
+        }
+
+        FAILED("unexpected char", reader.getNextCharToString());
+        #undef FAILED
+    }
+
+    static std::pair<bool, std::string> Parse(JsonNode* dst, const Data& data) {
+        StringReader reader(std::string_view(
+            (const char*)data.data.data(),
+            data.data.size()
+        ));
+        return Parse(dst, reader);
+    }
+
+    template<typename T>
+    void print(T& stream) const {
+        /* !docs
+        Prints the json node to the given stream.
+        */
+
+        if (isString()) {
+            stream << '"';
+            for (ep_u8 c : getString()) {
+                if (c == '"') stream << "\\\"";
+                else if (c == '\\') stream << "\\\\";
+                else if (c == '\n') stream << "\\n";
+                else if (c == '\r') stream << "\\r";
+                else if (c == '\t') stream << "\\t";
+                else if (c == '\b') stream << "\\b";
+                else if (c == '\f') stream << "\\f";
+                else stream << c;
+            }
+            stream << '"';
+        } else if (isNumber()) {
+            auto number = getNumber();
+            stream << (std::fmod(number, 1.0) != 0.0 ? formatToStdString("%.10g", number) : std::to_string((ep_i64)number));
+        } else if (isBool()) stream << (getBool() ? "true" : "false");
+        else if (isArray()) {
+            stream << '[';
+            for (ep_u64 i = 0; i < getArray().size(); i++) {
+                if (i) stream << ',';
+                getArray()[i].print(stream);
+            }
+            stream << ']';
+        } else if (isObject()) {
+            stream << '{';
+            ep_u64 i = 0;
+            for (auto& [key, value] : getObject()) {
+                JsonNode::MakeString(key).print(stream);
+                stream << ':';
+                value.print(stream);
+                if (i < getObject().size() - 1) stream << ',';
+                i++;
+            }
+            stream << '}';
+        } else if (isNull()) stream << "null";
+    }
+
+    void print() const {
+        /* !docs
+        Prints the json node to the standard output.
+        */
+
+        print(std::cout);
+    }
+
+    std::string toString() const {
+        /* !docs
+        Converts the json node to a string.
+        */
+
+        std::string result;
+        result.reserve(256);
+        toStringImpl(result);
+        return result;
+    }
+    
+    bool operator==(const JsonNode& other) const {
+        if (type != other.type) return false;
+        if (type == EnumType::Null) return true;
+        if (type == EnumType::String) return getString() == other.getString();
+        if (type == EnumType::Number) return getNumber() == other.getNumber();
+        if (type == EnumType::Bool) return getBool() == other.getBool();
+        if (type == EnumType::Array) {
+            if (getArray().size() != other.getArray().size()) return false;
+            for (ep_u32 i = 0; i < getArray().size(); i++) {
+                if (getArray()[i] != other.getArray()[i]) return false;
+            }
+            return true;
+        }
+        if (type == EnumType::Object) {
+            if (getObject().size() != other.getObject().size()) return false;
+            for (auto& [key, value] : getObject()) {
+                if (value != other[key]) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    bool operator!=(const JsonNode& other) const { return !(*this == other); }
+
+    JsonNode operator[](ep_u64 index) const noexcept {
+        return getArray()[index];
+    }
+
+    JsonNode operator[](const std::string& key) const noexcept {
+        auto it = getObject().find(key);
+        if (it != getObject().end()) return it->second;
+        return MakeNull();
+    }
+
+    JsonNode& operator[](ep_u64 index) noexcept {
+        auto& arr = getArray();
+        return arr[index];
+    }
+
+    JsonNode& operator[](const std::string& key) noexcept {
+        auto& obj = getObject();
+        return obj[key];
+    }
+
+    bool hasKey(const std::string& key) const {
+        /* !docs
+        Checks if the json node is an object and contains the specified key.
+        */
+
+        if (type != EnumType::Object) return false;
+        return getObject().contains(key);
+    }
+
+private:
+    void toStringImpl(std::string& out) const {
+        if (isString()) {
+            out += '"';
+            for (ep_u8 c : getString()) {
+                if (c == '"') out += "\\\"";
+                else if (c == '\\') out += "\\\\";
+                else if (c == '\n') out += "\\n";
+                else if (c == '\r') out += "\\r";
+                else if (c == '\t') out += "\\t";
+                else if (c == '\b') out += "\\b";
+                else if (c == '\f') out += "\\f";
+                else out += c;
+            }
+            out += '"';
+        } else if (isNumber()) out += formatToStdString("%.10g", getNumber());
+        else if (isBool()) out += (getBool() ? "true" : "false");
+        else if (isArray()) {
+            out += '[';
+            for (ep_u64 i = 0; i < getArray().size(); i++) {
+                if (i) out += ',';
+                getArray()[i].toStringImpl(out);
+            }
+            out += ']';
+        } else if (isObject()) {
+            out += '{';
+            ep_u64 i = 0;
+            for (auto& [key, value] : getObject()) {
+                out += '"';
+                out += key;
+                out += "\":";
+                value.toStringImpl(out);
+                if (i < getObject().size() - 1) out += ',';
+                i++;
+            }
+            out += '}';
+        } else if (isNull()) out += "null";
+    }
+};
+
+struct DecodedRGBATexture {
+    /* !docs
+    The decoded RGBA texture.
+    The data is a flat array of RGBA pixels.
+    */
+
+    std::vector<ep_u8> data;
+    ep_u64 width, height;
+
+    static DecodedRGBATexture Make(ep_u64 width, ep_u64 height, ep_u8 init = 0) {
+        /* !docs
+        Create a new texture with the given width and height, and fill it with the given value.
+        */
+
+        return {
+            .data = std::vector<ep_u8>(width * height * 4, init),
+            .width = width, .height = height
+        };
+    }
+
+    bool valid() const {
+        return width > 0 && height > 0 && data.size() == (width * height * 4);
+    }
+
+    void fillWithGray(const std::vector<ep_u8>& gray) {
+        if (gray.size() != width * height) throw std::runtime_error("gray data size mismatch");
+        ensureDataSize();
+
+        std::fill(data.begin(), data.end(), 255);
+        for (ep_u64 i = 0; i < width * height; ++i) {
+            data[i * 4 + 3] = gray[i];
+        }
+    }
+
+    void fillRGBWhite() {
+        /* !docs
+        Fill the texture with white color.
+        */
+
+        ensureDataSize();
+        std::fill(data.begin(), data.end(), 255);
+        for (ep_u64 i = 0; i < width * height; ++i) data[i * 4 + 3] = 0;
+    }
+
+    void paste(const DecodedRGBATexture& other, ep_i64 x, ep_i64 y) noexcept {
+        /* !docs
+        Paste the other texture onto this texture at the given position.
+        */
+
+        if (x >= (ep_i64)width || y >= (ep_i64)height) return;
+        if (x + other.width < 0 || y + other.height < 0) return;
+
+        for (ep_i64 i = 0; i < (ep_i64)other.width; i++) {
+            ep_i64 px = i + x;
+            if (px < 0) continue;
+            if (px >= (ep_i64)width) break;
+
+            for (ep_i64 j = 0; j < (ep_i64)other.height; j++) {
+                ep_i64 py = j + y;
+                if (py < 0) continue;
+                if (py >= (ep_i64)height) break;
+
+                auto src_idx = (j * other.width + i) * 4;
+                auto dst_idx = (py * width + px) * 4;
+
+                ep_f64 src_a = other.data[src_idx + 3] / 255.0;
+                ep_f64 dst_a = data[dst_idx + 3] / 255.0;
+
+                auto a = src_a + dst_a * (1 - src_a);
+                data[dst_idx + 3] = (ep_u8)(a * 255);
+                if (data[dst_idx + 3] == 0) continue;
+
+                for (ep_i64 k = 0; k < 3; k++) {
+                    ep_f64 src = other.data[src_idx + k] / 255.0;
+                    ep_f64 dst = data[dst_idx + k] / 255.0;
+                    auto color = (src * src_a + dst * dst_a * (1 - src_a)) / a;
+                    data[dst_idx + k] = (ep_u8)(color * 255);
+                }
+            }
+        }
+    }
+
+    private:
+    void ensureDataSize() {
+        data.resize(width * height * 4);
+    }
+};
+
+struct YUV420Frame {
+    /* !docs
+    A YUV420 frame.
+    The data is stored in a `aligned_vector` with the following layout:
+    ```
+    y[width * height]
+    u[width * height / 4]
+    v[width * height / 4]
+    ```
+    */
+
+    aligned_vector<ep_u8, 16> data;
+    ep_u64 width, height;
+
+    void ensureSize() {
+        if (data.size() != getDataSize()) {
+            data.resize(getDataSize());
+        }
+    }
+
+    static ep_sp<YUV420Frame> Make(ep_u64 width, ep_u64 height) {
+        auto* frame = new YUV420Frame();
+        frame->width = width;
+        frame->height = height;
+        frame->ensureSize();
+        return ep_sp<YUV420Frame>(frame);
+    }
+
+    ep_sp<YUV420Frame> move() {
+        auto* frame = new YUV420Frame();
+        frame->data = std::move(data);
+        frame->width = width;
+        frame->height = height;
+        return ep_sp<YUV420Frame>(frame);
+    }
+
+    ep_u64 getDataSize() const { return width * height * 3 / 2; }
+
+    ep_u8* y() const { return (ep_u8*)data.data(); }
+    ep_u8* u() const { return (ep_u8*)data.data() + width * height; }
+    ep_u8* v() const { return (ep_u8*)data.data() + width * height + width * height / 4; }
+    ep_u64 rowBytesY() const { return width; }
+    ep_u64 rowBytesU() const { return width / 2; }
+    ep_u64 rowBytesV() const { return width / 2; }
+
+    void fromPtr(void* ptr) {
+        /* !docs
+        Fills the frame with data from a pointer.
+        */
+
+        memcpy(data.data(), ptr, getDataSize());
     }
 };
 
@@ -222,10 +1296,6 @@ struct Vec2 {
     bool include(ep_f64 v) const noexcept { return x <= v && v <= y; }
     std::pair<ep_f64, ep_f64> toPair() const noexcept { return { x, y }; }
 };
-
-static const ep_f64 INF_TIME = 99999.0;
-static const Vec2 INF_TZ = { -INF_TIME, INF_TIME };
-static const ep_f64 INF_EV = 1e9;
 
 struct Rect {
     ep_f64 x, y, w, h;
@@ -286,6 +1356,18 @@ struct Color {
 
     bool operator==(const Color& c) const noexcept { return r == c.r && g == c.g && b == c.b && a == c.a; }
     bool operator!=(const Color& c) const noexcept { return !(*this == c); }
+};
+
+struct ObjectIndexer {
+    /* !docs
+    A class that stores the index of a object.
+    */
+
+    ep_u64 index;
+
+    ep_u64 get() noexcept {
+        return index ? index : (index = reqGlobalCounter());
+    }
 };
 
 struct Transform2D {
@@ -492,27 +1574,6 @@ bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& scre
     return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg, screenArea.center());
 }
 
-std::string formatToStdString(const char* fmt, ...) {
-    /* !docs
-    Format a string with the same syntax as `printf`.
-    */
-
-    va_list args;
-
-    va_start(args, fmt);
-    int len = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if (len < 0) return "";
-
-    std::vector<char> buf(len + 1);
-    va_start(args, fmt);
-    vsnprintf(buf.data(), buf.size(), fmt, args);
-    va_end(args);
-
-    return std::string(buf.data(), len);
-}
-
 void stripString(std::string& str) {
     /* !docs
     Strip a string like python's `str.strip()`.
@@ -558,32 +1619,6 @@ std::string stringSliceProgress(const std::string& str, ep_f64 p) {
     p = std::clamp(p, 0.0, 1.0);
     return str.substr(0, (ep_u64)(str.size() * p));
 }
-
-template <typename T1, typename T2>
-struct SKVCache {
-    /* !docs
-    A simple key-value cache.
-    */
-
-    T1 key;
-    T2 value;
-
-    template <typename F>
-    [[gnu::always_inline, gnu::hot]]
-    const T2& get(const T1& k, F&& reseter) noexcept {
-        /* !docs
-        Gets the value from the cache.
-        If the key is different from the cached key, the value is reset by reseter function and the key is updated.
-        */
-
-        if (__builtin_expect(key != k, 0)) {
-            key = k;
-            value = reseter();
-        }
-
-        return value;
-    }
-};
 
 struct EaseSet {
     /* !docs
@@ -767,6 +1802,3107 @@ struct EaseSet {
     };
 };
 
+namespace GL {
+    /* !docs
+    The OpenGL namespace.
+    */
+
+    using GLboolean = unsigned char;
+    using GLbitfield = unsigned int;
+    using GLbyte = signed char;
+    using GLubyte = unsigned char;
+    using GLshort = short;
+    using GLushort = unsigned short;
+    using GLint = int;
+    using GLuint = unsigned int;
+    using GLsizei = int;
+    using GLfloat = float;
+    using GLclampf = float;
+    using GLdouble = double;
+    using GLvoid = void;
+    using GLenum = unsigned int;
+    using GLsizeiptr = long long;
+    using GLintptr = long long;
+    using GLuint64 = uint64_t;
+    using GLchar = signed char;
+    using GLsync = struct __GLsync*;
+
+    constexpr GLenum GL_NO_ERROR = 0;
+    constexpr GLenum GL_INVALID_ENUM = 0x0500;
+    constexpr GLenum GL_INVALID_VALUE = 0x0501;
+    constexpr GLenum GL_INVALID_OPERATION = 0x0502;
+    constexpr GLenum GL_OUT_OF_MEMORY = 0x0505;
+    constexpr GLenum GL_VENDOR = 0x1F00;
+    constexpr GLenum GL_RENDERER = 0x1F01;
+    constexpr GLenum GL_VERSION = 0x1F02;
+    constexpr GLenum GL_EXTENSIONS = 0x1F03;
+    constexpr GLenum GL_MAJOR_VERSION = 0x821B;
+    constexpr GLenum GL_MINOR_VERSION = 0x821C;
+    constexpr GLenum GL_MAX_TEXTURE_SIZE = 0x0D33;
+    constexpr GLenum GL_MAX_VERTEX_ATTRIBS = 0x8869;
+    constexpr GLenum GL_MAX_TEXTURE_IMAGE_UNITS = 0x8872;
+    constexpr GLenum GL_MAX_DRAW_BUFFERS = 0x8824;
+    constexpr GLenum GL_MAX_UNIFORM_BLOCK_SIZE = 0x8A30;
+    constexpr GLenum GL_MAX_VERTEX_UNIFORM_BLOCKS = 0x8A2B;
+    constexpr GLenum GL_MAX_FRAGMENT_UNIFORM_BLOCKS = 0x8A2D;
+    constexpr GLenum GL_VIEWPORT = 0x0BA2;
+    constexpr GLenum GL_SCISSOR_BOX = 0x0C10;
+    constexpr GLenum GL_SCISSOR_TEST = 0x0C11;
+    constexpr GLenum GL_BLEND = 0x0BE2;
+    constexpr GLenum GL_DEPTH_TEST = 0x0B71;
+    constexpr GLenum GL_STENCIL_TEST = 0x0B90;
+    constexpr GLenum GL_CULL_FACE = 0x0B44;
+    constexpr GLenum GL_DITHER = 0x0BD0;
+    constexpr GLenum GL_COLOR_CLEAR_VALUE = 0x0C22;
+    constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
+    constexpr GLenum GL_PACK_ALIGNMENT = 0x0D05;
+    constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
+    constexpr GLenum GL_READ_FRAMEBUFFER_BINDING = 0x8CAA;
+    constexpr GLenum GL_DRAW_FRAMEBUFFER_BINDING = 0x8CA6;
+    constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
+    constexpr GLenum GL_RENDERBUFFER_BINDING = 0x8CA7;
+    constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
+    constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
+    constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
+    constexpr GLenum GL_DEPTH_WRITEMASK = 0x0B72;
+    constexpr GLenum GL_SAMPLES = 0x80A9;
+
+    constexpr GLenum GL_ARRAY_BUFFER = 0x8892;
+    constexpr GLenum GL_ELEMENT_ARRAY_BUFFER = 0x8893;
+    constexpr GLenum GL_UNIFORM_BUFFER = 0x8A11;
+    constexpr GLenum GL_PIXEL_PACK_BUFFER = 0x88EB;
+    constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC;
+
+    constexpr GLenum GL_STREAM_DRAW = 0x88E0;
+    constexpr GLenum GL_STREAM_READ = 0x88E1;
+    constexpr GLenum GL_STREAM_COPY = 0x88E2;
+    constexpr GLenum GL_STATIC_DRAW = 0x88E4;
+    constexpr GLenum GL_STATIC_READ = 0x88E5;
+    constexpr GLenum GL_STATIC_COPY = 0x88E6;
+    constexpr GLenum GL_DYNAMIC_DRAW = 0x88E8;
+    constexpr GLenum GL_DYNAMIC_READ = 0x88E9;
+    constexpr GLenum GL_DYNAMIC_COPY = 0x88EA;
+
+    constexpr GLenum GL_READ_ONLY = 0x88B8;
+    constexpr GLenum GL_WRITE_ONLY = 0x88B9;
+    constexpr GLenum GL_READ_WRITE = 0x88BA;
+
+    constexpr GLbitfield GL_MAP_READ_BIT = 0x0001;
+    constexpr GLbitfield GL_MAP_WRITE_BIT = 0x0002;
+    constexpr GLbitfield GL_MAP_INVALIDATE_RANGE_BIT = 0x0004;
+    constexpr GLbitfield GL_MAP_INVALIDATE_BUFFER_BIT = 0x0008;
+    constexpr GLbitfield GL_MAP_FLUSH_EXPLICIT_BIT = 0x0010;
+    constexpr GLbitfield GL_MAP_UNSYNCHRONIZED_BIT = 0x0020;
+
+    constexpr GLenum GL_BYTE = 0x1400;
+    constexpr GLenum GL_SHORT = 0x1402;
+    constexpr GLenum GL_INT = 0x1404;
+    constexpr GLenum GL_HALF_FLOAT = 0x140B;
+    constexpr GLenum GL_FIXED = 0x140C;
+    constexpr GLenum GL_DOUBLE = 0x140A;
+
+    constexpr GLenum GL_VERTEX_SHADER = 0x8B31;
+    constexpr GLenum GL_FRAGMENT_SHADER = 0x8B30;
+
+    constexpr GLenum GL_COMPILE_STATUS = 0x8B81;
+    constexpr GLenum GL_LINK_STATUS = 0x8B82;
+    constexpr GLenum GL_INFO_LOG_LENGTH = 0x8B84;
+    constexpr GLenum GL_DELETE_STATUS = 0x8B80;
+    constexpr GLenum GL_SHADER_TYPE = 0x8B4F;
+
+    constexpr GLenum GL_ACTIVE_ATTRIBUTES = 0x8B89;
+    constexpr GLenum GL_ACTIVE_UNIFORMS = 0x8B86;
+    constexpr GLenum GL_ACTIVE_ATTRIBUTE_MAX_LENGTH = 0x8B8A;
+    constexpr GLenum GL_ACTIVE_UNIFORM_MAX_LENGTH = 0x8B87;
+
+    constexpr GLenum GL_TEXTURE_2D = 0x0DE1;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP = 0x8513;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_X = 0x8515;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_X = 0x8516;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Y = 0x8517;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Y = 0x8518;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Z = 0x8519;
+    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x851A;
+    constexpr GLenum GL_TEXTURE_2D_MULTISAMPLE = 0x9100;
+
+    constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
+    constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
+    constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
+    constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
+    constexpr GLenum GL_NEAREST = 0x2600;
+    constexpr GLenum GL_LINEAR = 0x2601;
+    constexpr GLenum GL_NEAREST_MIPMAP_NEAREST = 0x2700;
+    constexpr GLenum GL_LINEAR_MIPMAP_NEAREST = 0x2701;
+    constexpr GLenum GL_NEAREST_MIPMAP_LINEAR = 0x2702;
+    constexpr GLenum GL_LINEAR_MIPMAP_LINEAR = 0x2703;
+    constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
+    constexpr GLenum GL_REPEAT = 0x2901;
+    constexpr GLenum GL_MIRRORED_REPEAT = 0x8370;
+
+    constexpr GLenum GL_TEXTURE0 = 0x84C0;
+
+    constexpr GLenum GL_RED = 0x1903;
+    constexpr GLenum GL_RG = 0x8227;
+    constexpr GLenum GL_RGB = 0x1907;
+    constexpr GLenum GL_RGBA = 0x1908;
+    constexpr GLenum GL_BGR = 0x80E0;
+    constexpr GLenum GL_BGRA = 0x80E1;
+    constexpr GLenum GL_R8 = 0x8229;
+    constexpr GLenum GL_RG8 = 0x822B;
+    constexpr GLenum GL_RGB8 = 0x8051;
+    constexpr GLenum GL_RGBA8 = 0x8058;
+    constexpr GLenum GL_R16F = 0x822D;
+    constexpr GLenum GL_RG16F = 0x822F;
+    constexpr GLenum GL_RGB16F = 0x881B;
+    constexpr GLenum GL_RGBA16F = 0x881A;
+    constexpr GLenum GL_R32F = 0x822E;
+    constexpr GLenum GL_RG32F = 0x8230;
+    constexpr GLenum GL_RGB32F = 0x8815;
+    constexpr GLenum GL_RGBA32F = 0x8814;
+    constexpr GLenum GL_RGB10_A2 = 0x8059;
+    constexpr GLenum GL_DEPTH_COMPONENT = 0x1902;
+    constexpr GLenum GL_DEPTH_COMPONENT16 = 0x81A5;
+    constexpr GLenum GL_DEPTH_COMPONENT24 = 0x81A6;
+    constexpr GLenum GL_DEPTH_COMPONENT32F = 0x8CAC;
+    constexpr GLenum GL_DEPTH24_STENCIL8 = 0x88F0;
+    constexpr GLenum GL_FLOAT = 0x1406;
+    constexpr GLenum GL_UNSIGNED_INT_24_8 = 0x84FA;
+
+    constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
+    constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8;
+    constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
+    constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
+    constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
+    constexpr GLenum GL_COLOR_ATTACHMENT1 = 0x8CE1;
+    constexpr GLenum GL_COLOR_ATTACHMENT2 = 0x8CE2;
+    constexpr GLenum GL_COLOR_ATTACHMENT3 = 0x8CE3;
+    constexpr GLenum GL_DEPTH_ATTACHMENT = 0x8D00;
+    constexpr GLenum GL_STENCIL_ATTACHMENT = 0x8D20;
+    constexpr GLenum GL_DEPTH_STENCIL_ATTACHMENT = 0x821A;
+
+    constexpr GLenum GL_RENDERBUFFER = 0x8D41;
+
+    constexpr GLenum GL_POINTS = 0x0000;
+    constexpr GLenum GL_LINES = 0x0001;
+    constexpr GLenum GL_LINE_LOOP = 0x0002;
+    constexpr GLenum GL_LINE_STRIP = 0x0003;
+    constexpr GLenum GL_TRIANGLES = 0x0004;
+    constexpr GLenum GL_TRIANGLE_STRIP = 0x0005;
+    constexpr GLenum GL_TRIANGLE_FAN = 0x0006;
+
+    constexpr GLenum GL_UNSIGNED_BYTE = 0x1401;
+    constexpr GLenum GL_UNSIGNED_SHORT = 0x1403;
+    constexpr GLenum GL_UNSIGNED_INT = 0x1405;
+
+    constexpr GLenum GL_COLOR_BUFFER_BIT = 0x00004000;
+    constexpr GLenum GL_DEPTH_BUFFER_BIT = 0x00000100;
+    constexpr GLenum GL_STENCIL_BUFFER_BIT = 0x00000400;
+
+    constexpr GLenum GL_ZERO = 0;
+    constexpr GLenum GL_ONE = 1;
+    constexpr GLenum GL_SRC_COLOR = 0x0300;
+    constexpr GLenum GL_ONE_MINUS_SRC_COLOR = 0x0301;
+    constexpr GLenum GL_SRC_ALPHA = 0x0302;
+    constexpr GLenum GL_ONE_MINUS_SRC_ALPHA = 0x0303;
+    constexpr GLenum GL_DST_ALPHA = 0x0304;
+    constexpr GLenum GL_ONE_MINUS_DST_ALPHA = 0x0305;
+    constexpr GLenum GL_DST_COLOR = 0x0306;
+    constexpr GLenum GL_ONE_MINUS_DST_COLOR = 0x0307;
+
+    constexpr GLenum GL_FUNC_ADD = 0x8006;
+    constexpr GLenum GL_FUNC_SUBTRACT = 0x800A;
+    constexpr GLenum GL_FUNC_REVERSE_SUBTRACT = 0x800B;
+    constexpr GLenum GL_MIN = 0x8007;
+    constexpr GLenum GL_MAX = 0x8008;
+
+    constexpr GLenum GL_NEVER = 0x0200;
+    constexpr GLenum GL_LESS = 0x0201;
+    constexpr GLenum GL_EQUAL = 0x0202;
+    constexpr GLenum GL_LEQUAL = 0x0203;
+    constexpr GLenum GL_GREATER = 0x0204;
+    constexpr GLenum GL_NOTEQUAL = 0x0205;
+    constexpr GLenum GL_GEQUAL = 0x0206;
+    constexpr GLenum GL_ALWAYS = 0x0207;
+
+    constexpr GLenum GL_KEEP = 0x1E00;
+    constexpr GLenum GL_REPLACE = 0x1E01;
+    constexpr GLenum GL_INCR = 0x1E02;
+    constexpr GLenum GL_DECR = 0x1E03;
+    constexpr GLenum GL_INVERT = 0x150A;
+    constexpr GLenum GL_INCR_WRAP = 0x8507;
+    constexpr GLenum GL_DECR_WRAP = 0x8508;
+
+    constexpr GLenum GL_TIME_ELAPSED = 0x88BF;
+    constexpr GLenum GL_QUERY_RESULT = 0x8866;
+    constexpr GLenum GL_QUERY_RESULT_AVAILABLE = 0x8867;
+
+    constexpr GLenum GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117;
+    constexpr GLenum GL_ALREADY_SIGNALED = 0x911A;
+    constexpr GLenum GL_TIMEOUT_EXPIRED = 0x911B;
+    constexpr GLenum GL_CONDITION_SATISFIED = 0x911C;
+    constexpr GLenum GL_WAIT_FAILED = 0x911D;
+    constexpr GLenum GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001;
+    constexpr GLuint64 GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFFull;
+    constexpr GLenum GL_SYNC_STATUS = 0x9114;
+    constexpr GLenum GL_SIGNALED = 0x9119;
+
+    constexpr GLint GL_TRUE = 1;
+    constexpr GLint GL_FALSE = 0;
+
+    constexpr GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
+    constexpr GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
+    constexpr GLenum GL_TEXTURE_REDUCTION_MODE_EXT = 0x9366;
+    constexpr GLenum GL_NUM_EXTENSIONS = 0x821D;
+
+    struct GL33CoreInterface {
+        /* !docs
+        A struct containing pointers to the OpenGL 3.3 core functions.
+        */
+
+        GLenum (*glGetError)();
+        void (*glGetIntegerv)(GLenum pname, GLint* data);
+        void (*glGetFloatv)(GLenum pname, GLfloat* data);
+        void (*glGetBooleanv)(GLenum pname, GLboolean* data);
+        const GLubyte* (*glGetString)(GLenum name);
+        const GLubyte* (*glGetStringi)(GLenum name, GLuint index);
+        void (*glEnable)(GLenum cap);
+        void (*glDisable)(GLenum cap);
+        GLboolean (*glIsEnabled)(GLenum cap);
+        void (*glViewport)(GLint x, GLint y, GLsizei width, GLsizei height);
+        void (*glScissor)(GLint x, GLint y, GLsizei width, GLsizei height);
+        void (*glClearColor)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+        void (*glClear)(GLbitfield mask);
+        void (*glPixelStorei)(GLenum pname, GLint param);
+        void (*glFlush)();
+        void (*glFinish)();
+
+        void (*glGenBuffers)(GLsizei n, GLuint* buffers);
+        void (*glDeleteBuffers)(GLsizei n, const GLuint* buffers);
+        void (*glBindBuffer)(GLenum target, GLuint buffer);
+        void (*glBufferData)(GLenum target, GLsizeiptr size, const void* data, GLenum usage);
+        void (*glBufferSubData)(GLenum target, GLintptr offset, GLsizeiptr size, const void* data);
+        void* (*glMapBuffer)(GLenum target, GLenum access);
+        void* (*glMapBufferRange)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
+        GLboolean (*glUnmapBuffer)(GLenum target);
+        void (*glBindBufferRange)(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);
+        void (*glBindBufferBase)(GLenum target, GLuint index, GLuint buffer);
+
+        void (*glGenVertexArrays)(GLsizei n, GLuint* arrays);
+        void (*glDeleteVertexArrays)(GLsizei n, const GLuint* arrays);
+        void (*glBindVertexArray)(GLuint array);
+        void (*glEnableVertexAttribArray)(GLuint index);
+        void (*glDisableVertexAttribArray)(GLuint index);
+        void (*glVertexAttribPointer)(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer);
+        void (*glVertexAttribIPointer)(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer);
+        void (*glVertexAttribDivisor)(GLuint index, GLuint divisor);
+
+        GLuint (*glCreateShader)(GLenum type);
+        void (*glShaderSource)(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length);
+        void (*glCompileShader)(GLuint shader);
+        void (*glGetShaderiv)(GLuint shader, GLenum pname, GLint* params);
+        void (*glGetShaderInfoLog)(GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
+        void (*glDeleteShader)(GLuint shader);
+        GLuint (*glCreateProgram)();
+        void (*glAttachShader)(GLuint program, GLuint shader);
+        void (*glDetachShader)(GLuint program, GLuint shader);
+        void (*glLinkProgram)(GLuint program);
+        void (*glUseProgram)(GLuint program);
+        void (*glGetProgramiv)(GLuint program, GLenum pname, GLint* params);
+        void (*glGetProgramInfoLog)(GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
+        void (*glDeleteProgram)(GLuint program);
+        void (*glGetActiveAttrib)(GLuint program, GLuint index, GLsizei bufSize, GLsizei* length, GLint* size, GLenum* type, GLchar* name);
+        void (*glGetActiveUniform)(GLuint program, GLuint index, GLsizei bufSize, GLsizei* length, GLint* size, GLenum* type, GLchar* name);
+        GLint (*glGetAttribLocation)(GLuint program, const GLchar* name);
+        GLint (*glGetUniformLocation)(GLuint program, const GLchar* name);
+
+        void (*glUniform1f)(GLint location, GLfloat v0);
+        void (*glUniform2f)(GLint location, GLfloat v0, GLfloat v1);
+        void (*glUniform3f)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
+        void (*glUniform4f)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
+        void (*glUniform1i)(GLint location, GLint v0);
+        void (*glUniform2i)(GLint location, GLint v0, GLint v1);
+        void (*glUniform3i)(GLint location, GLint v0, GLint v1, GLint v2);
+        void (*glUniform4i)(GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
+        void (*glUniform1fv)(GLint location, GLsizei count, const GLfloat* value);
+        void (*glUniform2fv)(GLint location, GLsizei count, const GLfloat* value);
+        void (*glUniform3fv)(GLint location, GLsizei count, const GLfloat* value);
+        void (*glUniform4fv)(GLint location, GLsizei count, const GLfloat* value);
+        void (*glUniform1iv)(GLint location, GLsizei count, const GLint* value);
+        void (*glUniform2iv)(GLint location, GLsizei count, const GLint* value);
+        void (*glUniform3iv)(GLint location, GLsizei count, const GLint* value);
+        void (*glUniform4iv)(GLint location, GLsizei count, const GLint* value);
+        void (*glUniformMatrix2fv)(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value);
+        void (*glUniformMatrix3fv)(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value);
+        void (*glUniformMatrix4fv)(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value);
+
+        void (*glGenTextures)(GLsizei n, GLuint* textures);
+        void (*glDeleteTextures)(GLsizei n, const GLuint* textures);
+        void (*glBindTexture)(GLenum target, GLuint texture);
+        void (*glTexImage2D)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels);
+        void (*glTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels);
+        void (*glTexParameteri)(GLenum target, GLenum pname, GLint param);
+        void (*glTexParameterf)(GLenum target, GLenum pname, GLfloat param);
+        void (*glGenerateMipmap)(GLenum target);
+        void (*glActiveTexture)(GLenum texture);
+        void (*glTexStorage2D)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
+        void (*glTexImage2DMultisample)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations);
+
+        void (*glGenFramebuffers)(GLsizei n, GLuint* framebuffers);
+        void (*glDeleteFramebuffers)(GLsizei n, const GLuint* framebuffers);
+        void (*glBindFramebuffer)(GLenum target, GLuint framebuffer);
+        GLenum (*glCheckFramebufferStatus)(GLenum target);
+        void (*glFramebufferTexture2D)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+        void (*glBlitFramebuffer)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
+
+        void (*glGenRenderbuffers)(GLsizei n, GLuint* renderbuffers);
+        void (*glDeleteRenderbuffers)(GLsizei n, const GLuint* renderbuffers);
+        void (*glBindRenderbuffer)(GLenum target, GLuint renderbuffer);
+        void (*glRenderbufferStorage)(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
+        void (*glFramebufferRenderbuffer)(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
+
+        void (*glDrawArrays)(GLenum mode, GLint first, GLsizei count);
+        void (*glDrawElements)(GLenum mode, GLsizei count, GLenum type, const void* indices);
+        void (*glDrawArraysInstanced)(GLenum mode, GLint first, GLsizei count, GLsizei instancecount);
+        void (*glDrawElementsInstanced)(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei instancecount);
+
+        void (*glBlendFunc)(GLenum sfactor, GLenum dfactor);
+        void (*glBlendFuncSeparate)(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
+        void (*glBlendEquation)(GLenum mode);
+        void (*glBlendEquationSeparate)(GLenum modeRGB, GLenum modeAlpha);
+        void (*glBlendColor)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+        void (*glDepthFunc)(GLenum func);
+        void (*glDepthMask)(GLboolean flag);
+        void (*glStencilFunc)(GLenum func, GLint ref, GLuint mask);
+        void (*glStencilOp)(GLenum sfail, GLenum dpfail, GLenum dppass);
+        void (*glStencilMask)(GLuint mask);
+        void (*glColorMask)(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);
+
+        void (*glReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels);
+        void (*glCopyTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height);
+        void (*glReadBuffer)(GLenum src);
+        void (*glDrawBuffer)(GLenum dst);
+
+        void (*glGenQueries)(GLsizei n, GLuint* ids);
+        void (*glDeleteQueries)(GLsizei n, const GLuint* ids);
+        void (*glBeginQuery)(GLenum target, GLuint id);
+        void (*glEndQuery)(GLenum target);
+        void (*glGetQueryObjectiv)(GLuint id, GLenum pname, GLint* params);
+        void (*glGetQueryObjectui64v)(GLuint id, GLenum pname, GLuint64* params);
+
+        GLsync (*glFenceSync)(GLenum condition, GLbitfield flags);
+        void (*glDeleteSync)(GLsync sync);
+        GLenum (*glClientWaitSync)(GLsync sync, GLbitfield flags, GLuint64 timeout);
+        void (*glGetSynciv)(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei* length, GLint* values);
+
+        bool isExtensionSupported(const char* extension) const noexcept {
+            /* !docs
+            Checks if the given OpenGL extension is supported.
+            */
+
+            GLint num;
+            glGetIntegerv(GL_NUM_EXTENSIONS, &num);
+
+            for (GLint i = 0; i < num; i++) {
+                auto* ext = (const char*)glGetStringi(GL_EXTENSIONS, i);
+                if (strcmp(ext, extension) == 0) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    };
+
+    using GLProcLoader = std::function<void*(const char*)>;
+    static GL33CoreInterface MakeGL33CoreInterface(GLProcLoader loader) {
+        /* !docs
+        Creates a interface object from a procedure loader.
+        */
+
+        GL33CoreInterface interface {};
+
+        #define LOAD_AND_CHECK(proc) { \
+            auto ptr = loader(#proc); \
+            if (!ptr) { \
+                throw std::runtime_error("failed to load " #proc); \
+            } \
+            using F = decltype(interface.proc); \
+            interface.proc = (F)ptr; \
+        }
+
+        LOAD_AND_CHECK(glGetError)
+        LOAD_AND_CHECK(glGetIntegerv)
+        LOAD_AND_CHECK(glGetFloatv)
+        LOAD_AND_CHECK(glGetBooleanv)
+        LOAD_AND_CHECK(glGetString)
+        LOAD_AND_CHECK(glGetStringi)
+        LOAD_AND_CHECK(glEnable)
+        LOAD_AND_CHECK(glDisable)
+        LOAD_AND_CHECK(glIsEnabled)
+        LOAD_AND_CHECK(glViewport)
+        LOAD_AND_CHECK(glScissor)
+        LOAD_AND_CHECK(glClearColor)
+        LOAD_AND_CHECK(glClear)
+        LOAD_AND_CHECK(glPixelStorei)
+        LOAD_AND_CHECK(glFlush)
+        LOAD_AND_CHECK(glFinish)
+
+        LOAD_AND_CHECK(glGenBuffers)
+        LOAD_AND_CHECK(glDeleteBuffers)
+        LOAD_AND_CHECK(glBindBuffer)
+        LOAD_AND_CHECK(glBufferData)
+        LOAD_AND_CHECK(glBufferSubData)
+        LOAD_AND_CHECK(glMapBuffer)
+        LOAD_AND_CHECK(glMapBufferRange)
+        LOAD_AND_CHECK(glUnmapBuffer)
+        LOAD_AND_CHECK(glBindBufferRange)
+        LOAD_AND_CHECK(glBindBufferBase)
+
+        LOAD_AND_CHECK(glGenVertexArrays)
+        LOAD_AND_CHECK(glDeleteVertexArrays)
+        LOAD_AND_CHECK(glBindVertexArray)
+        LOAD_AND_CHECK(glEnableVertexAttribArray)
+        LOAD_AND_CHECK(glDisableVertexAttribArray)
+        LOAD_AND_CHECK(glVertexAttribPointer)
+        LOAD_AND_CHECK(glVertexAttribIPointer)
+        LOAD_AND_CHECK(glVertexAttribDivisor)
+
+        LOAD_AND_CHECK(glCreateShader)
+        LOAD_AND_CHECK(glShaderSource)
+        LOAD_AND_CHECK(glCompileShader)
+        LOAD_AND_CHECK(glGetShaderiv)
+        LOAD_AND_CHECK(glGetShaderInfoLog)
+        LOAD_AND_CHECK(glDeleteShader)
+        LOAD_AND_CHECK(glCreateProgram)
+        LOAD_AND_CHECK(glAttachShader)
+        LOAD_AND_CHECK(glDetachShader)
+        LOAD_AND_CHECK(glLinkProgram)
+        LOAD_AND_CHECK(glUseProgram)
+        LOAD_AND_CHECK(glGetProgramiv)
+        LOAD_AND_CHECK(glGetProgramInfoLog)
+        LOAD_AND_CHECK(glDeleteProgram)
+        LOAD_AND_CHECK(glGetActiveAttrib)
+        LOAD_AND_CHECK(glGetActiveUniform)
+        LOAD_AND_CHECK(glGetAttribLocation)
+        LOAD_AND_CHECK(glGetUniformLocation)
+
+        LOAD_AND_CHECK(glUniform1f)
+        LOAD_AND_CHECK(glUniform2f)
+        LOAD_AND_CHECK(glUniform3f)
+        LOAD_AND_CHECK(glUniform4f)
+        LOAD_AND_CHECK(glUniform1i)
+        LOAD_AND_CHECK(glUniform2i)
+        LOAD_AND_CHECK(glUniform3i)
+        LOAD_AND_CHECK(glUniform4i)
+        LOAD_AND_CHECK(glUniform1fv)
+        LOAD_AND_CHECK(glUniform2fv)
+        LOAD_AND_CHECK(glUniform3fv)
+        LOAD_AND_CHECK(glUniform4fv)
+        LOAD_AND_CHECK(glUniform1iv)
+        LOAD_AND_CHECK(glUniform2iv)
+        LOAD_AND_CHECK(glUniform3iv)
+        LOAD_AND_CHECK(glUniform4iv)
+        LOAD_AND_CHECK(glUniformMatrix2fv)
+        LOAD_AND_CHECK(glUniformMatrix3fv)
+        LOAD_AND_CHECK(glUniformMatrix4fv)
+
+        LOAD_AND_CHECK(glGenTextures)
+        LOAD_AND_CHECK(glDeleteTextures)
+        LOAD_AND_CHECK(glBindTexture)
+        LOAD_AND_CHECK(glTexImage2D)
+        LOAD_AND_CHECK(glTexSubImage2D)
+        LOAD_AND_CHECK(glTexParameteri)
+        LOAD_AND_CHECK(glTexParameterf)
+        LOAD_AND_CHECK(glGenerateMipmap)
+        LOAD_AND_CHECK(glActiveTexture)
+        LOAD_AND_CHECK(glTexStorage2D)
+        LOAD_AND_CHECK(glTexImage2DMultisample)
+
+        LOAD_AND_CHECK(glGenFramebuffers)
+        LOAD_AND_CHECK(glDeleteFramebuffers)
+        LOAD_AND_CHECK(glBindFramebuffer)
+        LOAD_AND_CHECK(glCheckFramebufferStatus)
+        LOAD_AND_CHECK(glFramebufferTexture2D)
+        LOAD_AND_CHECK(glBlitFramebuffer)
+
+        LOAD_AND_CHECK(glGenRenderbuffers)
+        LOAD_AND_CHECK(glDeleteRenderbuffers)
+        LOAD_AND_CHECK(glBindRenderbuffer)
+        LOAD_AND_CHECK(glRenderbufferStorage)
+        LOAD_AND_CHECK(glFramebufferRenderbuffer)
+
+        LOAD_AND_CHECK(glDrawArrays)
+        LOAD_AND_CHECK(glDrawElements)
+        LOAD_AND_CHECK(glDrawArraysInstanced)
+        LOAD_AND_CHECK(glDrawElementsInstanced)
+
+        LOAD_AND_CHECK(glBlendFunc)
+        LOAD_AND_CHECK(glBlendFuncSeparate)
+        LOAD_AND_CHECK(glBlendEquation)
+        LOAD_AND_CHECK(glBlendEquationSeparate)
+        LOAD_AND_CHECK(glBlendColor)
+        LOAD_AND_CHECK(glDepthFunc)
+        LOAD_AND_CHECK(glDepthMask)
+        LOAD_AND_CHECK(glStencilFunc)
+        LOAD_AND_CHECK(glStencilOp)
+        LOAD_AND_CHECK(glStencilMask)
+        LOAD_AND_CHECK(glColorMask)
+
+        LOAD_AND_CHECK(glReadPixels)
+        LOAD_AND_CHECK(glCopyTexSubImage2D)
+        LOAD_AND_CHECK(glReadBuffer)
+        LOAD_AND_CHECK(glDrawBuffer)
+
+        LOAD_AND_CHECK(glGenQueries)
+        LOAD_AND_CHECK(glDeleteQueries)
+        LOAD_AND_CHECK(glBeginQuery)
+        LOAD_AND_CHECK(glEndQuery)
+        LOAD_AND_CHECK(glGetQueryObjectiv)
+        LOAD_AND_CHECK(glGetQueryObjectui64v)
+
+        LOAD_AND_CHECK(glFenceSync)
+        LOAD_AND_CHECK(glDeleteSync)
+        LOAD_AND_CHECK(glClientWaitSync)
+        LOAD_AND_CHECK(glGetSynciv)
+
+        return interface;
+    }
+    
+    struct GLvec2 {
+        GLfloat x, y;
+        
+        GLvec2() : x(0), y(0) {}
+        GLvec2(const Vec2& o) : x(o.x), y(o.y) {}
+        template <typename A, typename B> constexpr GLvec2(A a, B b) : x((GLfloat)a), y((GLfloat)b) {}
+
+        GLvec2 operator+(const GLvec2& o) const noexcept { return {x + o.x, y + o.y}; }
+        GLvec2 operator-(const GLvec2& o) const noexcept { return {x - o.x, y - o.y}; }
+        GLvec2 operator*(const GLvec2& o) const noexcept { return {x * o.x, y * o.y}; }
+        GLvec2 operator/(const GLvec2& o) const noexcept { return {x / o.x, y / o.y}; }
+        GLvec2 operator+(GLfloat o) const noexcept { return {x + o, y + o}; }
+        GLvec2 operator-(GLfloat o) const noexcept { return {x - o, y - o}; }
+        GLvec2 operator*(GLfloat o) const noexcept { return {x * o, y * o}; }
+        GLvec2 operator/(GLfloat o) const noexcept { return {x / o, y / o}; }
+        GLvec2 operator-() const noexcept { return {-x, -y}; }
+        GLvec2& operator+=(const GLvec2& o) noexcept { x += o.x; y += o.y; return *this; }
+        GLvec2& operator-=(const GLvec2& o) noexcept { x -= o.x; y -= o.y; return *this; }
+        GLvec2& operator*=(const GLvec2& o) noexcept { x *= o.x; y *= o.y; return *this; }
+        GLvec2& operator/=(const GLvec2& o) noexcept { x /= o.x; y /= o.y; return *this; }
+        GLvec2& operator+=(GLfloat o) noexcept { x += o; y += o; return *this; }
+        GLvec2& operator-=(GLfloat o) noexcept { x -= o; y -= o; return *this; }
+        GLvec2& operator*=(GLfloat o) noexcept { x *= o; y *= o; return *this; }
+        GLvec2& operator/=(GLfloat o) noexcept { x /= o; y /= o; return *this; }
+        bool operator==(const GLvec2& o) const noexcept { return x == o.x && y == o.y; }
+        bool operator!=(const GLvec2& o) const noexcept { return x != o.x || y != o.y; }
+    };
+    static_assert(offsetof(GLvec2, x) == 0, "GLvec2.x must be at offset 0");
+    static_assert(offsetof(GLvec2, y) == sizeof(GLfloat), "GLvec2.y must be at offset 1");
+
+    struct GLvec3 {
+        GLfloat x, y, z;
+        
+        GLvec3() : x(0), y(0), z(0) {}
+        template <typename A, typename B, typename C> constexpr GLvec3(A a, B b, C c) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c) {}
+
+        GLvec3 operator+(const GLvec3& o) const noexcept { return {x + o.x, y + o.y, z + o.z}; }
+        GLvec3 operator-(const GLvec3& o) const noexcept { return {x - o.x, y - o.y, z - o.z}; }
+        GLvec3 operator*(const GLvec3& o) const noexcept { return {x * o.x, y * o.y, z * o.z}; }
+        GLvec3 operator/(const GLvec3& o) const noexcept { return {x / o.x, y / o.y, z / o.z}; }
+        GLvec3 operator+(GLfloat o) const noexcept { return {x + o, y + o, z + o}; }
+        GLvec3 operator-(GLfloat o) const noexcept { return {x - o, y - o, z - o}; }
+        GLvec3 operator*(GLfloat o) const noexcept { return {x * o, y * o, z * o}; }
+        GLvec3 operator/(GLfloat o) const noexcept { return {x / o, y / o, z / o}; }
+        GLvec3 operator-() const noexcept { return {-x, -y, -z}; }
+        GLvec3& operator+=(const GLvec3& o) noexcept { x += o.x; y += o.y; z += o.z; return *this; }
+        GLvec3& operator-=(const GLvec3& o) noexcept { x -= o.x; y -= o.y; z -= o.z; return *this; }
+        GLvec3& operator*=(const GLvec3& o) noexcept { x *= o.x; y *= o.y; z *= o.z; return *this; }
+        GLvec3& operator/=(const GLvec3& o) noexcept { x /= o.x; y /= o.y; z /= o.z; return *this; }
+        GLvec3& operator+=(GLfloat o) noexcept { x += o; y += o; z += o; return *this; }
+        GLvec3& operator-=(GLfloat o) noexcept { x -= o; y -= o; z -= o; return *this; }
+        GLvec3& operator*=(GLfloat o) noexcept { x *= o; y *= o; z *= o; return *this; }
+        GLvec3& operator/=(GLfloat o) noexcept { x /= o; y /= o; z /= o; return *this; }
+        bool operator==(const GLvec3& o) const noexcept { return x == o.x && y == o.y && z == o.z; }
+        bool operator!=(const GLvec3& o) const noexcept { return x != o.x || y != o.y || z != o.z; }
+    };
+    static_assert(offsetof(GLvec3, x) == 0, "GLvec3.x must be at offset 0");
+    static_assert(offsetof(GLvec3, y) == sizeof(GLfloat), "GLvec3.y must be at offset 1");
+    static_assert(offsetof(GLvec3, z) == sizeof(GLfloat) * 2, "GLvec3.z must be at offset 2");
+
+    struct GLvec4 {
+        GLfloat x, y, z, w;
+        
+        GLvec4() : x(0), y(0), z(0), w(0) {}
+        GLvec4(const Color& o) : x(o.r), y(o.g), z(o.b), w(o.a) {}
+        template <typename A, typename B, typename C, typename D> constexpr GLvec4(A a, B b, C c, D d) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c), w((GLfloat)d) {}
+
+        GLvec4 operator+(const GLvec4& o) const noexcept { return {x + o.x, y + o.y, z + o.z, w + o.w}; }
+        GLvec4 operator-(const GLvec4& o) const noexcept { return {x - o.x, y - o.y, z - o.z, w - o.w}; }
+        GLvec4 operator*(const GLvec4& o) const noexcept { return {x * o.x, y * o.y, z * o.z, w * o.w}; }
+        GLvec4 operator/(const GLvec4& o) const noexcept { return {x / o.x, y / o.y, z / o.z, w / o.w}; }
+        GLvec4 operator+(GLfloat o) const noexcept { return {x + o, y + o, z + o, w + o}; }
+        GLvec4 operator-(GLfloat o) const noexcept { return {x - o, y - o, z - o, w - o}; }
+        GLvec4 operator*(GLfloat o) const noexcept { return {x * o, y * o, z * o, w * o}; }
+        GLvec4 operator/(GLfloat o) const noexcept { return {x / o, y / o, z / o, w / o}; }
+        GLvec4 operator-() const noexcept { return {-x, -y, -z, -w}; }
+        GLvec4& operator+=(const GLvec4& o) noexcept { x += o.x; y += o.y; z += o.z; w += o.w; return *this; }
+        GLvec4& operator-=(const GLvec4& o) noexcept { x -= o.x; y -= o.y; z -= o.z; w -= o.w; return *this; }
+        GLvec4& operator*=(const GLvec4& o) noexcept { x *= o.x; y *= o.y; z *= o.z; w *= o.w; return *this; }
+        GLvec4& operator/=(const GLvec4& o) noexcept { x /= o.x; y /= o.y; z /= o.z; w /= o.w; return *this; }
+        GLvec4& operator+=(GLfloat o) noexcept { x += o; y += o; z += o; w += o; return *this; }
+        GLvec4& operator-=(GLfloat o) noexcept { x -= o; y -= o; z -= o; w -= o; return *this; }
+        GLvec4& operator*=(GLfloat o) noexcept { x *= o; y *= o; z *= o; w *= o; return *this; }
+        GLvec4& operator/=(GLfloat o) noexcept { x /= o; y /= o; z /= o; w /= o; return *this; }
+        bool operator==(const GLvec4& o) const noexcept { return x == o.x && y == o.y && z == o.z && w == o.w; }
+        bool operator!=(const GLvec4& o) const noexcept { return x != o.x || y != o.y || z != o.z || w != o.w; }
+
+        static GLvec4 White() noexcept { return { 1.0, 1.0, 1.0, 1.0 }; }
+        static GLvec4 Black() noexcept { return { 0.0, 0.0, 0.0, 1.0 }; }
+        static GLvec4 Red() noexcept { return { 1.0, 0.0, 0.0, 1.0 }; }
+        static GLvec4 Green() noexcept { return { 0.0, 1.0, 0.0, 1.0 }; }
+        static GLvec4 Blue() noexcept { return { 0.0, 0.0, 1.0, 1.0 }; }
+        static GLvec4 Transparent() noexcept { return { 0.0, 0.0, 0.0, 0.0 }; }
+        static GLvec4 Gray(GLfloat v = 0.5) noexcept { return { v, v, v, 1.0 }; }
+    };
+    static_assert(offsetof(GLvec4, x) == 0, "GLvec4.x must be at offset 0");
+    static_assert(offsetof(GLvec4, y) == sizeof(GLfloat), "GLvec4.y must be at offset 1");
+    static_assert(offsetof(GLvec4, z) == sizeof(GLfloat) * 2, "GLvec4.z must be at offset 2");
+    static_assert(offsetof(GLvec4, w) == sizeof(GLfloat) * 3, "GLvec4.w must be at offset 3");
+
+    struct Vertex {
+        /* !docs
+        A vertex, with position and texture coordinates.
+        */
+
+        GLvec2 position;
+        GLvec2 texCoord;
+    };
+
+    struct BufferInfo;
+    struct VertexArrayInfo;
+    struct ShaderInfo;
+    struct ProgramInfo;
+    struct TextureInfo;
+    struct FramebufferInfo;
+    struct RenderbufferInfo;
+    struct QueryInfo;
+    struct SyncInfo;
+
+    struct VertexPool {
+        /* !docs
+        A pool of vertices, which can be allocated from.
+        */
+
+        struct Chunk {
+            std::vector<Vertex> vertices;
+            ep_u64 offset;
+
+            static ep_sp<Chunk> Make(ep_u64 size) {
+                auto* ck = new Chunk();
+                ck->vertices.resize(size);
+                return ep_sp<Chunk>(ck);
+            }
+
+            Vertex* alloc(ep_u64 count) noexcept {
+                if (offset + count > vertices.size()) return nullptr;
+                auto* ret = &vertices[offset];
+                offset += count;
+                return ret;
+            }
+        };
+
+        static constexpr ep_u64 defaultChunkSize = 4096;
+        static constexpr ep_u64 defaultChunkCount = 4;
+
+        std::vector<ep_sp<Chunk>> chunks;
+        ep_u64 offset;
+
+        static ep_sp<VertexPool> Make() {
+            auto* vp = new VertexPool();
+            vp->chunks.resize(defaultChunkCount);
+            for (ep_u64 i = 0; i < defaultChunkCount; i++) {
+                vp->chunks[i] = Chunk::Make(defaultChunkSize);
+            }
+            return ep_sp<VertexPool>(vp);
+        }
+
+        struct AllocResult {
+            /* !docs
+            The result of allocating vertices from a `@../VertexPool`.
+            */
+
+            Vertex* vertices;
+            ep_u64 count;
+            ep_u64 sig;
+            ep_u64 offset;
+
+            Vertex* next() noexcept {
+                ep_assert(offset < count, "VertexPool::AllocResult::next() called after end of allocation");
+                return vertices + (offset++);
+            }
+
+            void reset() noexcept {
+                offset = 0;
+            }
+
+            Vertex* begin() noexcept { return vertices; }
+            Vertex* end() noexcept { return vertices + count; }
+            const Vertex* begin() const noexcept { return vertices; }
+            const Vertex* end() const noexcept { return vertices + count; }
+        };
+
+        AllocResult alloc(ep_u64 count) noexcept {
+            while (offset < chunks.size()) {
+                auto& chunk = chunks[offset];
+                auto* ptr = chunk->alloc(count);
+                if (ptr) return allocSuccess(ptr, count);
+                offset++;
+            }
+
+            chunks.push_back(Chunk::Make(std::max(defaultChunkSize, count)));
+            return allocSuccess(chunks[offset]->alloc(count), count);
+        }
+
+        void reset() {
+            /* !docs
+            Resets the vertex pool, freeing all allocated vertices.
+            */
+
+            offset = 0;
+            for (auto& chunk : chunks) chunk->offset = 0;
+            sig++;
+        }
+
+        bool valid(const AllocResult& result) const noexcept {
+            return result.sig == sig;
+        }
+
+        private:
+        ep_u64 sig;
+
+        AllocResult allocSuccess(Vertex* ptr, ep_u64 count) {
+            return {
+                .vertices = ptr,
+                .count = count,
+                .sig = sig
+            };
+        }
+    };
+
+    struct Mesh {
+        /* !docs
+        A mesh of vertices, which can be drawn.
+        */
+
+        VertexPool::AllocResult vertices;
+        GLvec4 color;
+        TextureInfo* texture;
+        ProgramInfo* program;
+
+        void addRect(const GLvec2& position, const GLvec2& size, const GLvec2& uvPosition, const GLvec2& uvSize) noexcept {
+            if (size.x <= 0 || size.y <= 0) return;
+
+            *vertices.next() = { position, uvPosition };
+            *vertices.next() = { position + GLvec2 { size.x, 0 }, uvPosition + GLvec2 { uvSize.x, 0 } };
+            *vertices.next() = { position + size, uvPosition + uvSize };
+
+            *vertices.next() = { position, uvPosition };
+            *vertices.next() = { position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y } };
+            *vertices.next() = { position + size, uvPosition + uvSize };
+        }
+
+        void addFullRect() noexcept {
+            /* !docs
+            Adds a full-screen rectangle to the mesh.
+            */
+
+            addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
+        }
+
+        static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) noexcept {
+            /* !docs
+            Get the number of vertices required to draw a polygon with the given number of points.
+            */
+
+            return (pointsCount - 2) * 3;
+        }
+
+        void addPolygon(const std::vector<GLvec2>& points, const std::vector<GLvec2>& uvs) noexcept {
+            /* !docs
+            Adds a polygon to the mesh.
+            */
+
+            ep_assert(uvs.size() >= points.size(), "Not enough UVs for polygon");
+
+            for (ep_i64 i = 0; i < (ep_i64)points.size() - 2; i++) {
+                *vertices.next() = { points[0], uvs[0] };
+                *vertices.next() = { points[i + 1], uvs[i + 1] };
+                *vertices.next() = { points[i + 2], uvs[i + 2] };
+            }
+        }
+    };
+
+    struct BufferInfo {
+        /* !docs
+        A buffer object, which is created by `glGenBuffers`.
+        */
+        
+        BufferInfo() = default;
+        BufferInfo(const BufferInfo&) = delete;
+        BufferInfo& operator=(const BufferInfo&) = delete;
+
+        BufferInfo(BufferInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+            , target(other.target)
+        {}
+
+        BufferInfo& operator=(BufferInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+                target = other.target;
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+        GLenum target;
+
+        struct UsingGuard {
+            BufferInfo* ref;
+
+            UsingGuard(BufferInfo& buffer) : ref(&buffer) {
+                ref->glRef->glBindBuffer(ref->target, ref->id);
+            }
+
+            UsingGuard(const UsingGuard&) = delete;
+            UsingGuard& operator=(const UsingGuard&) = delete;
+            UsingGuard(UsingGuard&&) = delete;
+            UsingGuard& operator=(UsingGuard&&) = delete;
+
+            void data(GLsizeiptr size, const void* data, GLenum usage) {
+                ref->glRef->glBufferData(ref->target, size, data, usage);
+            }
+
+            template <typename T>
+            void data(std::span<const T> data, GLenum usage) {
+                data(ref->target, data.size() * sizeof(T), data.data(), usage);
+            }
+
+            void subData(GLintptr offset, GLsizeiptr size, const void* data) {
+                ref->glRef->glBufferSubData(ref->target, offset, size, data);
+            }
+
+            template <typename T>
+            void subData(GLintptr offset, std::span<const T> data) {
+                ref->glRef->glBufferSubData(ref->target, offset, data.size() * sizeof(T), data.data());
+            }
+
+            struct MappingGuard {
+                UsingGuard* ref;
+                void* data;
+
+                MappingGuard(UsingGuard& buffer, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
+                    data = ref->ref->glRef->glMapBuffer(ref->ref->target, access);
+                }
+
+                MappingGuard(const MappingGuard&) = delete;
+                MappingGuard& operator=(const MappingGuard&) = delete;
+                MappingGuard(MappingGuard&&) = delete;
+                MappingGuard& operator=(MappingGuard&&) = delete;
+
+                ~MappingGuard() {
+                    ref->ref->glRef->glUnmapBuffer(ref->ref->target);
+                }
+            };
+
+            struct RangeMappingGuard {
+                UsingGuard* ref;
+                void* data;
+
+                RangeMappingGuard(UsingGuard& buffer, GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
+                    data = ref->ref->glRef->glMapBufferRange(ref->ref->target, offset, length, access);
+                }
+
+                RangeMappingGuard(const RangeMappingGuard&) = delete;
+                RangeMappingGuard& operator=(const RangeMappingGuard&) = delete;
+                RangeMappingGuard(RangeMappingGuard&&) = delete;
+                RangeMappingGuard& operator=(RangeMappingGuard&&) = delete;
+
+                ~RangeMappingGuard() {
+                    ref->ref->glRef->glUnmapBuffer(ref->ref->target);
+                }
+            };
+
+            MappingGuard map(GLbitfield access) {
+                return MappingGuard(*this, access);
+            }
+
+            ep_sp<MappingGuard> mapSp(GLbitfield access) {
+                auto* guard = new MappingGuard(*this, access);
+                return ep_sp<MappingGuard>(guard);
+            }
+
+            RangeMappingGuard mapRange(GLintptr offset, GLsizeiptr length, GLbitfield access) {
+                return RangeMappingGuard(*this, offset, length, access);
+            }
+
+            ep_sp<RangeMappingGuard> mapRangeSp(GLintptr offset, GLsizeiptr length, GLbitfield access) {
+                auto* guard = new RangeMappingGuard(*this, offset, length, access);
+                return ep_sp<RangeMappingGuard>(guard);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glBindBuffer(ref->target, 0);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        ep_sp<UsingGuard> useSp() {
+            auto* guard = new UsingGuard(*this);
+            return ep_sp<UsingGuard>(guard);
+        }
+
+        ~BufferInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteBuffers(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct VertexArrayInfo {
+        /* !docs
+        A vertex array object (VAO), which is created by `glGenVertexArrays`.
+        */
+
+        VertexArrayInfo() = default;
+        VertexArrayInfo(const VertexArrayInfo&) = delete;
+        VertexArrayInfo& operator=(const VertexArrayInfo&) = delete;
+
+        VertexArrayInfo(VertexArrayInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        VertexArrayInfo& operator=(VertexArrayInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            VertexArrayInfo* ref;
+
+            UsingGuard(VertexArrayInfo& array) : ref(&array) {
+                ref->glRef->glBindVertexArray(ref->id);
+            }
+
+            UsingGuard(const UsingGuard&) = delete;
+            UsingGuard& operator=(const UsingGuard&) = delete;
+            UsingGuard(UsingGuard&&) = delete;
+            UsingGuard& operator=(UsingGuard&&) = delete;
+
+            void enable(GLuint index) { ref->glRef->glEnableVertexAttribArray(index); }
+            void disable(GLuint index) { ref->glRef->glDisableVertexAttribArray(index); }
+
+            void pointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer) {
+                ref->glRef->glVertexAttribPointer(index, size, type, normalized, stride, pointer);
+            }
+
+            void iPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer) {
+                ref->glRef->glVertexAttribIPointer(index, size, type, stride, pointer);
+            }
+
+            void divisor(GLuint index, GLuint divisor) {
+                ref->glRef->glVertexAttribDivisor(index, divisor);
+            }
+
+            ~UsingGuard() {
+                // ref->glRef->glBindVertexArray(0);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        ~VertexArrayInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteVertexArrays(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct ShaderInfo {
+        /* !docs
+        A shader object, which is created by `glCreateShader`.
+        */
+
+        ShaderInfo() = default;
+        ShaderInfo(const ShaderInfo&) = delete;
+        ShaderInfo& operator=(const ShaderInfo&) = delete;
+
+        ShaderInfo(ShaderInfo&& other) noexcept
+            : glRef(other.glRef)
+            , type(other.type)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        ShaderInfo& operator=(ShaderInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                type = other.type;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLenum type;
+        GLuint id;
+
+        void source(const std::string& source) {
+            const GLchar* ptr = (GLchar*)source.c_str();
+            GLint len = source.length();
+            glRef->glShaderSource(id, 1, &ptr, &len);
+        }
+
+        void source(std::span<const std::string> sources) {
+            std::vector<const GLchar*> ptrs;
+            std::vector<GLint> lens;
+            ptrs.reserve(sources.size());
+            lens.reserve(sources.size());
+            for (const auto& source : sources) {
+                ptrs.push_back((GLchar*)source.c_str());
+                lens.push_back(source.length());
+            }
+            glRef->glShaderSource(id, sources.size(), ptrs.data(), lens.data());
+        }
+
+        bool compile(std::string* outLog = nullptr) {
+            glRef->glCompileShader(id);
+            GLint status = 0;
+            glRef->glGetShaderiv(id, GL_COMPILE_STATUS, &status);
+            if (outLog) {
+                GLint logLen;
+                glRef->glGetShaderiv(id, GL_INFO_LOG_LENGTH, &logLen);
+                if (logLen > 0) {
+                    outLog->resize(logLen);
+                    GLsizei written = 0;
+                    glRef->glGetShaderInfoLog(id, logLen, &written, (GLchar*)outLog->data());
+                    outLog->resize(written);
+                }
+            }
+            return status == GL_TRUE;
+        }
+
+        ~ShaderInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteShader(id);
+                id = 0;
+            }
+        }
+    };
+
+    struct VertexLayout {
+        /* !docs
+        A vertex layout, which is used to describe the structure of the vertex data and store the vertex buffer.
+        It includes a vertex array object (VAO) and a vertex buffer object (VBO).
+        */
+
+        ep_sp<VertexArrayInfo> vao;
+        ep_sp<BufferInfo> vbo;
+    };
+
+    struct VertexLayoutPool {
+        /* !docs
+        A vertex layout pool.
+        */
+
+        std::vector<VertexLayout> layouts;
+        ep_u64 currentIndex;
+        ep_u64 frameSig;
+
+        using LayoutCreator = std::function<VertexLayout()>;
+        void resize(ep_u64 size,const LayoutCreator& creator) {
+            layouts.resize(size);
+            for (auto& layout : layouts) layout = creator();
+        }
+
+        using ConfigureFunc = std::function<void(VertexArrayInfo*, BufferInfo*)>;
+        void configure(const ConfigureFunc& func) {
+            for (auto& layout : layouts) {
+                func(layout.vao.get(), layout.vbo.get());
+            }
+        }
+
+        void checkAndNext(ep_u64 newFrameSig) noexcept {
+            if (frameSig != newFrameSig) {
+                frameSig = newFrameSig;
+                currentIndex = (currentIndex + 1) % layouts.size();
+            }
+        }
+
+        VertexLayout& current() noexcept {
+            return layouts[currentIndex];
+        }
+    };
+
+    struct ProgramInfo {
+        /* !docs
+        A program object, which is created by `glCreateProgram`.
+        */
+
+        ProgramInfo() = default;
+        ProgramInfo(const ProgramInfo&) = delete;
+        ProgramInfo& operator=(const ProgramInfo&) = delete;
+
+        ProgramInfo(ProgramInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+            , vertexLayoutPool(std::move(other.vertexLayoutPool))
+            , bufferFiller(other.bufferFiller)
+            , fragConfig(std::move(other.fragConfig))
+            , attribLocations(std::move(other.attribLocations))
+            , uniformLocations(std::move(other.uniformLocations))
+        {}
+
+        ProgramInfo& operator=(ProgramInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+                vertexLayoutPool = std::move(other.vertexLayoutPool);
+                bufferFiller = other.bufferFiller;
+                fragConfig = std::move(other.fragConfig);
+                attribLocations = std::move(other.attribLocations);
+                uniformLocations = std::move(other.uniformLocations);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        VertexLayoutPool vertexLayoutPool;
+
+        using BufferFillerFunc = std::function<void(ProgramInfo*, const VertexLayout&, VertexPool::AllocResult&)>;
+        BufferFillerFunc bufferFiller;
+
+        struct {
+            std::string textureUniformName = "uTexture";
+            std::optional<std::string> colorUniformName = "uColor";
+        } fragConfig;
+
+        void attachShader(ShaderInfo* shader) {
+            glRef->glAttachShader(id, shader->id);
+            attribLocations.clear();
+            uniformLocations.clear();
+        }
+
+        bool link(std::string* outLog = nullptr) {
+            glRef->glLinkProgram(id);
+            GLint status = 0;
+            glRef->glGetProgramiv(id, GL_LINK_STATUS, &status);
+            if (outLog) {
+                GLint logLen = 0;
+                glRef->glGetProgramiv(id, GL_INFO_LOG_LENGTH, &logLen);
+                if (logLen > 0) {
+                    outLog->resize(logLen);
+                    GLsizei written = 0;
+                    glRef->glGetProgramInfoLog(id, logLen, &written, (GLchar*)outLog->data());
+                    outLog->resize(written);
+                }
+            }
+            return status == GL_TRUE;
+        }
+
+        struct UsingGuard {
+            ProgramInfo* ref;
+
+            UsingGuard(ProgramInfo& program) : ref(&program) {
+                ref->glRef->glUseProgram(ref->id);
+            }
+
+            UsingGuard(const UsingGuard&) = delete;
+            UsingGuard& operator=(const UsingGuard&) = delete;
+            UsingGuard(UsingGuard&&) = delete;
+            UsingGuard& operator=(UsingGuard&&) = delete;
+
+            ~UsingGuard() {
+                // ref->glRef->glUseProgram(0);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        struct Location {
+            ProgramInfo* ref;
+
+            GLint location;
+
+            void setf(GLfloat v0) noexcept { ref->glRef->glUniform1f(location, v0); }
+            void setf(GLfloat v0, GLfloat v1) noexcept { ref->glRef->glUniform2f(location, v0, v1); }
+            void setf(GLfloat v0, GLfloat v1, GLfloat v2) noexcept { ref->glRef->glUniform3f(location, v0, v1, v2); }
+            void setf(GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3) noexcept { ref->glRef->glUniform4f(location, v0, v1, v2, v3); }
+            
+            void seti(GLint v0) noexcept { ref->glRef->glUniform1i(location, v0); }
+            void seti(GLint v0, GLint v1) noexcept { ref->glRef->glUniform2i(location, v0, v1); }
+            void seti(GLint v0, GLint v1, GLint v2) noexcept { ref->glRef->glUniform3i(location, v0, v1, v2); }
+            void seti(GLint v0, GLint v1, GLint v2, GLint v3) noexcept { ref->glRef->glUniform4i(location, v0, v1, v2, v3); }
+
+            void setv2(const GLvec2& value) noexcept { setf(value.x, value.y); }
+            void setv3(const GLvec3& value) noexcept { setf(value.x, value.y, value.z); }
+            void setv4(const GLvec4& value) noexcept { setf(value.x, value.y, value.z, value.w); }
+
+            void setMatrix2fv(GLsizei count, GLboolean transpose, const GLfloat* value) noexcept { ref->glRef->glUniformMatrix2fv(location, count, transpose, value); }
+            void setMatrix3fv(GLsizei count, GLboolean transpose, const GLfloat* value) noexcept { ref->glRef->glUniformMatrix3fv(location, count, transpose, value); }
+            void setMatrix4fv(GLsizei count, GLboolean transpose, const GLfloat* value) noexcept { ref->glRef->glUniformMatrix4fv(location, count, transpose, value); }
+        };
+
+        GLint getAttribLocationPosition(const std::string& name) noexcept {
+            if (attribLocations.find(name) == attribLocations.end()) {
+                attribLocations[name] = glRef->glGetAttribLocation(id, (GLchar*)name.c_str());
+            }
+
+            return attribLocations[name];
+        }
+
+        GLint getUniformLocationPosition(const std::string& name) noexcept {
+            if (uniformLocations.find(name) == uniformLocations.end()) {
+                uniformLocations[name] = glRef->glGetUniformLocation(id, (GLchar*)name.c_str());
+            }
+
+            return uniformLocations[name];
+        }
+
+        Location getAttribLocation(const std::string& name) noexcept {
+            Location result;
+            result.ref = this;
+            result.location = getAttribLocationPosition(name);
+            return result;
+        }
+
+        Location getUniformLocation(const std::string& name) noexcept {
+            Location result;
+            result.ref = this;
+            result.location = getUniformLocationPosition(name);
+            return result;
+        }
+
+        void setVertices(VertexPool::AllocResult& vertices) {
+            if (!bufferFiller) return;
+            auto& vertexLayout = vertexLayoutPool.current();
+            bufferFiller(this, vertexLayout, vertices);
+        }
+
+        ~ProgramInfo() {
+            reset();
+        }
+
+        private:
+        std::unordered_map<std::string, GLint> attribLocations;
+        std::unordered_map<std::string, GLint> uniformLocations;
+
+        void reset() {
+            if (id) {
+                glRef->glDeleteProgram(id);
+                id = 0;
+            }
+        }
+    };
+
+    struct TextureInfo {
+        /* !docs
+        A texture object, which is created by `glGenTextures`.
+        */
+
+        TextureInfo() = default;
+        TextureInfo(const TextureInfo&) = delete;
+        TextureInfo& operator=(const TextureInfo&) = delete;
+
+        TextureInfo(TextureInfo&& other) noexcept
+            : glRef(other.glRef)
+            , target(other.target)
+            , id(std::exchange(other.id, 0))
+            , width(other.width) , height(other.height)
+            , frameBuffer(std::move(other.frameBuffer))
+            , pingPong(std::move(other.pingPong))
+        {}
+
+        TextureInfo& operator=(TextureInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                target = other.target;
+                id = std::exchange(other.id, 0);
+                width = other.width; height = other.height;
+                frameBuffer = std::move(other.frameBuffer);
+                pingPong = std::move(other.pingPong);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLenum target;
+        GLuint id;
+        
+        GLsizei width, height;
+        ep_sp<FramebufferInfo> frameBuffer;
+        ep_sp<TextureInfo> pingPong;
+
+        struct UsingGuard {
+            TextureInfo* ref;
+
+            GLenum index;
+
+            UsingGuard(TextureInfo& texture, GLenum index) : ref(&texture) {
+                this->index = index;
+                ref->glRef->glActiveTexture(GL_TEXTURE0 + index);
+                ref->glRef->glBindTexture(ref->target, ref->id);
+            }
+
+            // only GL_RGBA and GL_UNSIGNED_BYTE ;)
+            void image2D(GLsizei width, GLsizei height, const void* pixels) {
+                if (width <= 0 || height <= 0) return;
+
+                ref->glRef->glTexImage2D(ref->target, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+                GLfloat maxAniso = 0.0;
+                ref->glRef->glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
+                if (maxAniso > 0.0) ref->glRef->glTexParameterf(ref->target, GL_TEXTURE_MAX_ANISOTROPY_EXT, maxAniso);
+
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+                ref->width = width; ref->height = height;
+            }
+
+            void image2D(const DecodedRGBATexture& decoded) {
+                image2D(decoded.width, decoded.height, (void*)decoded.data.data());
+            }
+
+            void storage2D(GLint levels, GLenum internalformat, GLsizei width, GLsizei height) {
+                ref->glRef->glTexStorage2D(ref->target, levels, internalformat, width, height);
+            }
+
+            void image2DMultisample(GLsizei width, GLsizei height, GLsizei samples) {
+                ref->glRef->glTexImage2DMultisample(ref->target, samples, GL_RGBA8, width, height, GL_TRUE);
+                ref->width = width; ref->height = height;
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glBindTexture(ref->target, 0);
+            }
+        };
+
+        UsingGuard use(GLenum index = 0) {
+            return UsingGuard(*this, index);
+        }
+
+        bool sizeIsSame(TextureInfo* other) const noexcept {
+            return other->width == width && other->height == height;
+        }
+
+        bool sizeIsSame(GLsizei width, GLsizei height) const noexcept {
+            return this->width == width && this->height == height;
+        }
+
+        GLvec2 size() const noexcept {
+            return { width, height };
+        }
+
+        ~TextureInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteTextures(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct FramebufferInfo {
+        /* !docs
+        A framebuffer object (FBO), which is created by `glGenFramebuffers`.
+        */
+
+        FramebufferInfo() = default;
+        FramebufferInfo(const FramebufferInfo&) = delete;
+        FramebufferInfo& operator=(const FramebufferInfo&) = delete;
+
+        FramebufferInfo(FramebufferInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        FramebufferInfo& operator=(FramebufferInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            FramebufferInfo* ref;
+            GLenum target;
+            GLint savedId;
+
+            UsingGuard(FramebufferInfo& framebuffer, TextureInfo* texture, GLenum target) : ref(&framebuffer), target(target) {
+                ref->glRef->glGetIntegerv(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING : (target == GL_DRAW_FRAMEBUFFER ? GL_DRAW_FRAMEBUFFER_BINDING : GL_FRAMEBUFFER_BINDING), &savedId);
+                ref->glRef->glBindFramebuffer(target, ref->id);
+                ref->glRef->glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, texture->target, texture->id, 0);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glBindFramebuffer(target, savedId);
+            }
+        };
+
+        UsingGuard use(TextureInfo* texture, GLenum target) {
+            return UsingGuard(*this, texture, target);
+        }
+
+        ep_sp<UsingGuard> useSp(TextureInfo* texture, GLenum target) {
+            auto* guard = new UsingGuard(*this, texture, target);
+            return ep_sp<UsingGuard>(guard);
+        }
+
+        ~FramebufferInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteFramebuffers(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct RenderbufferInfo {
+        /* !docs
+        A renderbuffer object (RBO), which is created by `glGenRenderbuffers`.
+        */
+
+        RenderbufferInfo() = default;
+        RenderbufferInfo(const RenderbufferInfo&) = delete;
+        RenderbufferInfo& operator=(const RenderbufferInfo&) = delete;
+
+        RenderbufferInfo(RenderbufferInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        RenderbufferInfo& operator=(RenderbufferInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            RenderbufferInfo* ref;
+            GLint savedId;
+
+            UsingGuard(RenderbufferInfo& renderbuffer) : ref(&renderbuffer) {
+                ref->glRef->glGetIntegerv(GL_RENDERBUFFER_BINDING, &savedId);
+                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, ref->id);
+            }
+
+            void storage(GLenum internalformat, GLsizei width, GLsizei height) {
+                ref->glRef->glRenderbufferStorage(GL_RENDERBUFFER, internalformat, width, height);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, savedId);
+            }
+        };
+
+        UsingGuard use() {
+            return UsingGuard(*this);
+        }
+
+        ~RenderbufferInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteRenderbuffers(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct QueryInfo {
+        /* !docs
+        A query object, which is created by `glGenQueries`.
+        */
+
+        QueryInfo() = default;
+        QueryInfo(const QueryInfo&) = delete;
+        QueryInfo& operator=(const QueryInfo&) = delete;
+
+        QueryInfo(QueryInfo&& other) noexcept
+            : glRef(other.glRef)
+            , id(std::exchange(other.id, 0))
+        {}
+
+        QueryInfo& operator=(QueryInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                id = std::exchange(other.id, 0);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLuint id;
+
+        struct UsingGuard {
+            QueryInfo* ref;
+            GLenum target;
+
+            UsingGuard(QueryInfo& query, GLenum target) : ref(&query), target(target) {
+                ref->glRef->glBeginQuery(target, ref->id);
+            }
+
+            ~UsingGuard() {
+                ref->glRef->glEndQuery(target);
+            }
+        };
+
+        UsingGuard use(GLenum target = GL_TIME_ELAPSED) {
+            return UsingGuard(*this, target);
+        }
+
+        GLint getResultInt() const {
+            GLint result = 0;
+            glRef->glGetQueryObjectiv(id, GL_QUERY_RESULT, &result);
+            return result;
+        }
+
+        GLuint64 getResultUInt64() const {
+            GLuint64 result = 0;
+            glRef->glGetQueryObjectui64v(id, GL_QUERY_RESULT, &result);
+            return result;
+        }
+
+        bool isResultAvailable() const {
+            GLint result = 0;
+            glRef->glGetQueryObjectiv(id, GL_QUERY_RESULT_AVAILABLE, &result);
+            return result != 0;
+        }
+
+        ~QueryInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (id) {
+                glRef->glDeleteQueries(1, &id);
+                id = 0;
+            }
+        }
+    };
+
+    struct SyncInfo {
+        /* !docs
+        A sync object, which is created by `glFenceSync`.
+        */
+
+        SyncInfo() = default;
+        SyncInfo(const SyncInfo&) = delete;
+        SyncInfo& operator=(const SyncInfo&) = delete;
+
+        SyncInfo(SyncInfo&& other) noexcept
+            : glRef(other.glRef)
+            , sync(std::exchange(other.sync, nullptr))
+        {}
+
+        SyncInfo& operator=(SyncInfo&& other) noexcept {
+            if (this != &other) {
+                reset();
+                glRef = other.glRef;
+                sync = std::exchange(other.sync, nullptr);
+            }
+
+            return *this;
+        }
+
+        GL33CoreInterface* glRef;
+
+        GLsync sync;
+
+        GLenum wait(GLbitfield flags, GLuint64 timeout = GL_TIMEOUT_IGNORED) const {
+            return glRef->glClientWaitSync(sync, flags, timeout);
+        }
+
+        bool isSignaled() const noexcept {
+            GLint status;
+            glRef->glGetSynciv(sync, GL_SYNC_STATUS, 1, nullptr, &status);
+            return status == GL_SIGNALED;
+        }
+
+        ~SyncInfo() {
+            reset();
+        }
+
+        private:
+        void reset() {
+            if (sync) {
+                glRef->glDeleteSync(sync);
+                sync = nullptr;
+            }
+        }
+    };
+
+    static const char* defaultVertexShaderSource = R"(
+#version 330 core
+
+in vec2 inPosition;
+in vec2 inTexCoord;
+
+out vec2 fragTexCoord;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+    fragTexCoord = inTexCoord;
+}
+)";
+
+    static const char* defaultVertexShaderSource_RPE = R"(
+#version 100
+
+attribute vec2 inPosition;
+attribute vec2 inTexCoord;
+
+varying vec2 uv;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+    uv = inTexCoord;
+}
+)";
+
+    static const char* defaultFragmentShaderSource = R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+
+uniform vec4 uColor;
+uniform sampler2D uTexture;
+
+out vec4 outColor;
+
+void main() {
+    outColor = uColor * texture(uTexture, fragTexCoord);
+}
+)";
+
+    struct GL33Context {
+        /* !docs
+        A gl context.
+        */
+
+        GL33Context() = default;
+        GL33Context(const GL33Context&) = delete;
+        GL33Context& operator=(const GL33Context&) = delete;
+        GL33Context(GL33Context&&) = delete;
+        GL33Context& operator=(GL33Context&&) = delete;
+
+        GL33CoreInterface gl;
+
+        ep_u64 drawCallsCount = 0;
+
+        static ep_sp<GL33Context> Make(const GL33CoreInterface& interface) {
+            auto* ctx = new GL33Context();
+            ctx->gl = interface;
+            ctx->initDefaultResources();
+            return ep_sp<GL33Context>(ctx);
+        }
+
+        void enable(GLenum cap) noexcept { gl.glEnable(cap); }
+        void disable(GLenum cap) noexcept { gl.glDisable(cap); }
+        bool isEnabled(GLenum cap) const noexcept { return gl.glIsEnabled(cap); }
+
+        struct GLFeatureGuard {
+            GL33Context* glCtx;
+            GLenum cap; bool enable;
+
+            GLFeatureGuard(GL33Context* glCtx, GLenum cap, bool enable) : glCtx(glCtx), cap(cap), enable(enable) {}
+            GLFeatureGuard(const GLFeatureGuard&) = delete;
+            GLFeatureGuard& operator=(const GLFeatureGuard&) = delete;
+            GLFeatureGuard(GLFeatureGuard&& other) = delete;
+            GLFeatureGuard& operator=(GLFeatureGuard&& other) = delete;
+
+            ~GLFeatureGuard() {
+                if (enable && !glCtx->isEnabled(cap)) glCtx->enable(cap);
+                else if (!enable && glCtx->isEnabled(cap)) glCtx->disable(cap);
+            }
+        };
+
+        GLFeatureGuard getFeatureGuard(GLenum cap) noexcept {
+            /* !docs
+            Returns a guard that will keep the feature enabled or disabled when it goes out of scope.
+            */
+
+            return GLFeatureGuard(this, cap, isEnabled(cap));
+        }
+
+        void setViewport(GLint x, GLint y, GLsizei width, GLsizei height) noexcept {
+            currentViewport = { x, y, width, height };
+            gl.glViewport(x, y, width, height);
+        }
+
+        void setViewport(GLsizei width, GLsizei height) noexcept { setViewport(0, 0, width, height); }
+        void setViewport(const GLvec2& xy, const GLvec2& wh) noexcept { setViewport(xy.x, xy.y, wh.x, wh.y); }
+        void setViewport(const GLvec4& rect) noexcept { setViewport(rect.x, rect.y, rect.z, rect.w); }
+
+        void setClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) noexcept { gl.glClearColor(r, g, b, a); }
+        
+        void clear(GLbitfield mask) noexcept { gl.glClear(mask); }
+
+        void flush() { gl.glFlush(); }
+        void finish() { gl.glFinish(); }
+
+        ep_sp<BufferInfo> createBuffer(GLenum target = GL_ARRAY_BUFFER) {
+            auto* info = new BufferInfo();
+            info->glRef = &gl;
+            info->target = target;
+            gl.glGenBuffers(1, &info->id);
+            return ep_sp<BufferInfo>(info);
+        }
+
+        ep_sp<VertexArrayInfo> createVertexArray() {
+            auto* info = new VertexArrayInfo();
+            info->glRef = &gl;
+            gl.glGenVertexArrays(1, &info->id);
+            return ep_sp<VertexArrayInfo>(info);
+        }
+
+        ep_sp<ShaderInfo> createShader(GLenum type) {
+            auto* info = new ShaderInfo();
+            info->glRef = &gl;
+            info->type = type;
+            info->id = gl.glCreateShader(type);
+            return ep_sp<ShaderInfo>(info);
+        }
+
+        ep_sp<ProgramInfo> createProgram() {
+            auto* info = new ProgramInfo();
+            info->glRef = &gl;
+            info->id = gl.glCreateProgram();
+            return ep_sp<ProgramInfo>(info);
+        }
+
+        ep_sp<TextureInfo> createTexture(GLenum target = GL_TEXTURE_2D) {
+            auto* info = new TextureInfo();
+            info->glRef = &gl;
+            info->target = target;
+            gl.glGenTextures(1, &info->id);
+            info->frameBuffer = createFramebuffer();
+            return ep_sp<TextureInfo>(info);
+        }
+
+        ep_sp<FramebufferInfo> createFramebuffer() {
+            auto* info = new FramebufferInfo();
+            info->glRef = &gl;
+            gl.glGenFramebuffers(1, &info->id);
+            return ep_sp<FramebufferInfo>(info);
+        }
+
+        ep_sp<RenderbufferInfo> createRenderbuffer() {
+            auto* info = new RenderbufferInfo();
+            info->glRef = &gl;
+            gl.glGenRenderbuffers(1, &info->id);
+            return ep_sp<RenderbufferInfo>(info);
+        }
+
+        void blendFunc(GLenum sfactor, GLenum dfactor) noexcept { gl.glBlendFunc(sfactor, dfactor); }
+        void blendFuncSeparate(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha) noexcept { gl.glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha); }
+        void blendEquation(GLenum mode) noexcept { gl.glBlendEquation(mode); }
+        void blendEquationSeparate(GLenum modeRGB, GLenum modeAlpha) noexcept { gl.glBlendEquationSeparate(modeRGB, modeAlpha); }
+        void blendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) noexcept { gl.glBlendColor(r, g, b, a); }
+        
+        void colorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a) noexcept { gl.glColorMask(r, g, b, a); }
+
+        ep_sp<QueryInfo> createQuery() {
+            auto* info = new QueryInfo();
+            info->glRef = &gl;
+            gl.glGenQueries(1, &info->id);
+            return ep_sp<QueryInfo>(info);
+        }
+
+        ep_sp<SyncInfo> createSync(GLenum condition = GL_SYNC_GPU_COMMANDS_COMPLETE, GLbitfield flags = 0) {
+            auto* info = new SyncInfo();
+            info->glRef = &gl;
+            info->sync = gl.glFenceSync(condition, flags);
+            return ep_sp<SyncInfo>(info);
+        }
+
+        ep_sp<ProgramInfo> createConfiguredProgram(const std::string& fragCode, const std::string& vertCode = defaultVertexShaderSource) {
+            /* !docs
+            Creates a configured program with default vertex shader and given fragment shader.
+            */
+
+            auto vert = createShader(GL_VERTEX_SHADER);
+            auto frag = createShader(GL_FRAGMENT_SHADER);
+            
+            vert->source(vertCode);
+            frag->source(fragCode);
+
+            std::string log;
+            if (!vert->compile(&log)) throw std::runtime_error("vertex compile: " + log);
+            if (!frag->compile(&log)) throw std::runtime_error("fragment compile: " + log);
+
+            auto prog = createProgram();
+            prog->attachShader(vert.get());
+            prog->attachShader(frag.get());
+            if (!prog->link(&log)) throw std::runtime_error("program link: " + log);
+
+            prog->vertexLayoutPool.resize(8, [&]() { return VertexLayout { .vao = createVertexArray(), .vbo = createBuffer() }; });
+            prog->vertexLayoutPool.configure([&](VertexArrayInfo* vao, BufferInfo* vbo) {
+                auto vaoGuard = vao->use();
+                auto vboGuard = vbo->use();
+                auto inPosition = prog->getAttribLocationPosition("inPosition");
+                auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
+                vaoGuard.enable(inPosition);
+                vaoGuard.enable(inTexCoord);
+                vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
+                vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
+            });
+
+            prog->bufferFiller = [](ProgramInfo* prog, const VertexLayout& vertexLayout, VertexPool::AllocResult& vertices) {
+                auto vaoGuard = vertexLayout.vao->use();
+                auto vboGuard = vertexLayout.vbo->use();
+                vboGuard.data(
+                    vertices.count * sizeof(Vertex),
+                    vertices.vertices,
+                    GL_DYNAMIC_DRAW
+                );
+            };
+
+            return prog;
+        }
+
+        struct ProgramPresets {
+            /* !docs
+            A struct containing some preconfigured programs.
+            */
+
+            static ep_sp<ProgramInfo> gaussianBlur(GL33Context* glCtx) {
+                return glCtx->createConfiguredProgram(R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+
+uniform vec4 uColor;
+uniform sampler2D uTexture;
+
+uniform vec2 uDelta; // (0, 1) or (1, 0)
+uniform float uRadius; // 0.0 - 1.0
+uniform int uIterations;
+uniform bool uUseColor;
+
+out vec4 outColor;
+
+vec4 sampleTexture(vec2 texCoord) {
+    return texture(uTexture, texCoord);
+}
+
+float gaussian(float x) {
+    return exp(-x * x / 0.24);
+}
+
+void main() {
+    vec4 sum = vec4(0.0);
+    float wsum = 0.0;
+    
+    for (int i = -uIterations; i <= uIterations; i++) {
+        float offset = float(i) / float(uIterations);
+        float weight = gaussian(offset);
+        sum += sampleTexture(fragTexCoord + uDelta * offset * uRadius) * weight;
+        wsum += weight;
+    }
+
+    outColor = sum / wsum;
+    outColor.a = 1.0;
+
+    if (uUseColor) {
+        outColor *= uColor;
+    }
+}
+)");
+            }
+
+            static ep_sp<ProgramInfo> yuvConverter(GL33Context* glCtx) {
+                auto prog = glCtx->createConfiguredProgram(R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+
+uniform sampler2D uTexture;
+uniform ivec2 uResolution;
+uniform bool uFlipY;
+
+out vec4 outColor;
+
+vec3 getPixel(int x, int y) {
+    return texelFetch(uTexture, ivec2(x, uResolution.y - y - 1), 0).xyz;
+}
+
+float getY(int x, int y) {
+    vec3 pixel = getPixel(x, y);
+    return dot(pixel, vec3(0.299, 0.587, 0.114));
+}
+
+float getU(int x, int y) {
+    vec3 pixel = (
+        getPixel(x, y)
+        + getPixel(x, y + 1)
+        + getPixel(x + 1, y)
+        + getPixel(x + 1, y + 1)
+    ) * 0.25;
+    return dot(pixel, vec3(-0.168736, -0.331264, 0.5)) + 0.5;
+}
+
+float getV(int x, int y) {
+    vec3 pixel = (
+        getPixel(x, y)
+        + getPixel(x, y + 1)
+        + getPixel(x + 1, y)
+        + getPixel(x + 1, y + 1)
+    ) * 0.25;
+    return dot(pixel, vec3(0.5, -0.418688, -0.081312)) + 0.5;
+}
+
+float getYI(int index) {
+    return getY(index % uResolution.x, index / uResolution.x);
+}
+
+float getUI(int index) {
+    return getU((index % (uResolution.x / 2)) * 2, index / (uResolution.x / 2) * 2);
+}
+
+float getVI(int index) {
+    return getV((index % (uResolution.x / 2)) * 2, index / (uResolution.x / 2) * 2);
+}
+
+void main() {
+    int w = uResolution.x; int h = uResolution.y;
+    ivec2 curr_pos = ivec2(fragTexCoord * vec2(uResolution));
+    if (!uFlipY) curr_pos.y = h - curr_pos.y - 1;
+    int byte_index = (int(curr_pos.x) + int(curr_pos.y) * w) * 4;
+
+    int y_bytes = w * h; int uv_bytes = y_bytes / 4;
+
+    if (byte_index < y_bytes) {
+        int pixel_index = byte_index;
+        outColor = vec4(
+            getYI(pixel_index), getYI(pixel_index + 1),
+            getYI(pixel_index + 2), getYI(pixel_index + 3)
+        );
+    } else if (byte_index < y_bytes + uv_bytes) {
+        int pixel_index = byte_index - y_bytes;
+        outColor = vec4(
+            getUI(pixel_index), getUI(pixel_index + 1),
+            getUI(pixel_index + 2), getUI(pixel_index + 3)
+        );
+    } else if (byte_index < y_bytes + uv_bytes * 2) {
+        int pixel_index = byte_index - y_bytes - uv_bytes;
+        outColor = vec4(
+            getVI(pixel_index), getVI(pixel_index + 1),
+            getVI(pixel_index + 2), getVI(pixel_index + 3)
+        );
+    } else outColor = vec4(0);
+}
+)");
+                prog->fragConfig.colorUniformName = std::nullopt;
+                return prog;
+            }
+        };
+
+        void drawMesh(Mesh& mesh) noexcept {
+            /* !docs
+            Draw a mesh.
+            */
+
+            if (!vertexPool->valid(mesh.vertices)) {
+                std::abort();
+            }
+
+            auto* prog = mesh.program ? mesh.program : defaultProgram.get();
+            auto* tex = mesh.texture ? mesh.texture : defaultWhiteTexture.get();
+
+            prog->vertexLayoutPool.checkAndNext(frameSig);
+            prog->setVertices(mesh.vertices);
+
+            auto progGuard = prog->use();
+            auto& vertexLayout = prog->vertexLayoutPool.current();
+            auto vaoGuard = vertexLayout.vao->use();
+            auto texGuard = tex->use();
+
+            if (prog->fragConfig.colorUniformName.has_value()) {
+                prog->getUniformLocation(prog->fragConfig.colorUniformName.value()).setv4(mesh.color);
+            }
+
+            prog->getUniformLocation(prog->fragConfig.textureUniformName).seti(texGuard.index);
+
+            gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.count);
+            drawCallsCount++;
+        }
+
+        GLvec4 getViewport() const noexcept { return currentViewport; }
+
+        struct ViewportGuard {
+            GL33Context* glCtx;
+            GLvec4 vp;
+
+            ViewportGuard(GL33Context* glCtx, GLvec4 vp) : glCtx(glCtx), vp(vp) {}
+            ViewportGuard(const ViewportGuard&) = delete;
+            ViewportGuard& operator=(const ViewportGuard&) = delete;
+            ViewportGuard(ViewportGuard&& other) = delete;
+            ViewportGuard& operator=(ViewportGuard&& other) = delete;
+            ~ViewportGuard() { glCtx->setViewport(vp); }
+        };
+
+        ViewportGuard getViewportGuard() noexcept {
+            /* !docs
+            Get a guard that will restore viewport on destruction.
+            */
+
+            return ViewportGuard(this, getViewport());
+        }
+
+        void copyTexture(TextureInfo* src, TextureInfo* dst) noexcept {
+            /* !docs
+            Copy texture to another texture.
+            */
+
+            if (!dst->sizeIsSame(src)) {
+                dst->use().image2D(src->width, src->height, nullptr);
+            }
+
+            auto srcFbGuard = src->frameBuffer->use(src, GL_READ_FRAMEBUFFER);
+            auto dstGuard = dst->use();
+
+            gl.glCopyTexSubImage2D(
+                GL_TEXTURE_2D, 0,
+                0, 0,
+                0, 0,
+                src->width, src->height
+            );
+        }
+
+        void copyCurrentToTexture(TextureInfo* dst) noexcept {
+            /* !docs
+            Copy current framebuffer to texture.
+            It supports multisampling framebuffers.
+            */
+
+            auto kfboGuard = getFBOGuard();
+            auto texFboGuard = dst->frameBuffer->use(dst, GL_DRAW_FRAMEBUFFER);
+            gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, kfboGuard.drawFbo);
+            gl.glBlitFramebuffer(
+                0, 0, dst->width, dst->height,
+                0, 0, dst->width, dst->height,
+                GL_COLOR_BUFFER_BIT, GL_NEAREST
+            );
+        }
+
+        ep_sp<TextureInfo> ensureTexturePingPong(TextureInfo* texture) noexcept {
+            /* !docs
+            Ensures that texture has a ping-pong texture and returns it.
+            */
+
+            if (!texture->pingPong) texture->pingPong = createTexture();
+            copyTexture(texture, texture->pingPong.get());
+            return texture->pingPong;
+        }
+
+        void renderIntoTexture(TextureInfo* texture, Mesh& descMesh) noexcept {
+            /* !docs
+            Render mesh into texture.
+            */
+
+            auto vpGuard = getViewportGuard();
+            auto pingPong = ensureTexturePingPong(texture);
+            auto fbGuard = texture->frameBuffer->use(texture, GL_DRAW_FRAMEBUFFER);
+            auto feGuard = getFeatureGuard(GL_BLEND);
+
+            setViewport(texture->width, texture->height);
+            disable(GL_BLEND);
+
+            descMesh.vertices.reset();
+            descMesh.addFullRect();
+            descMesh.texture = pingPong.get();
+            drawMesh(descMesh);
+        }
+
+        void gaussianBlurToTexture(TextureInfo* texture, ep_f64 radius) {
+            /* !docs
+            Apply gaussian blur to texture.
+            */
+
+            auto mesh = requestMesh(6);
+            mesh.program = preloadedPrograms.gaussianBlur.get();
+            mesh.color = GLvec4::White();
+
+            auto progGuard = mesh.program->use();
+            mesh.program->getUniformLocation("uIterations").seti(std::ceil(radius / (1.0 + 0.15 * std::log2(radius + 1))));
+
+            mesh.program->getUniformLocation("uDelta").setv2({ 0.0, 1.0 });
+            mesh.program->getUniformLocation("uRadius").setf(radius / texture->height);
+            mesh.program->getUniformLocation("uUseColor").seti(false);
+            renderIntoTexture(texture, mesh);
+
+            mesh.program->getUniformLocation("uDelta").setv2({ 1.0, 0.0 });
+            mesh.program->getUniformLocation("uRadius").setf(radius / texture->width);
+            mesh.program->getUniformLocation("uUseColor").seti(true);
+            renderIntoTexture(texture, mesh);
+        }
+
+        void renderToDrawFbo(ep_u64 width, ep_u64 height, Mesh& descMesh) {
+            /* !docs
+            Render mesh into draw framebuffer.
+            */
+
+            auto tempTexGuard = allocTempTexture(width, height);
+            auto tempTex = tempTexGuard.get();
+            copyCurrentToTexture(tempTex.get());
+            auto feGuard = getFeatureGuard(GL_BLEND);
+
+            setViewport(width, height);
+            disable(GL_BLEND);
+
+            descMesh.vertices.reset();
+            descMesh.addFullRect();
+            descMesh.texture = tempTex.get();
+            drawMesh(descMesh);
+        }
+
+        bool getCurrentIsMultiSampled() noexcept {
+            /* !docs
+            Check if current framebuffer is multisampled.
+            */
+
+            GLint samples;
+            gl.glGetIntegerv(GL_SAMPLES, &samples);
+            return samples > 1;
+        }
+
+        struct {
+            ep_sp<ProgramInfo> gaussianBlur;
+            ep_sp<ProgramInfo> yuvConverter;
+        } preloadedPrograms; // !inline-docs| Preloaded programs.
+
+        void frameEnded() noexcept {
+            /* !docs
+            Please call this function at the end of each frame.
+            */
+
+            drawCallsCount = 0;
+            frameSig++;
+        }
+
+        Mesh requestMesh(ep_u64 verticesCount) noexcept {
+            /* !docs
+            Request mesh with specified number of vertices.
+            */
+
+            return {
+                .vertices = vertexPool->alloc(verticesCount)
+            };
+        }
+
+        struct AsyncFrameReader {
+            /* !docs
+            A frame reader which is used to read YUV420 frames from GPU.
+            */
+
+            GL33Context* glCtx;
+            ep_u64 frameWidth, frameHeight;
+
+            AsyncFrameReader() = default;
+            AsyncFrameReader(const AsyncFrameReader&) = delete;
+            AsyncFrameReader& operator=(const AsyncFrameReader&) = delete;
+            AsyncFrameReader(AsyncFrameReader&& other) = default;
+            AsyncFrameReader& operator=(AsyncFrameReader&& other) = default;
+
+            void initBufferSlots(ep_u64 size) {
+                for (ep_u64 i = 0; i < size; i++) addBufferSlot();
+            }
+
+            struct ReadResult {
+                ep_u64 size;
+                ep_u64 frameIndex;
+
+                ReadResult() = default;
+                ReadResult(const ReadResult&) = delete;
+                ReadResult& operator=(const ReadResult&) = delete;
+                ReadResult(ReadResult&& other) = default;
+                ReadResult& operator=(ReadResult&& other) = default;
+
+                static ep_sp<ReadResult> Make(ep_u64 size, ep_u64 frameIndex) {
+                    auto* result = new ReadResult();
+                    result->size = size;
+                    result->frameIndex = frameIndex;
+                    return ep_sp<ReadResult>(result);
+                }
+
+                ep_sp<BufferInfo> pbo;
+
+                struct UsingGuard {
+                    ep_sp<BufferInfo::UsingGuard> pboGuard;
+                    ep_sp<BufferInfo::UsingGuard::MappingGuard> mapGuard;
+
+                    UsingGuard(const ep_sp<BufferInfo>& pbo)
+                        : pboGuard(pbo->useSp())
+                        , mapGuard(pboGuard->mapSp(GL_READ_ONLY))
+                    {}
+                    
+                    UsingGuard(const UsingGuard&) = delete;
+                    UsingGuard& operator=(const UsingGuard&) = delete;
+                    UsingGuard(UsingGuard&& other) = default;
+                    UsingGuard& operator=(UsingGuard&& other) = default;
+
+                    ep_u8* data() const {
+                        return (ep_u8*)mapGuard->data;
+                    }
+                };
+
+                UsingGuard use() {
+                    return UsingGuard(pbo);
+                }
+            };
+
+            void requestRead() {
+                /* !docs
+                Requests read this frame.
+                It will automatically call `@flush`.
+                */
+
+                flush();
+
+                for (auto& slot : bufferSlots) {
+                    if (!slot.sync) {
+                        readToSlot(slot);
+                        return;
+                    }
+                }
+
+                addBufferSlot();
+                readToSlot(bufferSlots.back());
+            }
+
+            using CallbackFunc = std::function<void(ReadResult&)>;
+            CallbackFunc callback;
+
+            void flush() {
+                /* !docs
+                Flushes read results.
+                */
+
+                for (auto& slot : bufferSlots) {
+                    if (!slot.sync || !slot.sync->isSignaled()) continue;
+                    slot.sync = nullptr;
+
+                    auto result = ReadResult::Make(getBufferSize(), slot.frameIndex);
+                    result->pbo = std::move(slot.buffer);
+                    readResults.push_back(result);
+                }
+
+                emit();
+            }
+
+            void finish() {
+                /* !docs
+                Waits for all read results to be flushed.
+                */
+
+                glCtx->finish();
+
+                for (auto& slot : bufferSlots) {
+                    if (!slot.sync) continue;
+                    slot.sync->wait(GL_SYNC_FLUSH_COMMANDS_BIT);
+                    flush();
+                }
+            }
+
+            private:
+            struct BufferSlot {
+                ep_sp<BufferInfo> buffer;
+                ep_sp<TextureInfo> texture;
+                ep_sp<SyncInfo> sync;
+                ep_u64 frameIndex;
+            };
+
+            std::vector<BufferSlot> bufferSlots;
+            std::vector<ep_sp<BufferInfo>> pendingBuffers;
+            std::vector<ep_sp<ReadResult>> readResults;
+            ep_u64 currentFrameIndex;
+            ep_u64 lastEmitFrameIndex;
+
+            void addBufferSlot() {
+                if (frameWidth % 2 != 0 || frameHeight % 2 != 0) throw std::runtime_error("Frame size must be even");
+
+                auto& slot = bufferSlots.emplace_back();
+                slot.buffer = allocPbo();
+            }
+
+            void readToSlot(BufferSlot& slot) {
+                if (!slot.buffer) slot.buffer = allocPbo();
+
+                if (glCtx->getCurrentIsMultiSampled()) {
+                    if (!slot.texture) {
+                        slot.texture = glCtx->createTexture();
+                        slot.texture->use().image2D(frameWidth, frameHeight, nullptr);
+                    }
+
+                    glCtx->copyCurrentToTexture(slot.texture.get());
+                    auto fboGuard = slot.texture->frameBuffer->use(slot.texture.get(), GL_FRAMEBUFFER);
+                    readToSlotDirect(slot);
+                } else {
+                    readToSlotDirect(slot);
+                }
+            }
+
+            void readToSlotDirect(BufferSlot& slot) {
+                glCtx->convertToYUV(frameWidth, frameHeight, true);
+                auto pboGuard = slot.buffer->use();
+                glCtx->gl.glReadPixels(0, 0, frameWidth, getBufferHeight(), GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                slot.sync = glCtx->createSync();
+                slot.frameIndex = currentFrameIndex++;
+            }
+
+            void emit() {
+                while (readResults.size()) {
+                    for (ep_u64 i = 0; i < readResults.size(); i++) {
+                        auto& result = readResults[i];
+                        if (result->frameIndex == 0 || result->frameIndex == lastEmitFrameIndex + 1) {
+                            lastEmitFrameIndex = result->frameIndex;
+                            callback(*result);
+                            pendingBuffers.push_back(std::move(result->pbo));
+                            readResults.erase(readResults.begin() + i);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            ep_sp<BufferInfo> allocPbo() {
+                if (pendingBuffers.empty()) {
+                    auto pbo = glCtx->createBuffer(GL_PIXEL_PACK_BUFFER);
+                    pbo->use().data(getBufferSize(), nullptr, GL_STREAM_READ);
+                    return pbo;
+                }
+
+                auto ret = std::move(pendingBuffers.back());
+                pendingBuffers.pop_back();
+                return ret;
+            }
+
+            ep_u64 getBufferHeight() noexcept {
+                return (frameHeight * 3 + 7) / 8;
+            }
+
+            ep_u64 getBufferSize() noexcept {
+                return frameWidth * getBufferHeight() * 4;
+            }
+        };
+
+        AsyncFrameReader createAsyncFrameReader(ep_u64 frameWidth, ep_u64 frameHeight) {
+            /* !docs
+            Creates an reader for reading frames from the current context.
+            */
+
+            AsyncFrameReader reader {};
+            reader.glCtx = this;
+            reader.frameWidth = frameWidth;
+            reader.frameHeight = frameHeight;
+            reader.initBufferSlots(4);
+            return reader;
+        }
+
+        struct FBOGuard {
+            GL33Context* glCtx;
+            GLint readFbo, drawFbo;
+
+            FBOGuard(GL33Context* glCtx) : glCtx(glCtx) {
+                glCtx->gl.glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFbo);
+                glCtx->gl.glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
+            }
+
+            FBOGuard(const FBOGuard&) = delete;
+            FBOGuard& operator=(const FBOGuard&) = delete;
+            FBOGuard(FBOGuard&& other) = delete;
+            FBOGuard& operator=(FBOGuard&& other) = delete;
+
+            ~FBOGuard() {
+                glCtx->gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
+                glCtx->gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFbo);
+            }
+        };
+
+        FBOGuard getFBOGuard() noexcept {
+            /* !docs
+            Creates a guard that will restore the draw&read framebuffer bindings when it goes out of scope.
+            */
+
+            return FBOGuard(this);
+        }
+
+        void convertToYUV(ep_u64 width, ep_u64 height, bool flipY = false) noexcept {
+            /* !docs
+            Converts the current framebuffer to YUV420 format.
+            */
+
+            auto mesh = requestMesh(6);
+            mesh.program = preloadedPrograms.yuvConverter.get();
+            mesh.color = GLvec4::White();
+
+            auto progGuard = mesh.program->use();
+            mesh.program->getUniformLocation("uResolution").seti(width, height);
+            mesh.program->getUniformLocation("uFlipY").seti(flipY);
+            renderToDrawFbo(width, height, mesh);
+        }
+
+        private:
+        ep_sp<ProgramInfo> defaultProgram;
+        ep_sp<TextureInfo> defaultWhiteTexture;
+        ep_sp<VertexPool> vertexPool;
+        bool resourcesInitialized = false;
+        GLvec4 currentViewport;
+        ep_u64 frameSig;
+
+        struct TempTextureSlot {
+            ep_sp<TextureInfo> tex;
+            bool isUsing;
+        };
+
+        std::vector<TempTextureSlot> tempTextureSlots;
+
+        void initDefaultResources() {
+            if (resourcesInitialized) return;
+            resourcesInitialized = true;
+            
+            defaultProgram = createConfiguredProgram(defaultFragmentShaderSource);
+            preloadedPrograms.gaussianBlur = ProgramPresets::gaussianBlur(this);
+            preloadedPrograms.yuvConverter = ProgramPresets::yuvConverter(this);
+
+            unsigned char whiteTextureData[16] = {
+                255, 255, 255, 255,
+                255, 255, 255, 255,
+                255, 255, 255, 255,
+                255, 255, 255, 255
+            };
+
+            defaultWhiteTexture = createTexture();
+            defaultWhiteTexture->use().image2D(
+                2, 2,
+                (void*)(&whiteTextureData[0])
+            );
+
+            enable(GL_BLEND);
+            blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            gl.glReadBuffer(GL_COLOR_ATTACHMENT0);
+            gl.glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+            vertexPool = VertexPool::Make();
+        }
+
+        struct TempTextureGuard {
+            GL33Context* glCtx;
+            ep_u64 index;
+
+            TempTextureGuard(GL33Context* glCtx, ep_u64 index, ep_u64 width, ep_u64 height) : glCtx(glCtx), index(index) {
+                glCtx->tempTextureSlots[index].isUsing = true;
+
+                auto tex = get();
+                if (!tex->sizeIsSame(width, height)) {
+                    tex->use().image2D(width, height, nullptr);
+                }
+            }
+
+            ep_sp<TextureInfo> get() {
+                return glCtx->tempTextureSlots[index].tex;
+            }
+
+            TempTextureGuard(const TempTextureGuard&) = delete;
+            TempTextureGuard& operator=(const TempTextureGuard&) = delete;
+            TempTextureGuard(TempTextureGuard&& other) = delete;
+            TempTextureGuard& operator=(TempTextureGuard&& other) = delete;
+
+            ~TempTextureGuard() {
+                glCtx->tempTextureSlots[index].isUsing = false;
+            }
+        };
+
+        TempTextureGuard allocTempTexture(ep_u64 width, ep_u64 height) noexcept {
+            for (auto& slot : tempTextureSlots) {
+                if (!slot.isUsing) return TempTextureGuard(this, &slot - &tempTextureSlots[0], width, height);
+            }
+
+            auto& slot = tempTextureSlots.emplace_back();
+            slot.tex = createTexture();
+            return TempTextureGuard(this, &slot - &tempTextureSlots[0], width, height);
+        }
+    };
+
+    struct GL33Canvas {
+        /* !docs
+        A canvas to draw on.
+        */
+
+        Transform2D transform;
+        GL33Context* glCtx;
+
+        static GL33Canvas Make(GL33Context* glCtx) {
+            GL33Canvas canvas {};
+            canvas.glCtx  = glCtx;
+            return canvas;
+        }
+
+        GLvec2 toNDC(const GLvec2& pos) noexcept {
+            auto vp = glCtx->getViewport();
+            return {
+                (pos.x - vp.x) / vp.z * 2.0 - 1.0,
+                -((pos.y - vp.y) / vp.w * 2.0 - 1.0)
+            };
+        }
+
+        GLvec2 transformPoint(const GLvec2& pos) noexcept {
+            auto p = transform.transformPoint(pos.x, pos.y);
+            return { p.x, p.y };
+        }
+
+        void normVertices(VertexPool::AllocResult& vertices) noexcept {
+            for (auto& v : vertices) {
+                v.position = toNDC(transformPoint(v.position));
+            }
+        }
+
+        void resetTransform() noexcept { transform = Transform2D(); }
+        void translate(ep_f64 x, ep_f64 y) noexcept { transform.translate(x, y); }
+        void translate(const GLvec2& pos) noexcept { transform.translate(pos.x, pos.y); }
+        void scale(ep_f64 x, ep_f64 y) noexcept { transform.scale(x, y); }
+        void scale(const GLvec2& scale) noexcept { transform.scale(scale.x, scale.y); }
+        void rotate(ep_f64 angle) noexcept { transform.rotate(angle); }
+        void rotateDegrees(ep_f64 angle) noexcept { rotate(angle / 180.0 * std::numbers::pi); }
+
+        void save() noexcept { transformHistory.push_back(transform); }
+        void restore() noexcept { transform = transformHistory.back(); transformHistory.pop_back(); }
+
+        void drawMesh(Mesh& mesh) noexcept {
+            normVertices(mesh.vertices);
+            glCtx->drawMesh(mesh);
+        }
+
+        struct DrawRectConfig {
+            GLvec2 position, size;
+            GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
+            GLvec2 uvPosition = { 0.0, 0.0 };
+            GLvec2 uvSize = { 1.0, 1.0 };
+            TextureInfo* texture;
+        };
+
+        void drawRect(const DrawRectConfig& config) noexcept {
+            auto mesh = glCtx->requestMesh(6);
+            mesh.color = config.color;
+            mesh.texture = config.texture;
+            mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
+            drawMesh(mesh);
+        }
+
+        private:
+        std::vector<Transform2D> transformHistory;
+    };
+
+    struct VideoRecorder {
+        /* !docs
+        A video recorder, which records YUV420 frames to callback.
+        */
+
+        VideoRecorder() = default;
+        VideoRecorder(const VideoRecorder&) = delete;
+        VideoRecorder& operator=(const VideoRecorder&) = delete;
+        VideoRecorder(VideoRecorder&&) = delete;
+        VideoRecorder& operator=(VideoRecorder&&) = delete;
+
+        using CallbackFunc = std::function<void(ep_u64)>;
+        
+        struct Config {
+            ep_u64 nominalSize = 1920 * 1080 * 16;
+            bool callbackIsThreadSafe = false;
+            ep_u64 msaaSamples = 4;
+        };
+
+        static ep_sp<VideoRecorder> Make(
+            const ep_sp<GL33Context>& glCtx,
+            ep_u64 width, ep_u64 height,
+            const CallbackFunc& callback,
+            const Config& config
+        ) {
+            auto* recorder = new VideoRecorder();
+
+            recorder->glCtx = glCtx;
+            recorder->asyncFrameReader = glCtx->createAsyncFrameReader(width, height);
+            recorder->asyncFrameReader.callback = [=](GL33Context::AsyncFrameReader::ReadResult& result) {
+                recorder->ensureCallbackIsDone();
+                auto slotIndex = recorder->allocYUVFrameSlot();
+                auto& slot = recorder->yuvFrameSlots[slotIndex];
+                slot.frame->fromPtr(result.use().data());
+
+                if (!config.callbackIsThreadSafe) {
+                    recorder->callback(slotIndex);
+                } else {
+                    recorder->callbackThread = std::thread([=]() {
+                        recorder->callback(slotIndex);
+                    });
+                }
+            };
+
+            recorder->callback = callback;
+
+            auto surfacesCount = std::clamp<ep_u64>(
+                config.nominalSize / (width * height),
+                1, 512
+            );
+
+            for (ep_u64 i = 0; i < surfacesCount; i++) {
+                if (config.msaaSamples > 1) {
+                    auto surface = glCtx->createTexture(GL_TEXTURE_2D_MULTISAMPLE);
+                    surface->use().image2DMultisample(width, height, config.msaaSamples);
+                    recorder->surfaces.push_back(surface);
+                } else {
+                    auto surface = glCtx->createTexture(GL_TEXTURE_2D);
+                    surface->use().image2D(width, height, nullptr);
+                    recorder->surfaces.push_back(surface);
+                }
+            }
+
+            recorder->maxConcurrentYuvSlots = std::clamp<ep_u64>(
+                config.nominalSize / (width * height) * 4,
+                1, 4096
+            );
+
+            return ep_sp<VideoRecorder>(recorder);
+        }
+
+        struct FrameUsingGuard {
+            VideoRecorder* ref;
+
+            FrameUsingGuard(VideoRecorder& recorder) : ref(&recorder) {
+                auto& surface = ref->surfaces[ref->currentSurfaceIndex];
+                ref->currentSurfaceIndex = (ref->currentSurfaceIndex + 1) % ref->surfaces.size();
+                fboGuard = surface->frameBuffer->useSp(surface.get(), GL_FRAMEBUFFER);
+            }
+
+            FrameUsingGuard(const FrameUsingGuard&) = delete;
+            FrameUsingGuard& operator=(const FrameUsingGuard&) = delete;
+            FrameUsingGuard(FrameUsingGuard&&) = delete;
+            FrameUsingGuard& operator=(FrameUsingGuard&&) = delete;
+
+            ~FrameUsingGuard() {
+                ref->asyncFrameReader.requestRead();
+            }
+
+            private:
+            ep_sp<FramebufferInfo::UsingGuard> fboGuard;
+        };
+
+        FrameUsingGuard useFrame() noexcept {
+            return FrameUsingGuard(*this);
+        }
+
+        YUV420Frame* referYUVFrame(ep_u64 index) noexcept {
+            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
+            return yuvFrameSlots[index].frame.get();
+        }
+
+        void returnYUVFrame(ep_u64 index) noexcept {
+            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
+            yuvFrameSlots[index].isUsing = false;
+        }
+
+        void finish() {
+            asyncFrameReader.finish();
+            ensureCallbackIsDone();
+        }
+
+        ~VideoRecorder() {
+            finish();
+        }
+
+        private:
+        ep_sp<GL33Context> glCtx;
+        GL33Context::AsyncFrameReader asyncFrameReader;
+        CallbackFunc callback;
+        ep_u64 maxConcurrentYuvSlots;
+
+        std::vector<ep_sp<TextureInfo>> surfaces;
+        ep_u64 currentSurfaceIndex = 0;
+
+        struct YUVFrameSlot {
+            ep_sp<YUV420Frame> frame;
+            bool isUsing;
+        };
+
+        std::vector<YUVFrameSlot> yuvFrameSlots;
+        std::mutex yuvFrameSlotsMutex;
+        std::thread callbackThread;
+
+        void ensureCallbackIsDone() noexcept {
+            if (callbackThread.joinable()) callbackThread.join();
+        }
+
+        ep_u64 allocYUVFrameSlot() {
+            while (getYUVFrameSlotsInUse() > maxConcurrentYuvSlots) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+
+            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
+
+            for (ep_u64 i = 0; i < yuvFrameSlots.size(); i++) {
+                auto& slot = yuvFrameSlots[i];
+                if (!slot.isUsing) {
+                    slot.isUsing = true;
+                    return i;
+                }
+            }
+
+            auto& slot = yuvFrameSlots.emplace_back();
+            slot.frame = YUV420Frame::Make(asyncFrameReader.frameWidth, asyncFrameReader.frameHeight);
+            slot.isUsing = true;
+            return yuvFrameSlots.size() - 1;
+        }
+
+        ep_u64 getYUVFrameSlotsInUse() noexcept {
+            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
+            return std::count_if(yuvFrameSlots.begin(), yuvFrameSlots.end(), [](const auto& slot) {
+                return slot.isUsing;
+            });
+        }
+    };
+};
+
+struct DecodedAudio {
+    /* !docs
+    A class to store decoded audio data.
+    The data is pcm 16-bit signed integer and interleaved.
+    */
+
+    std::vector<ep_i16> data;
+    ep_u64 channels;
+    ep_u64 sampleRate;
+
+    static ep_sp<DecodedAudio> Make() {
+        auto* audio = new DecodedAudio();
+        return ep_sp<DecodedAudio>(audio);
+    }
+
+    ep_u64 getSampleCount() const noexcept {
+        return data.size() / channels;
+    }
+
+    ep_u64 getSampleCount(ep_u64 sampleRate) const noexcept {
+        return (ep_f64)getSampleCount() * sampleRate / this->sampleRate;
+    }
+
+    ep_i16 sampleAt(ep_f64 index, ep_u64 channel_index, ep_u64 channels) const noexcept {
+        index = std::clamp<ep_f64>(index, 0, getSampleCount() - 1);
+
+        if (channels == this->channels) {
+            ep_f64 v1 = data[ep_i64(index) * channels + channel_index];
+            ep_f64 v2 = data[ep_i64(std::ceil(index)) * channels + channel_index];
+            return typed_clamp<ep_i16, ep_f64>(v1 + (v2 - v1) * (index - ep_i64(index)));
+        } else {
+            ep_f64 sum = 0;
+            for (ep_u64 i = 0; i < this->channels; i++) {
+                sum += data[ep_i64(index) * this->channels + i];
+            }
+
+            return typed_clamp<ep_i16, ep_f64>(sum / this->channels);
+        }
+    }
+
+    ep_i16 sampleAt(ep_i64 index, ep_u64 channel_index, ep_u64 channels, ep_u64 sampleRate) const noexcept {
+        return sampleAt((ep_f64)index / sampleRate * this->sampleRate, channel_index, channels);
+    }
+
+    ep_f64 getLengthInSeconds() const noexcept {
+        return (ep_f64)getSampleCount() / sampleRate;
+    }
+
+    ep_sp<DecodedAudio> copy() const {
+        auto audio = DecodedAudio::Make();
+        audio->data = data;
+        audio->channels = channels;
+        audio->sampleRate = sampleRate;
+        return audio;
+    }
+
+    void overlapIndex(const ep_sp<DecodedAudio>& other, ep_i64 start_index, ep_f64 volume = 1.0) noexcept {
+        ep_i64 end_index = start_index + other->getSampleCount(sampleRate);
+
+        if (start_index > (ep_i64)getSampleCount()) return;
+        if (end_index < 0) return;
+
+        start_index = std::max<ep_i64>(0, start_index);
+        end_index = std::min<ep_i64>(getSampleCount(), end_index);
+
+        for (ep_i64 i = start_index; i < end_index; i++) {
+            for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
+                ep_i64 k = i * channels + j;
+                data[k] = typed_clamp<ep_i16, ep_f64>((ep_f64)data[k] + other->sampleAt(i - start_index, j, channels, sampleRate) * volume);
+            }
+        }
+    }
+
+    void overlapSecond(const ep_sp<DecodedAudio>& other, ep_f64 start_time, ep_f64 volume = 1.0) noexcept {
+        overlapIndex(other, (ep_i64)(start_time * sampleRate), volume);
+    }
+
+    void applyVolume(ep_f64 volume) noexcept {
+        if (volume == 1.0) return;
+
+        for (ep_u64 i = 0; i < data.size(); i++) {
+            data[i] = typed_clamp<ep_i16, ep_f64>((ep_f64)data[i] * volume);
+        }
+    }
+
+    ep_u64 getSampleBytesSize() const noexcept {
+        return data.size() * sizeof(ep_i16);
+    }
+
+    Data toWav() const {
+        ByteWriter<ByteEndian::Little> writer;
+
+        writer.writeBytes("RIFF");
+        writer.write<ep_i32>(getSampleBytesSize() + 36);
+        writer.writeBytes("WAVEfmt ");
+        writer.write<ep_i32>(16);
+        writer.write<ep_i16>(1);
+        writer.write<ep_i16>(channels);
+        writer.write<ep_i32>(sampleRate);
+        writer.write<ep_i32>(sampleRate * channels * sizeof(ep_i16));
+        writer.write<ep_i16>(channels * sizeof(ep_i16));
+        writer.write<ep_i16>(16);
+        writer.writeBytes("data");
+        writer.write<ep_i32>(getSampleBytesSize());
+        for (ep_u64 i = 0; i < data.size(); i++) {
+            writer.write<ep_i16>(data[i]);
+        }
+        return writer.toData();
+    }
+
+    void resample(ep_u64 channels, ep_u64 sampleRate) {
+        std::vector<ep_i16> data;
+        ep_u64 sampleCount = getSampleCount(sampleRate);
+        data.resize(sampleCount * channels);
+
+        for (ep_u64 i = 0; i < sampleCount; i++) {
+            for (ep_u64 j = 0; j < channels; j++) {
+                data[i * channels + j] = sampleAt(i, j, channels, sampleRate);
+            }
+        }
+
+        this->data = data;
+        this->channels = channels;
+        this->sampleRate = sampleRate;
+    }
+};
+
+struct AudioEngine {
+    /* !docs
+    An audio engine to play audio.
+    */
+
+    AudioEngine() = default;
+    AudioEngine(const AudioEngine&) = delete;
+    AudioEngine& operator=(const AudioEngine&) = delete;
+    AudioEngine(AudioEngine&&) = delete;
+    AudioEngine& operator=(AudioEngine&&) = delete;
+
+    void* audioContext;
+    std::function<void(void*)> audioContextDestructor;
+
+    ep_u64 channels;
+    ep_u64 sampleRate;
+
+    struct Task {
+        ep_sp<DecodedAudio> audio;
+        ep_i64 offset;
+        ep_f64 volume = 1.0;
+        bool stopped;
+
+        static ep_sp<Task> Make() {
+            auto* task = new Task();
+            return ep_sp<Task>(task);
+        }
+    };
+
+    ep_i64 currentOffset;
+    ep_f64 currentOffsetTime;
+    std::vector<ep_sp<Task>> tasks;
+    ep_f64 volume = 1.0;
+
+    static ep_sp<AudioEngine> Make() {
+        auto* eng = new AudioEngine();
+        return ep_sp<AudioEngine>(eng);
+    }
+
+    ep_sp<Task> createTask(const ep_sp<DecodedAudio>& audio) noexcept {
+        auto task = Task::Make();
+        task->audio = audio;
+        task->offset = currentOffset;
+
+        std::lock_guard<std::mutex> guard(mtx);
+        tasks.push_back(task);
+        return task;
+    }
+
+    ep_f64 getTaskTime(const ep_sp<Task>& task) const noexcept {
+        return (ep_f64)(currentOffset - task->offset) / sampleRate + (globalTimer() - currentOffsetTime);
+    }
+
+    bool getTaskEnded(const ep_sp<Task>& task) const noexcept {
+        return (task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset) || task->stopped;
+    }
+
+    void seekTask(const ep_sp<Task>& task, ep_f64 time) const noexcept {
+        task->offset = currentOffset - (ep_i64)(time * sampleRate);
+    }
+
+    void callback(ep_i16* buffer, ep_i64 frameCount) noexcept {
+        /* !docs
+        Fills the buffer with audio data.
+        */
+
+        {
+            std::lock_guard<std::mutex> guard(mtx);
+            tasks.erase(std::remove_if(
+                tasks.begin(),
+                tasks.end(),
+                [&](const auto& task) { return getTaskEnded(task); }
+            ), tasks.end());
+            tasksCopied = tasks;
+        }
+
+        bufferCache.resize(frameCount * channels);
+        std::fill(bufferCache.begin(), bufferCache.end(), 0);
+
+        for (const auto& task : tasksCopied) {
+            ep_i64 startSample = currentOffset - task->offset;
+            ep_i64 endSample = startSample + frameCount;
+
+            if (startSample > (ep_i64)task->audio->getSampleCount(sampleRate)) continue;
+            if (endSample <= 0) continue;
+
+            startSample = std::max<ep_i64>(0, startSample);
+            endSample = std::min<ep_i64>(task->audio->getSampleCount(sampleRate), endSample);
+
+            for (ep_i64 i = startSample; i < endSample; i++) {
+                for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
+                    ep_i16 sample = task->audio->sampleAt(i, j, channels, sampleRate);
+                    bufferCache[(i - startSample) * channels + j] += (ep_i32)sample * task->volume;
+                }
+            }
+        }
+
+        for (ep_i64 i = 0; i < (ep_i64)(frameCount * channels); i++) {
+            buffer[i] = typed_clamp<ep_i16, ep_i32>(bufferCache[i] * volume);
+        }
+
+        currentOffset += frameCount;
+        currentOffsetTime = globalTimer();
+    }
+
+    ~AudioEngine() {
+        if (audioContextDestructor) {
+            audioContextDestructor(audioContext);
+        }
+    }
+
+    private:
+    std::mutex mtx;
+    std::vector<ep_sp<Task>> tasksCopied;
+    std::vector<ep_i32> bufferCache;
+};
+
+static const ep_f64 INF_TIME = 99999.0;
+static const Vec2 INF_TZ = { -INF_TIME, INF_TIME };
+static const ep_f64 INF_EV = 1e9;
+
 enum class EnumPhiEventType : ep_u64 {
     PositionX, PositionY,
     SelfRotation, AxisRotation,
@@ -777,6 +4913,17 @@ enum class EnumPhiEventType : ep_u64 {
     Text,
     PhiShaderUniform,
     MAX = PhiShaderUniform + 1
+};
+
+enum class EnumPhiNoteType {
+    Tap, Drag, Flick, Hold
+};
+
+enum class EnumPhiLineAttachUI {
+    Pause, Bar,
+    ComboNumber, Combo, Score,
+    Name, Level,
+    None
 };
 
 bool phiEventTypeIsMultiply(EnumPhiEventType type) noexcept {
@@ -792,17 +4939,6 @@ bool phiEventTypeIsMultiply(EnumPhiEventType type) noexcept {
         type == EnumPhiEventType::SpeedCoefficient
     );
 }
-
-enum class EnumPhiNoteType {
-    Tap, Drag, Flick, Hold
-};
-
-enum class EnumPhiLineAttachUI {
-    Pause, Bar,
-    ComboNumber, Combo, Score,
-    Name, Level,
-    None
-};
 
 struct PhiNoteTypeHelper {
     /* !docs
@@ -1361,24 +5497,12 @@ struct PhiAnimator {
     }
 };
 
-struct PhiObjectIndexer {
-    /* !docs
-    A class that stores the index of a object for phigros chart.
-    */
-
-    ep_u64 index;
-
-    ep_u64 get() noexcept {
-        return index ? index : (index = reqGlobalCounter());
-    }
-};
-
 struct PhiNote {
     /* !docs
     A note of the phigros chart.
     */
 
-    PhiObjectIndexer indexer;
+    ObjectIndexer indexer;
 
     struct State {
         ep_f64 lastUpdateTime;
@@ -1478,7 +5602,7 @@ struct PhiLine {
     A line of the phigros chart.
     */
 
-    PhiObjectIndexer indexer;
+    ObjectIndexer indexer;
 
     std::vector<PhiBPMEvent> bpms;
     std::vector<PhiNote> notes;
@@ -1602,22 +5726,6 @@ struct PhiLine {
     }
 };
 
-struct PhiHitEffectItem {
-    /* !docs
-    A hit effect item of the phigros chart.
-    */
-
-    static constexpr ep_u64 kParticleCount = 4;
-
-    struct Particle {
-        ep_f64 dt, rotation, size;
-    };
-
-    ep_f64 time;
-    ep_u64 lineIndex, noteIndex;
-    std::vector<Particle> particles;
-};
-
 struct PhiExtraEffectItem {
     /* !docs
     A extra effect item of the phigros chart.
@@ -1687,6 +5795,13 @@ struct PhiShaderUniform {
     }
 
     bool operator!=(const PhiShaderUniform& other) const { return !(*this == other); }
+
+    void setToGlLocation(GL::ProgramInfo::Location loc) const noexcept {
+        if (used == 1) loc.setf(value[0]);
+        else if (used == 2) loc.setf(value[0], value[1]);
+        else if (used == 3) loc.setf(value[0], value[1], value[2]);
+        else if (used == 4) loc.setf(value[0], value[1], value[2], value[3]);
+    }
 };
 
 struct PhiStoryboardAssets {
@@ -1842,6 +5957,20 @@ struct PhiStoryboardAssets {
     ~PhiStoryboardAssets() {
         clearTextures();
     }
+};
+
+struct PhiHitEffectItem {
+    /* !docs
+    A hit effect item of the phigros chart.
+    */
+
+    struct Particle {
+        ep_f64 dt, rotation, size;
+    };
+
+    ep_f64 time;
+    ep_u64 lineIndex, noteIndex;
+    std::vector<Particle> particles;
 };
 
 struct PhiChart {
@@ -2145,7 +6274,7 @@ struct PhiChart {
                     item.lineIndex = &line - lines.data();
                     item.noteIndex = &note - line.notes.data();
 
-                    for (ep_u64 i = 0; i < PhiHitEffectItem::kParticleCount; i++) {
+                    for (ep_u64 i = 0; i < 4; i++) {
                         auto& particle = item.particles.emplace_back();
                         particle.rotation = uniform(0.0, 360.0);
                         particle.size = uniform(185.0, 265.0);
@@ -2179,652 +6308,6 @@ struct PhiChart {
         std::stable_sort(zOrderSortedLines.begin(), zOrderSortedLines.end(), [&](ep_u64 a, ep_u64 b){
             return lines[a].zOrder < lines[b].zOrder;
         });
-    }
-};
-
-std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
-    /* !docs
-    Convert a codepoint to a UTF-8 string.
-    */
-
-    ep_u32 codepoint;
-    
-    if (n >= 0xD800 && n <= 0xDBFF) {
-        if (n2 >= 0xDC00 && n2 <= 0xDFFF) {
-            codepoint = 0x10000 + ((n - 0xD800) << 10) | (n2 - 0xDC00);
-        } else {
-            return "\xEF\xBF\xBD";
-        }
-    } else if (n >= 0xDC00 && n <= 0xDFFF) {
-        return "\xEF\xBF\xBD";
-    } else {
-        codepoint = n;
-    }
-    
-    std::string result;
-    
-    if (codepoint <= 0x7F) {
-        result.push_back((char)(codepoint));
-    } 
-    else if (codepoint <= 0x7FF) {
-        result.push_back((char)(0xC0 | (codepoint >> 6)));
-        result.push_back((char)(0x80 | (codepoint & 0x3F)));
-    } 
-    else if (codepoint <= 0xFFFF) {
-        result.push_back((char)(0xE0 | (codepoint >> 12)));
-        result.push_back((char)(0x80 | ((codepoint >> 6) & 0x3F)));
-        result.push_back((char)(0x80 | (codepoint & 0x3F)));
-    } 
-    else {
-        result.push_back((char)(0xF0 | (codepoint >> 18)));
-        result.push_back((char)(0x80 | ((codepoint >> 12) & 0x3F)));
-        result.push_back((char)(0x80 | ((codepoint >> 6) & 0x3F)));
-        result.push_back((char)(0x80 | (codepoint & 0x3F)));
-    }
-    
-    return result;
-}
-
-struct JsonNode {
-    /* !docs
-    A JSON node.
-    */
-
-    enum class EnumType {
-        String, Number, Bool, Array, Object, Null
-    };
-
-    EnumType type;
-    std::variant<
-        std::monostate,
-        std::string,
-        ep_f64,
-        bool,
-        std::vector<JsonNode>,
-        std::unordered_map<std::string, JsonNode>
-    > value;
-
-    static JsonNode MakeString(const std::string& str) {
-        return JsonNode {
-            .type = EnumType::String,
-            .value = str
-        };
-    }
-
-    static JsonNode MakeStringMove(std::string&& str) {
-        return JsonNode {
-            .type = EnumType::String,
-            .value = std::move(str)
-        };
-    }
-
-    static JsonNode MakeNumber(ep_f64 num) {
-        return JsonNode {
-            .type = EnumType::Number,
-            .value = num
-        };
-    }
-
-    static JsonNode MakeBool(bool b) {
-        return JsonNode {
-            .type = EnumType::Bool,
-            .value = b
-        };
-    }
-
-    static JsonNode MakeArray() {
-        return JsonNode {
-            .type = EnumType::Array,
-            .value = std::vector<JsonNode>()
-        };
-    }
-
-    static JsonNode MakeArray(const std::vector<JsonNode>& arr) {
-        return JsonNode {
-            .type = EnumType::Array,
-            .value = arr
-        };
-    }
-
-    static JsonNode MakeArrayMove(std::vector<JsonNode>&& arr) {
-        return JsonNode {
-            .type = EnumType::Array,
-            .value = std::move(arr)
-        };
-    }
-
-    static JsonNode MakeObject() {
-        return JsonNode {
-            .type = EnumType::Object,
-            .value = std::unordered_map<std::string, JsonNode>()
-        };
-    }
-
-    static JsonNode MakeObject(const std::unordered_map<std::string, JsonNode>& obj) {
-        return JsonNode {
-            .type = EnumType::Object,
-            .value = obj
-        };
-    }
-
-    static JsonNode MakeObjectMove(std::unordered_map<std::string, JsonNode>&& obj) {
-        return JsonNode {
-            .type = EnumType::Object,
-            .value = std::move(obj)
-        };
-    }
-
-    static JsonNode MakeNull() {
-        return JsonNode {
-            .type = EnumType::Null,
-            .value = std::monostate{}
-        };
-    }
-
-    bool isString() const noexcept { return type == EnumType::String; }
-    bool isNumber() const noexcept { return type == EnumType::Number; }
-    bool isBool() const noexcept { return type == EnumType::Bool; }
-    bool isArray() const noexcept { return type == EnumType::Array; }
-    bool isObject() const noexcept { return type == EnumType::Object; }
-    bool isNull() const noexcept { return type == EnumType::Null; }
-
-    std::string& getString() noexcept { return std::get<std::string>(value); }
-    const std::string& getString() const noexcept { return std::get<std::string>(value); }
-    ep_f64 getNumber() const noexcept { return std::get<ep_f64>(value); }
-    bool getBool() const noexcept { return std::get<bool>(value); }
-    std::vector<JsonNode>& getArray() noexcept { return std::get<std::vector<JsonNode>>(value); }
-    const std::vector<JsonNode>& getArray() const noexcept { return std::get<std::vector<JsonNode>>(value); }
-    std::unordered_map<std::string, JsonNode>& getObject() noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
-    const std::unordered_map<std::string, JsonNode>& getObject() const noexcept { return std::get<std::unordered_map<std::string, JsonNode>>(value); }
-    
-    struct StringReader {
-        std::string_view str;
-        ep_u64 pos;
-
-        StringReader(std::string_view str) : str(str), pos(0) {}
-
-        void eatWhitespace() {
-            while (pos < str.size() && (str[pos] == ' ' || str[pos] == '\n' || str[pos] == '\t' || str[pos] == '\r')) {
-                pos++;
-            }
-        }
-
-        bool nextIs(const char c) {
-            return pos < str.size() && str[pos] == c;
-        }
-
-        bool nextIsAny(const std::string& s) {
-            for (ep_u64 i = 0; i < s.size(); i++) {
-                if (nextIs(s[i])) return true;
-            }
-            return false;
-        }
-
-        bool nextIsSub(const std::string& s) {
-            return pos + s.size() <= str.size() && str.substr(pos, s.size()) == s;
-        }
-
-        bool nextIsSubAny(const std::vector<std::string>& ss) {
-            for (const auto& s : ss) {
-                if (nextIsSub(s)) return true;
-            }
-            return false;
-        }
-
-        std::string getNextCharToString() {
-            return pos < str.size() ? (std::string() + str[pos++]) : "";
-        }
-
-        std::string generatePositionString() {
-            return "at " + std::to_string(pos) + " of " + std::to_string(str.size());
-        }
-
-        bool eof() {
-            return pos >= str.size();
-        }
-
-        bool readUnicodeEscape(ep_u16* dst) {
-            if (pos + 4 > str.size()) return false;
-
-            auto c1 = str[pos++];
-            auto c2 = str[pos++];
-            auto c3 = str[pos++];
-            auto c4 = str[pos++];
-
-            if ('0' <= c1 && c1 <= '9') {
-                *dst = (ep_u16)(c1 - '0') << 12;
-            } else if ('A' <= c1 && c1 <= 'F') {
-                *dst = (ep_u16)(c1 - 'A' + 10) << 12;
-            } else if ('a' <= c1 && c1 <= 'f') {
-                *dst = (ep_u16)(c1 - 'a' + 10) << 12;
-            } else return false;
-
-            if ('0' <= c2 && c2 <= '9') {
-                *dst |= (ep_u16)(c2 - '0') << 8;
-            } else if ('A' <= c2 && c2 <= 'F') {
-                *dst |= (ep_u16)(c2 - 'A' + 10) << 8;
-            } else if ('a' <= c2 && c2 <= 'f') {
-                *dst |= (ep_u16)(c2 - 'a' + 10) << 8;
-            } else return false;
-
-            if ('0' <= c3 && c3 <= '9') {
-                *dst |= (ep_u16)(c3 - '0') << 4;
-            } else if ('A' <= c3 && c3 <= 'F') {
-                *dst |= (ep_u16)(c3 - 'A' + 10) << 4;
-            } else if ('a' <= c3 && c3 <= 'f') {
-                *dst |= (ep_u16)(c3 - 'a' + 10) << 4;
-            } else return false;
-
-            if ('0' <= c4 && c4 <= '9') {
-                *dst |= (ep_u16)(c4 - '0');
-            } else if ('A' <= c4 && c4 <= 'F') {
-                *dst |= (ep_u16)(c4 - 'A' + 10);
-            } else if ('a' <= c4 && c4 <= 'f') {
-                *dst |= (ep_u16)(c4 - 'a' + 10);
-            } else return false;
-
-            return true;
-        }
-        
-        std::string getNextToString(ep_u64 len) {
-            return std::string(str.substr(pos, len));
-        }
-
-        char getNextChar() {
-            return pos < str.size() ? str[pos++] : '\0';
-        }
-    };
-
-    static std::pair<bool, std::string> Parse(JsonNode* dst, StringReader& reader) {
-        /* !docs
-        Parse a JSON string into a JsonNode.
-        The result is a pair of a boolean indicating success and a string containing an error message if failed.
-        */
-
-        #define FAILED(err, msg) \
-            { \
-                return { false, std::string(err) + ": " + msg + " " + reader.generatePositionString() }; \
-            }
-        
-        reader.eatWhitespace();
-
-        if (reader.nextIs('"')) {
-            reader.pos++;
-            std::string str;
-            str.reserve(64);
-            bool isInBackslash = false;
-
-            while (!reader.eof()) {
-                if (reader.nextIs('"') && !isInBackslash) {
-                    reader.pos++;
-                    str.shrink_to_fit();
-                    *dst = MakeStringMove(std::move(str));
-                    return { true, "" };
-                } else if (reader.nextIs('\\') && !isInBackslash) {
-                    isInBackslash = true;
-                    reader.pos++;
-                } else if (isInBackslash) {
-                    if (reader.nextIsAny("\"\\/")) {
-                        str += reader.getNextChar();
-                    } else if (reader.nextIs('b')) {
-                        str += '\b';
-                        reader.pos++;
-                    } else if (reader.nextIs('f')) {
-                        str += '\f';
-                        reader.pos++;
-                    } else if (reader.nextIs('n')) {
-                        str += '\n';
-                        reader.pos++;
-                    } else if (reader.nextIs('r')) {
-                        str += '\r';
-                        reader.pos++;
-                    } else if (reader.nextIs('t')) {
-                        str += '\t';
-                        reader.pos++;
-                    } else if (reader.nextIs('u')) {
-                        reader.pos++;
-
-                        ep_u16 u1;
-                        if (!reader.readUnicodeEscape(&u1)) FAILED("invalid unicode escape", reader.getNextCharToString());
-
-                        ep_u16 u2 = 0;
-                        if (u1 >= 0xD800 && u1 <= 0xDBFF) {
-                            if (!reader.nextIsSub("\\u")) FAILED("expected \\u for surrogate pair", reader.getNextCharToString());
-                            reader.pos += 2;
-
-                            if (!reader.readUnicodeEscape(&u2)) FAILED("invalid unicode escape", reader.getNextCharToString());
-                            if (u2 < 0xDC00 || u2 > 0xDFFF) FAILED("invalid surrogate pair", reader.getNextCharToString());
-                        } else if (u1 >= 0xDC00 && u1 <= 0xDFFF) {
-                            FAILED("invalid low surrogate", reader.getNextCharToString());
-                        }
-
-                        str += toUtfChar(u1, u2);
-                    } else {
-                        FAILED("unexpected char after backslash", reader.getNextCharToString());
-                    }
-
-                    isInBackslash = false;
-                } else {
-                    str += reader.getNextChar();
-                }
-            }
-
-            FAILED("unexpected eof", "");
-        } else if (reader.nextIsAny("0123456789-")) {
-            ep_f64 num = 0;
-            bool isNegative = reader.nextIs('-');
-            if (isNegative) reader.pos++;
-
-            bool afterDot = false;
-            ep_u64 decimal = 1;
-            ep_f64 fraction = 0;
-            bool hasFraction = false;
-
-            while (!reader.eof()) {
-                ep_u8 c = reader.getNextChar();
-
-                if ('0' <= c && c <= '9') {
-                    if (!afterDot) {
-                        num *= 10;
-                        num += (ep_f64)(c - '0');
-                    } else {
-                        fraction = fraction * 10 + (ep_f64)(c - '0');
-                        decimal *= 10;
-                        hasFraction = true;
-                    }
-                } else if (c == '.') {
-                    if (afterDot) FAILED("unexpected dot", reader.getNextCharToString());
-                    afterDot = true;
-                } else if (c == 'e' || c == 'E') {
-                    if (hasFraction) num += fraction / (ep_f64)decimal;
-                    
-                    bool isNegativeExp = reader.nextIs('-');
-                    if (isNegativeExp) reader.pos++;
-                    else if (reader.nextIs('+')) reader.pos++;
-
-                    ep_u64 exp = 0;
-                    bool hasExp = false;
-                    while (!reader.eof()) {
-                        ep_u8 c = reader.getNextChar();
-
-                        if ('0' <= c && c <= '9') {
-                            exp *= 10;
-                            exp += (ep_u64)(c - '0');
-                            hasExp = true;
-                        } else {
-                            reader.pos--;
-                            break;
-                        }
-                    }
-                    
-                    if (!hasExp) FAILED("expected exponent digits", reader.getNextCharToString());
-
-                    if (isNegativeExp) num /= std::pow<ep_f64>(10, exp);
-                    else num *= std::pow<ep_f64>(10, exp);
-                    *dst = MakeNumber(num * (isNegative ? -1 : 1));
-                    return { true, "" };
-                } else {
-                    reader.pos--;
-                    if (hasFraction) num += fraction / (ep_f64)decimal;
-                    *dst = MakeNumber(num * (isNegative ? -1 : 1));
-                    return { true, "" };
-                }
-            }
-            
-            if (hasFraction) num += fraction / (ep_f64)decimal;
-            *dst = MakeNumber(num * (isNegative ? -1 : 1));
-            return { true, "" };
-        } else if (reader.nextIsSubAny({ "true", "false" })) {
-            bool b = reader.nextIsSub("true");
-            *dst = MakeBool(b);
-            reader.pos += b ? 4 : 5;
-            return { true, "" };
-        } else if (reader.nextIs('[')) {
-            reader.pos++;
-            std::vector<JsonNode> arr;
-            arr.reserve(8);
-
-            while (!reader.eof()) {
-                reader.eatWhitespace();
-
-                if (reader.nextIs(']')) {
-                    *dst = MakeArrayMove(std::move(arr));
-                    reader.pos++;
-                    return { true, "" };
-                }
-
-                if (arr.size()) {
-                    if (!reader.nextIs(',')) FAILED("expected comma", reader.getNextCharToString());
-                    reader.pos++;
-                    reader.eatWhitespace();
-                }
-
-                JsonNode node;
-                auto [success, err] = Parse(&node, reader);
-                if (!success) return { false, err };
-
-                arr.push_back(std::move(node));
-            }
-
-            FAILED("unexpected eof", "");
-        } else if (reader.nextIs('{')) {
-            reader.pos++;
-            std::unordered_map<std::string, JsonNode> obj;
-            obj.reserve(8);
-
-            while (!reader.eof()) {
-                reader.eatWhitespace();
-
-                if (reader.nextIs('}')) {
-                    *dst = MakeObjectMove(std::move(obj));
-                    reader.pos++;
-                    return { true, "" };
-                }
-
-                if (obj.size()) {
-                    if (!reader.nextIs(',')) FAILED("expected comma", reader.getNextCharToString());
-                    reader.pos++;
-                    reader.eatWhitespace();
-                }
-
-                JsonNode key;
-                {
-                    auto [success, err] = Parse(&key, reader);
-                    if (!success) return { false, err };
-                }
-
-                if (!key.isString()) FAILED("expected string", key.getString());
-
-                reader.eatWhitespace();
-                if (!reader.nextIs(':')) FAILED("expected colon", reader.getNextCharToString());
-                reader.pos++;
-                reader.eatWhitespace();
-
-                JsonNode value;
-                {
-                    auto [success, err] = Parse(&value, reader);
-                    if (!success) return { false, err };
-                }
-
-                obj.emplace(std::move(key.getString()), std::move(value));
-            }
-
-            FAILED("unexpected eof", "");
-        } else if (reader.nextIsSub("null")) {
-            *dst = MakeNull();
-            reader.pos += 4;
-            return { true, "" };
-        }
-
-        FAILED("unexpected char", reader.getNextCharToString());
-        #undef FAILED
-    }
-
-    static std::pair<bool, std::string> Parse(JsonNode* dst, const Data& data) {
-        StringReader reader(std::string_view(
-            (const char*)data.data.data(),
-            data.data.size()
-        ));
-        return Parse(dst, reader);
-    }
-
-    template<typename T>
-    void Print(T& stream) const {
-        /* !docs
-        Prints the json node to the given stream.
-        */
-
-        if (isString()) {
-            stream << '"';
-            for (ep_u8 c : getString()) {
-                if (c == '"') stream << "\\\"";
-                else if (c == '\\') stream << "\\\\";
-                else if (c == '\n') stream << "\\n";
-                else if (c == '\r') stream << "\\r";
-                else if (c == '\t') stream << "\\t";
-                else if (c == '\b') stream << "\\b";
-                else if (c == '\f') stream << "\\f";
-                else stream << c;
-            }
-            stream << '"';
-        } else if (isNumber()) {
-            auto number = getNumber();
-            stream << (std::fmod(number, 1.0) != 0.0 ? formatToStdString("%.10g", number) : std::to_string((ep_i64)number));
-        } else if (isBool()) stream << (getBool() ? "true" : "false");
-        else if (isArray()) {
-            stream << '[';
-            for (ep_u64 i = 0; i < getArray().size(); i++) {
-                if (i) stream << ',';
-                getArray()[i].Print(stream);
-            }
-            stream << ']';
-        } else if (isObject()) {
-            stream << '{';
-            ep_u64 i = 0;
-            for (auto& [key, value] : getObject()) {
-                JsonNode::MakeString(key).Print(stream);
-                stream << ':';
-                value.Print(stream);
-                if (i < getObject().size() - 1) stream << ',';
-                i++;
-            }
-            stream << '}';
-        } else if (isNull()) stream << "null";
-    }
-
-    void Print() const {
-        /* !docs
-        Prints the json node to the standard output.
-        */
-
-        Print(std::cout);
-    }
-
-    std::string toString() const {
-        /* !docs
-        Converts the json node to a string.
-        */
-
-        std::string result;
-        result.reserve(256);
-        toStringImpl(result);
-        return result;
-    }
-
-private:
-    void toStringImpl(std::string& out) const {
-        if (isString()) {
-            out += '"';
-            for (ep_u8 c : getString()) {
-                if (c == '"') out += "\\\"";
-                else if (c == '\\') out += "\\\\";
-                else if (c == '\n') out += "\\n";
-                else if (c == '\r') out += "\\r";
-                else if (c == '\t') out += "\\t";
-                else if (c == '\b') out += "\\b";
-                else if (c == '\f') out += "\\f";
-                else out += c;
-            }
-            out += '"';
-        } else if (isNumber()) out += formatToStdString("%.10g", getNumber());
-        else if (isBool()) out += (getBool() ? "true" : "false");
-        else if (isArray()) {
-            out += '[';
-            for (ep_u64 i = 0; i < getArray().size(); i++) {
-                if (i) out += ',';
-                getArray()[i].toStringImpl(out);
-            }
-            out += ']';
-        } else if (isObject()) {
-            out += '{';
-            ep_u64 i = 0;
-            for (auto& [key, value] : getObject()) {
-                out += '"';
-                out += key;
-                out += "\":";
-                value.toStringImpl(out);
-                if (i < getObject().size() - 1) out += ',';
-                i++;
-            }
-            out += '}';
-        } else if (isNull()) out += "null";
-    }
-
-public:
-    bool operator==(const JsonNode& other) const {
-        if (type != other.type) return false;
-        if (type == EnumType::Null) return true;
-        if (type == EnumType::String) return getString() == other.getString();
-        if (type == EnumType::Number) return getNumber() == other.getNumber();
-        if (type == EnumType::Bool) return getBool() == other.getBool();
-        if (type == EnumType::Array) {
-            if (getArray().size() != other.getArray().size()) return false;
-            for (ep_u32 i = 0; i < getArray().size(); i++) {
-                if (getArray()[i] != other.getArray()[i]) return false;
-            }
-            return true;
-        }
-        if (type == EnumType::Object) {
-            if (getObject().size() != other.getObject().size()) return false;
-            for (auto& [key, value] : getObject()) {
-                if (value != other[key]) return false;
-            }
-            return true;
-        }
-        return false;
-    }
-
-    bool operator!=(const JsonNode& other) const {
-        return !(*this == other);
-    }
-
-    JsonNode operator[](ep_u64 index) const noexcept {
-        return getArray()[index];
-    }
-
-    JsonNode operator[](const std::string& key) const noexcept {
-        auto it = getObject().find(key);
-        if (it != getObject().end()) return it->second;
-        return MakeNull();
-    }
-
-    JsonNode& operator[](ep_u64 index) noexcept {
-        auto& arr = getArray();
-        return arr[index];
-    }
-
-    JsonNode& operator[](const std::string& key) noexcept {
-        auto& obj = getObject();
-        return obj[key];
-    }
-
-    bool hasKey(const std::string& key) const {
-        /* !docs
-        Checks if the json node is an object and contains the specified key.
-        */
-
-        if (type != EnumType::Object) return false;
-        return getObject().contains(key);
     }
 };
 
@@ -4287,3619 +7770,62 @@ struct ParsedRPEChartInfo {
     std::string length;
     std::string editTime;
     std::string group;
-};
 
-std::vector<ParsedRPEChartInfo> parseRPEChartInfo(const Data& data) {
-    /* !docs
-    Parse RPE chart infos from a data object.
-    */
-
-    std::vector<ParsedRPEChartInfo> infos;
-
-    auto str = data.toString();
-    str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
-
-    std::vector<std::string> lines;
-    splitString(str, lines);
-
-    ParsedRPEChartInfo info {};
-    ep_u64 vaildLineCount = 0;
-
-    for (auto& line : lines) {
-        stripString(line);
-
-        if (line.empty()) continue;
-        if (line[0] == '#') {
-            if (vaildLineCount) {
-                infos.push_back(info);
-                info = {};
-                vaildLineCount = 0;
-            }
-            continue;
-        }
-
-        auto split = line.find(": ");
-        if (split == std::string::npos) continue;
-
-        auto key = line.substr(0, split);
-        auto value = line.substr(split + 2);
-
-        if (key == "Name") info.name = value;
-        else if (key == "Path") info.path = value;
-        else if (key == "Song") info.song = value;
-        else if (key == "Picture") info.picture = value;
-        else if (key == "Chart") info.chart = value;
-        else if (key == "Level") info.level = value;
-        else if (key == "Composer") info.composer = value;
-        else if (key == "LastEditTime") info.lastEditTime = value;
-        else if (key == "Length") info.length = value;
-        else if (key == "EditTime") info.editTime = value;
-        else if (key == "Group") info.group = value;
-        vaildLineCount++;
-    }
-
-    if (vaildLineCount) {
-        infos.push_back(info);
-    }
-
-    return infos;
-}
-
-template <typename T>
-struct ep_sp {
-    /* !docs
-    The small pointer class.
-    */
-
-    struct RefCnt {
-        T* ptr;
-        std::atomic<int> count{1};
-        
-        explicit RefCnt(T* p) : ptr(p) {}
-        void ref() { ++count; }
-        void unref() {
-            if (--count == 0) {
-                delete ptr;
-                delete this;
-            }
-        }
-    };
-    
-    RefCnt* fCtrl;
-
-    explicit ep_sp(RefCnt* ctrl) : fCtrl(ctrl) {}
-
-    using element_type = T;
-
-    constexpr ep_sp() noexcept : fCtrl(nullptr) {}
-    constexpr ep_sp(std::nullptr_t) noexcept : fCtrl(nullptr) {}
-    
-    explicit ep_sp(T* ptr) : fCtrl(ptr ? new RefCnt(ptr) : nullptr) {}
-
-    ep_sp(const ep_sp& o) noexcept : fCtrl(o.fCtrl) {
-        if (fCtrl) fCtrl->ref();
-    }
-    
-    ep_sp(ep_sp&& o) noexcept : fCtrl(o.fCtrl) {
-        o.fCtrl = nullptr;
-    }
-
-    template <typename U>
-    ep_sp(const ep_sp<U>& o) noexcept : fCtrl(o.fCtrl) {
-        if (fCtrl) fCtrl->ref();
-    }
-    
-    template <typename U>
-    ep_sp(ep_sp<U>&& o) noexcept : fCtrl(o.release_ctrl()) {}
-
-    ~ep_sp() { if (fCtrl) fCtrl->unref(); }
-
-    ep_sp& operator=(const ep_sp& o) noexcept {
-        if (o.fCtrl != fCtrl) {
-            if (o.fCtrl) o.fCtrl->ref();
-            auto* old = fCtrl;
-            fCtrl = o.fCtrl;
-            if (old) old->unref();
-        }
-        return *this;
-    }
-    
-    ep_sp& operator=(ep_sp&& o) noexcept {
-        if (o.fCtrl != fCtrl) {
-            auto* old = fCtrl;
-            fCtrl = o.fCtrl;
-            o.fCtrl = nullptr;
-            if (old) old->unref();
-        }
-        return *this;
-    }
-    
-    ep_sp& operator=(std::nullptr_t) noexcept {
-        reset();
-        return *this;
-    }
-
-    T& operator*() const { return *fCtrl->ptr; }
-    T* operator->() const { return fCtrl->ptr; }
-    T* get() const noexcept { return fCtrl ? fCtrl->ptr : nullptr; }
-    explicit operator bool() const noexcept { return fCtrl != nullptr; }
-
-    T* release() noexcept {
-        if (!fCtrl) return nullptr;
-        auto* p = fCtrl->ptr;
-        fCtrl->ptr = nullptr;
-        fCtrl->unref();
-        fCtrl = nullptr;
-        return p;
-    }
-    
-    void reset(T* ptr = nullptr) noexcept {
-        if (fCtrl && fCtrl->ptr == ptr) return;
-        auto* old = fCtrl;
-        fCtrl = ptr ? new RefCnt(ptr) : nullptr;
-        if (old) old->unref();
-    }
-    
-    void swap(ep_sp& o) noexcept {
-        std::swap(fCtrl, o.fCtrl);
-    }
-
-    auto* release_ctrl() noexcept {
-        auto* c = fCtrl;
-        fCtrl = nullptr;
-        return c;
-    }
-};
-
-struct DecodedRGBATexture {
-    /* !docs
-    The decoded RGBA texture.
-    The data is a flat array of RGBA pixels.
-    */
-
-    std::vector<ep_u8> data;
-    ep_u64 width, height;
-
-    static DecodedRGBATexture Make(ep_u64 width, ep_u64 height, ep_u8 init = 0) {
+    static std::vector<ParsedRPEChartInfo> parse(const Data& data) {
         /* !docs
-        Create a new texture with the given width and height, and fill it with the given value.
+        Parse RPE chart infos from a data object.
         */
 
-        return {
-            .data = std::vector<ep_u8>(width * height * 4, init),
-            .width = width, .height = height
-        };
-    }
+        std::vector<ParsedRPEChartInfo> infos;
 
-    bool valid() const {
-        return width > 0 && height > 0 && data.size() == (width * height * 4);
-    }
+        auto str = data.toString();
+        str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
 
-    void fillWithGray(const std::vector<ep_u8>& gray) {
-        if (gray.size() != width * height) throw std::runtime_error("gray data size mismatch");
-        ensureDataSize();
+        std::vector<std::string> lines;
+        splitString(str, lines);
 
-        std::fill(data.begin(), data.end(), 255);
-        for (ep_u64 i = 0; i < width * height; ++i) {
-            data[i * 4 + 3] = gray[i];
-        }
-    }
+        ParsedRPEChartInfo info {};
+        ep_u64 vaildLineCount = 0;
 
-    void fillRGBWhite() {
-        /* !docs
-        Fill the texture with white color.
-        */
+        for (auto& line : lines) {
+            stripString(line);
 
-        ensureDataSize();
-        std::fill(data.begin(), data.end(), 255);
-        for (ep_u64 i = 0; i < width * height; ++i) data[i * 4 + 3] = 0;
-    }
-
-    void paste(const DecodedRGBATexture& other, ep_i64 x, ep_i64 y) {
-        /* !docs
-        Paste the other texture onto this texture at the given position.
-        */
-
-        if (x >= (ep_i64)width || y >= (ep_i64)height) return;
-        if (x + other.width < 0 || y + other.height < 0) return;
-
-        for (ep_i64 i = 0; i < (ep_i64)other.width; i++) {
-            ep_i64 px = i + x;
-            if (px < 0) continue;
-            if (px >= (ep_i64)width) break;
-
-            for (ep_i64 j = 0; j < (ep_i64)other.height; j++) {
-                ep_i64 py = j + y;
-                if (py < 0) continue;
-                if (py >= (ep_i64)height) break;
-
-                auto src_idx = (j * other.width + i) * 4;
-                auto dst_idx = (py * width + px) * 4;
-
-                ep_f64 src_a = other.data[src_idx + 3] / 255.0;
-                ep_f64 dst_a = data[dst_idx + 3] / 255.0;
-
-                auto a = src_a + dst_a * (1 - src_a);
-                data[dst_idx + 3] = (ep_u8)(a * 255);
-                if (data[dst_idx + 3] == 0) continue;
-
-                for (ep_i64 k = 0; k < 3; k++) {
-                    ep_f64 src = other.data[src_idx + k] / 255.0;
-                    ep_f64 dst = data[dst_idx + k] / 255.0;
-                    auto color = (src * src_a + dst * dst_a * (1 - src_a)) / a;
-                    data[dst_idx + k] = (ep_u8)(color * 255);
+            if (line.empty()) continue;
+            if (line[0] == '#') {
+                if (vaildLineCount) {
+                    infos.push_back(info);
+                    info = {};
+                    vaildLineCount = 0;
                 }
+                continue;
             }
+
+            auto split = line.find(": ");
+            if (split == std::string::npos) continue;
+
+            auto key = line.substr(0, split);
+            auto value = line.substr(split + 2);
+
+            if (key == "Name") info.name = value;
+            else if (key == "Path") info.path = value;
+            else if (key == "Song") info.song = value;
+            else if (key == "Picture") info.picture = value;
+            else if (key == "Chart") info.chart = value;
+            else if (key == "Level") info.level = value;
+            else if (key == "Composer") info.composer = value;
+            else if (key == "LastEditTime") info.lastEditTime = value;
+            else if (key == "Length") info.length = value;
+            else if (key == "EditTime") info.editTime = value;
+            else if (key == "Group") info.group = value;
+            vaildLineCount++;
         }
+
+        if (vaildLineCount) {
+            infos.push_back(info);
+        }
+
+        return infos;
     }
-
-    Vec2 size() {
-        return { width, height };
-    }
-
-    private:
-    void ensureDataSize() {
-        data.resize(width * height * 4);
-    }
-};
-
-template <typename T, size_t Alignment>
-struct AlignedAllocator {
-    /* !docs
-    The aligned allocator.
-    */
-
-    using value_type = T;
-
-    AlignedAllocator() = default;
-    template <typename U>
-    AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
-
-    template <typename U>
-    struct rebind {
-        using other = AlignedAllocator<U, Alignment>;
-    };
-
-    T* allocate(std::size_t n) {
-        if (n > std::numeric_limits<std::size_t>::max() / sizeof(T))
-            throw std::bad_array_new_length();
-
-        std::size_t bytes = ((n * sizeof(T) + Alignment - 1) / Alignment) * Alignment;
-        void* ptr = ep_aligned_alloc(Alignment, bytes);
-        if (!ptr)
-            throw std::bad_alloc();
-        return static_cast<T*>(ptr);
-    }
-
-    void deallocate(T* ptr, std::size_t) noexcept { ep_aligned_free(ptr); }
-};
-
-template <typename T, size_t A1, typename U, size_t A2>
-bool operator==(const AlignedAllocator<T, A1>&, const AlignedAllocator<U, A2>&) noexcept { return A1 == A2; }
-template <typename T, size_t A1, typename U, size_t A2>
-bool operator!=(const AlignedAllocator<T, A1>&, const AlignedAllocator<U, A2>&) noexcept { return A1 != A2; }
-
-template <typename T, size_t Alignment>
-using aligned_vector = std::vector<T, AlignedAllocator<T, Alignment>>;
-
-ep_f64 globalTimer() {
-    /* !docs
-    Get the current time in seconds since the program started.
-    */
-
-    return std::chrono::duration<ep_f64>(
-        std::chrono::steady_clock::now()
-        .time_since_epoch()
-    ).count();
-}
-
-namespace GL {
-    /* !docs
-    The OpenGL namespace.
-    */
-
-    using GLboolean = unsigned char;
-    using GLbitfield = unsigned int;
-    using GLbyte = signed char;
-    using GLubyte = unsigned char;
-    using GLshort = short;
-    using GLushort = unsigned short;
-    using GLint = int;
-    using GLuint = unsigned int;
-    using GLsizei = int;
-    using GLfloat = float;
-    using GLclampf = float;
-    using GLdouble = double;
-    using GLvoid = void;
-    using GLenum = unsigned int;
-    using GLsizeiptr = long long;
-    using GLintptr = long long;
-    using GLuint64 = uint64_t;
-    using GLchar = signed char;
-    using GLsync = struct __GLsync*;
-
-    constexpr GLenum GL_NO_ERROR = 0;
-    constexpr GLenum GL_INVALID_ENUM = 0x0500;
-    constexpr GLenum GL_INVALID_VALUE = 0x0501;
-    constexpr GLenum GL_INVALID_OPERATION = 0x0502;
-    constexpr GLenum GL_OUT_OF_MEMORY = 0x0505;
-    constexpr GLenum GL_VENDOR = 0x1F00;
-    constexpr GLenum GL_RENDERER = 0x1F01;
-    constexpr GLenum GL_VERSION = 0x1F02;
-    constexpr GLenum GL_EXTENSIONS = 0x1F03;
-    constexpr GLenum GL_MAJOR_VERSION = 0x821B;
-    constexpr GLenum GL_MINOR_VERSION = 0x821C;
-    constexpr GLenum GL_MAX_TEXTURE_SIZE = 0x0D33;
-    constexpr GLenum GL_MAX_VERTEX_ATTRIBS = 0x8869;
-    constexpr GLenum GL_MAX_TEXTURE_IMAGE_UNITS = 0x8872;
-    constexpr GLenum GL_MAX_DRAW_BUFFERS = 0x8824;
-    constexpr GLenum GL_MAX_UNIFORM_BLOCK_SIZE = 0x8A30;
-    constexpr GLenum GL_MAX_VERTEX_UNIFORM_BLOCKS = 0x8A2B;
-    constexpr GLenum GL_MAX_FRAGMENT_UNIFORM_BLOCKS = 0x8A2D;
-    constexpr GLenum GL_VIEWPORT = 0x0BA2;
-    constexpr GLenum GL_SCISSOR_BOX = 0x0C10;
-    constexpr GLenum GL_SCISSOR_TEST = 0x0C11;
-    constexpr GLenum GL_BLEND = 0x0BE2;
-    constexpr GLenum GL_DEPTH_TEST = 0x0B71;
-    constexpr GLenum GL_STENCIL_TEST = 0x0B90;
-    constexpr GLenum GL_CULL_FACE = 0x0B44;
-    constexpr GLenum GL_DITHER = 0x0BD0;
-    constexpr GLenum GL_COLOR_CLEAR_VALUE = 0x0C22;
-    constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
-    constexpr GLenum GL_PACK_ALIGNMENT = 0x0D05;
-    constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
-    constexpr GLenum GL_READ_FRAMEBUFFER_BINDING = 0x8CAA;
-    constexpr GLenum GL_DRAW_FRAMEBUFFER_BINDING = 0x8CA6;
-    constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
-    constexpr GLenum GL_RENDERBUFFER_BINDING = 0x8CA7;
-    constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
-    constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
-    constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
-    constexpr GLenum GL_DEPTH_WRITEMASK = 0x0B72;
-    constexpr GLenum GL_SAMPLES = 0x80A9;
-
-    constexpr GLenum GL_ARRAY_BUFFER = 0x8892;
-    constexpr GLenum GL_ELEMENT_ARRAY_BUFFER = 0x8893;
-    constexpr GLenum GL_UNIFORM_BUFFER = 0x8A11;
-    constexpr GLenum GL_PIXEL_PACK_BUFFER = 0x88EB;
-    constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC;
-
-    constexpr GLenum GL_STREAM_DRAW = 0x88E0;
-    constexpr GLenum GL_STREAM_READ = 0x88E1;
-    constexpr GLenum GL_STREAM_COPY = 0x88E2;
-    constexpr GLenum GL_STATIC_DRAW = 0x88E4;
-    constexpr GLenum GL_STATIC_READ = 0x88E5;
-    constexpr GLenum GL_STATIC_COPY = 0x88E6;
-    constexpr GLenum GL_DYNAMIC_DRAW = 0x88E8;
-    constexpr GLenum GL_DYNAMIC_READ = 0x88E9;
-    constexpr GLenum GL_DYNAMIC_COPY = 0x88EA;
-
-    constexpr GLenum GL_READ_ONLY = 0x88B8;
-    constexpr GLenum GL_WRITE_ONLY = 0x88B9;
-    constexpr GLenum GL_READ_WRITE = 0x88BA;
-
-    constexpr GLbitfield GL_MAP_READ_BIT = 0x0001;
-    constexpr GLbitfield GL_MAP_WRITE_BIT = 0x0002;
-    constexpr GLbitfield GL_MAP_INVALIDATE_RANGE_BIT = 0x0004;
-    constexpr GLbitfield GL_MAP_INVALIDATE_BUFFER_BIT = 0x0008;
-    constexpr GLbitfield GL_MAP_FLUSH_EXPLICIT_BIT = 0x0010;
-    constexpr GLbitfield GL_MAP_UNSYNCHRONIZED_BIT = 0x0020;
-
-    constexpr GLenum GL_BYTE = 0x1400;
-    constexpr GLenum GL_SHORT = 0x1402;
-    constexpr GLenum GL_INT = 0x1404;
-    constexpr GLenum GL_HALF_FLOAT = 0x140B;
-    constexpr GLenum GL_FIXED = 0x140C;
-    constexpr GLenum GL_DOUBLE = 0x140A;
-
-    constexpr GLenum GL_VERTEX_SHADER = 0x8B31;
-    constexpr GLenum GL_FRAGMENT_SHADER = 0x8B30;
-
-    constexpr GLenum GL_COMPILE_STATUS = 0x8B81;
-    constexpr GLenum GL_LINK_STATUS = 0x8B82;
-    constexpr GLenum GL_INFO_LOG_LENGTH = 0x8B84;
-    constexpr GLenum GL_DELETE_STATUS = 0x8B80;
-    constexpr GLenum GL_SHADER_TYPE = 0x8B4F;
-
-    constexpr GLenum GL_ACTIVE_ATTRIBUTES = 0x8B89;
-    constexpr GLenum GL_ACTIVE_UNIFORMS = 0x8B86;
-    constexpr GLenum GL_ACTIVE_ATTRIBUTE_MAX_LENGTH = 0x8B8A;
-    constexpr GLenum GL_ACTIVE_UNIFORM_MAX_LENGTH = 0x8B87;
-
-    constexpr GLenum GL_TEXTURE_2D = 0x0DE1;
-    constexpr GLenum GL_TEXTURE_CUBE_MAP = 0x8513;
-    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_X = 0x8515;
-    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_X = 0x8516;
-    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Y = 0x8517;
-    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Y = 0x8518;
-    constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_Z = 0x8519;
-    constexpr GLenum GL_TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x851A;
-    constexpr GLenum GL_TEXTURE_2D_MULTISAMPLE = 0x9100;
-
-    constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
-    constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
-    constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
-    constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
-    constexpr GLenum GL_NEAREST = 0x2600;
-    constexpr GLenum GL_LINEAR = 0x2601;
-    constexpr GLenum GL_NEAREST_MIPMAP_NEAREST = 0x2700;
-    constexpr GLenum GL_LINEAR_MIPMAP_NEAREST = 0x2701;
-    constexpr GLenum GL_NEAREST_MIPMAP_LINEAR = 0x2702;
-    constexpr GLenum GL_LINEAR_MIPMAP_LINEAR = 0x2703;
-    constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
-    constexpr GLenum GL_REPEAT = 0x2901;
-    constexpr GLenum GL_MIRRORED_REPEAT = 0x8370;
-
-    constexpr GLenum GL_TEXTURE0 = 0x84C0;
-
-    constexpr GLenum GL_RED = 0x1903;
-    constexpr GLenum GL_RG = 0x8227;
-    constexpr GLenum GL_RGB = 0x1907;
-    constexpr GLenum GL_RGBA = 0x1908;
-    constexpr GLenum GL_BGR = 0x80E0;
-    constexpr GLenum GL_BGRA = 0x80E1;
-    constexpr GLenum GL_R8 = 0x8229;
-    constexpr GLenum GL_RG8 = 0x822B;
-    constexpr GLenum GL_RGB8 = 0x8051;
-    constexpr GLenum GL_RGBA8 = 0x8058;
-    constexpr GLenum GL_R16F = 0x822D;
-    constexpr GLenum GL_RG16F = 0x822F;
-    constexpr GLenum GL_RGB16F = 0x881B;
-    constexpr GLenum GL_RGBA16F = 0x881A;
-    constexpr GLenum GL_R32F = 0x822E;
-    constexpr GLenum GL_RG32F = 0x8230;
-    constexpr GLenum GL_RGB32F = 0x8815;
-    constexpr GLenum GL_RGBA32F = 0x8814;
-    constexpr GLenum GL_RGB10_A2 = 0x8059;
-    constexpr GLenum GL_DEPTH_COMPONENT = 0x1902;
-    constexpr GLenum GL_DEPTH_COMPONENT16 = 0x81A5;
-    constexpr GLenum GL_DEPTH_COMPONENT24 = 0x81A6;
-    constexpr GLenum GL_DEPTH_COMPONENT32F = 0x8CAC;
-    constexpr GLenum GL_DEPTH24_STENCIL8 = 0x88F0;
-    constexpr GLenum GL_FLOAT = 0x1406;
-    constexpr GLenum GL_UNSIGNED_INT_24_8 = 0x84FA;
-
-    constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
-    constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8;
-    constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
-    constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
-    constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
-    constexpr GLenum GL_COLOR_ATTACHMENT1 = 0x8CE1;
-    constexpr GLenum GL_COLOR_ATTACHMENT2 = 0x8CE2;
-    constexpr GLenum GL_COLOR_ATTACHMENT3 = 0x8CE3;
-    constexpr GLenum GL_DEPTH_ATTACHMENT = 0x8D00;
-    constexpr GLenum GL_STENCIL_ATTACHMENT = 0x8D20;
-    constexpr GLenum GL_DEPTH_STENCIL_ATTACHMENT = 0x821A;
-
-    constexpr GLenum GL_RENDERBUFFER = 0x8D41;
-
-    constexpr GLenum GL_POINTS = 0x0000;
-    constexpr GLenum GL_LINES = 0x0001;
-    constexpr GLenum GL_LINE_LOOP = 0x0002;
-    constexpr GLenum GL_LINE_STRIP = 0x0003;
-    constexpr GLenum GL_TRIANGLES = 0x0004;
-    constexpr GLenum GL_TRIANGLE_STRIP = 0x0005;
-    constexpr GLenum GL_TRIANGLE_FAN = 0x0006;
-
-    constexpr GLenum GL_UNSIGNED_BYTE = 0x1401;
-    constexpr GLenum GL_UNSIGNED_SHORT = 0x1403;
-    constexpr GLenum GL_UNSIGNED_INT = 0x1405;
-
-    constexpr GLenum GL_COLOR_BUFFER_BIT = 0x00004000;
-    constexpr GLenum GL_DEPTH_BUFFER_BIT = 0x00000100;
-    constexpr GLenum GL_STENCIL_BUFFER_BIT = 0x00000400;
-
-    constexpr GLenum GL_ZERO = 0;
-    constexpr GLenum GL_ONE = 1;
-    constexpr GLenum GL_SRC_COLOR = 0x0300;
-    constexpr GLenum GL_ONE_MINUS_SRC_COLOR = 0x0301;
-    constexpr GLenum GL_SRC_ALPHA = 0x0302;
-    constexpr GLenum GL_ONE_MINUS_SRC_ALPHA = 0x0303;
-    constexpr GLenum GL_DST_ALPHA = 0x0304;
-    constexpr GLenum GL_ONE_MINUS_DST_ALPHA = 0x0305;
-    constexpr GLenum GL_DST_COLOR = 0x0306;
-    constexpr GLenum GL_ONE_MINUS_DST_COLOR = 0x0307;
-
-    constexpr GLenum GL_FUNC_ADD = 0x8006;
-    constexpr GLenum GL_FUNC_SUBTRACT = 0x800A;
-    constexpr GLenum GL_FUNC_REVERSE_SUBTRACT = 0x800B;
-    constexpr GLenum GL_MIN = 0x8007;
-    constexpr GLenum GL_MAX = 0x8008;
-
-    constexpr GLenum GL_NEVER = 0x0200;
-    constexpr GLenum GL_LESS = 0x0201;
-    constexpr GLenum GL_EQUAL = 0x0202;
-    constexpr GLenum GL_LEQUAL = 0x0203;
-    constexpr GLenum GL_GREATER = 0x0204;
-    constexpr GLenum GL_NOTEQUAL = 0x0205;
-    constexpr GLenum GL_GEQUAL = 0x0206;
-    constexpr GLenum GL_ALWAYS = 0x0207;
-
-    constexpr GLenum GL_KEEP = 0x1E00;
-    constexpr GLenum GL_REPLACE = 0x1E01;
-    constexpr GLenum GL_INCR = 0x1E02;
-    constexpr GLenum GL_DECR = 0x1E03;
-    constexpr GLenum GL_INVERT = 0x150A;
-    constexpr GLenum GL_INCR_WRAP = 0x8507;
-    constexpr GLenum GL_DECR_WRAP = 0x8508;
-
-    constexpr GLenum GL_TIME_ELAPSED = 0x88BF;
-    constexpr GLenum GL_QUERY_RESULT = 0x8866;
-    constexpr GLenum GL_QUERY_RESULT_AVAILABLE = 0x8867;
-
-    constexpr GLenum GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117;
-    constexpr GLenum GL_ALREADY_SIGNALED = 0x911A;
-    constexpr GLenum GL_TIMEOUT_EXPIRED = 0x911B;
-    constexpr GLenum GL_CONDITION_SATISFIED = 0x911C;
-    constexpr GLenum GL_WAIT_FAILED = 0x911D;
-    constexpr GLenum GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001;
-    constexpr GLuint64 GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFFull;
-    constexpr GLenum GL_SYNC_STATUS = 0x9114;
-    constexpr GLenum GL_SIGNALED = 0x9119;
-
-    constexpr GLint GL_TRUE = 1;
-    constexpr GLint GL_FALSE = 0;
-
-    constexpr GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
-    constexpr GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
-    constexpr GLenum GL_TEXTURE_REDUCTION_MODE_EXT = 0x9366;
-    constexpr GLenum GL_NUM_EXTENSIONS = 0x821D;
-
-    struct GL33CoreInterface {
-        /* !docs
-        A struct containing pointers to the OpenGL 3.3 core functions.
-        */
-
-        GLenum (*glGetError)();
-        void (*glGetIntegerv)(GLenum pname, GLint* data);
-        void (*glGetFloatv)(GLenum pname, GLfloat* data);
-        void (*glGetBooleanv)(GLenum pname, GLboolean* data);
-        const GLubyte* (*glGetString)(GLenum name);
-        const GLubyte* (*glGetStringi)(GLenum name, GLuint index);
-        void (*glEnable)(GLenum cap);
-        void (*glDisable)(GLenum cap);
-        GLboolean (*glIsEnabled)(GLenum cap);
-        void (*glViewport)(GLint x, GLint y, GLsizei width, GLsizei height);
-        void (*glScissor)(GLint x, GLint y, GLsizei width, GLsizei height);
-        void (*glClearColor)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
-        void (*glClear)(GLbitfield mask);
-        void (*glPixelStorei)(GLenum pname, GLint param);
-        void (*glFlush)();
-        void (*glFinish)();
-
-        void (*glGenBuffers)(GLsizei n, GLuint* buffers);
-        void (*glDeleteBuffers)(GLsizei n, const GLuint* buffers);
-        void (*glBindBuffer)(GLenum target, GLuint buffer);
-        void (*glBufferData)(GLenum target, GLsizeiptr size, const void* data, GLenum usage);
-        void (*glBufferSubData)(GLenum target, GLintptr offset, GLsizeiptr size, const void* data);
-        void* (*glMapBuffer)(GLenum target, GLenum access);
-        void* (*glMapBufferRange)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
-        GLboolean (*glUnmapBuffer)(GLenum target);
-        void (*glBindBufferRange)(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);
-        void (*glBindBufferBase)(GLenum target, GLuint index, GLuint buffer);
-
-        void (*glGenVertexArrays)(GLsizei n, GLuint* arrays);
-        void (*glDeleteVertexArrays)(GLsizei n, const GLuint* arrays);
-        void (*glBindVertexArray)(GLuint array);
-        void (*glEnableVertexAttribArray)(GLuint index);
-        void (*glDisableVertexAttribArray)(GLuint index);
-        void (*glVertexAttribPointer)(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer);
-        void (*glVertexAttribIPointer)(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer);
-        void (*glVertexAttribDivisor)(GLuint index, GLuint divisor);
-
-        GLuint (*glCreateShader)(GLenum type);
-        void (*glShaderSource)(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length);
-        void (*glCompileShader)(GLuint shader);
-        void (*glGetShaderiv)(GLuint shader, GLenum pname, GLint* params);
-        void (*glGetShaderInfoLog)(GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
-        void (*glDeleteShader)(GLuint shader);
-        GLuint (*glCreateProgram)();
-        void (*glAttachShader)(GLuint program, GLuint shader);
-        void (*glDetachShader)(GLuint program, GLuint shader);
-        void (*glLinkProgram)(GLuint program);
-        void (*glUseProgram)(GLuint program);
-        void (*glGetProgramiv)(GLuint program, GLenum pname, GLint* params);
-        void (*glGetProgramInfoLog)(GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
-        void (*glDeleteProgram)(GLuint program);
-        void (*glGetActiveAttrib)(GLuint program, GLuint index, GLsizei bufSize, GLsizei* length, GLint* size, GLenum* type, GLchar* name);
-        void (*glGetActiveUniform)(GLuint program, GLuint index, GLsizei bufSize, GLsizei* length, GLint* size, GLenum* type, GLchar* name);
-        GLint (*glGetAttribLocation)(GLuint program, const GLchar* name);
-        GLint (*glGetUniformLocation)(GLuint program, const GLchar* name);
-
-        void (*glUniform1f)(GLint location, GLfloat v0);
-        void (*glUniform2f)(GLint location, GLfloat v0, GLfloat v1);
-        void (*glUniform3f)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
-        void (*glUniform4f)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
-        void (*glUniform1i)(GLint location, GLint v0);
-        void (*glUniform2i)(GLint location, GLint v0, GLint v1);
-        void (*glUniform3i)(GLint location, GLint v0, GLint v1, GLint v2);
-        void (*glUniform4i)(GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
-        void (*glUniform1fv)(GLint location, GLsizei count, const GLfloat* value);
-        void (*glUniform2fv)(GLint location, GLsizei count, const GLfloat* value);
-        void (*glUniform3fv)(GLint location, GLsizei count, const GLfloat* value);
-        void (*glUniform4fv)(GLint location, GLsizei count, const GLfloat* value);
-        void (*glUniform1iv)(GLint location, GLsizei count, const GLint* value);
-        void (*glUniform2iv)(GLint location, GLsizei count, const GLint* value);
-        void (*glUniform3iv)(GLint location, GLsizei count, const GLint* value);
-        void (*glUniform4iv)(GLint location, GLsizei count, const GLint* value);
-        void (*glUniformMatrix2fv)(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value);
-        void (*glUniformMatrix3fv)(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value);
-        void (*glUniformMatrix4fv)(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value);
-
-        void (*glGenTextures)(GLsizei n, GLuint* textures);
-        void (*glDeleteTextures)(GLsizei n, const GLuint* textures);
-        void (*glBindTexture)(GLenum target, GLuint texture);
-        void (*glTexImage2D)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels);
-        void (*glTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels);
-        void (*glTexParameteri)(GLenum target, GLenum pname, GLint param);
-        void (*glTexParameterf)(GLenum target, GLenum pname, GLfloat param);
-        void (*glGenerateMipmap)(GLenum target);
-        void (*glActiveTexture)(GLenum texture);
-        void (*glTexStorage2D)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
-        void (*glTexImage2DMultisample)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations);
-
-        void (*glGenFramebuffers)(GLsizei n, GLuint* framebuffers);
-        void (*glDeleteFramebuffers)(GLsizei n, const GLuint* framebuffers);
-        void (*glBindFramebuffer)(GLenum target, GLuint framebuffer);
-        GLenum (*glCheckFramebufferStatus)(GLenum target);
-        void (*glFramebufferTexture2D)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
-        void (*glBlitFramebuffer)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
-
-        void (*glGenRenderbuffers)(GLsizei n, GLuint* renderbuffers);
-        void (*glDeleteRenderbuffers)(GLsizei n, const GLuint* renderbuffers);
-        void (*glBindRenderbuffer)(GLenum target, GLuint renderbuffer);
-        void (*glRenderbufferStorage)(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
-        void (*glFramebufferRenderbuffer)(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
-
-        void (*glDrawArrays)(GLenum mode, GLint first, GLsizei count);
-        void (*glDrawElements)(GLenum mode, GLsizei count, GLenum type, const void* indices);
-        void (*glDrawArraysInstanced)(GLenum mode, GLint first, GLsizei count, GLsizei instancecount);
-        void (*glDrawElementsInstanced)(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei instancecount);
-
-        void (*glBlendFunc)(GLenum sfactor, GLenum dfactor);
-        void (*glBlendFuncSeparate)(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
-        void (*glBlendEquation)(GLenum mode);
-        void (*glBlendEquationSeparate)(GLenum modeRGB, GLenum modeAlpha);
-        void (*glBlendColor)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
-        void (*glDepthFunc)(GLenum func);
-        void (*glDepthMask)(GLboolean flag);
-        void (*glStencilFunc)(GLenum func, GLint ref, GLuint mask);
-        void (*glStencilOp)(GLenum sfail, GLenum dpfail, GLenum dppass);
-        void (*glStencilMask)(GLuint mask);
-        void (*glColorMask)(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);
-
-        void (*glReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels);
-        void (*glCopyTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height);
-        void (*glReadBuffer)(GLenum src);
-        void (*glDrawBuffer)(GLenum dst);
-
-        void (*glGenQueries)(GLsizei n, GLuint* ids);
-        void (*glDeleteQueries)(GLsizei n, const GLuint* ids);
-        void (*glBeginQuery)(GLenum target, GLuint id);
-        void (*glEndQuery)(GLenum target);
-        void (*glGetQueryObjectiv)(GLuint id, GLenum pname, GLint* params);
-        void (*glGetQueryObjectui64v)(GLuint id, GLenum pname, GLuint64* params);
-
-        GLsync (*glFenceSync)(GLenum condition, GLbitfield flags);
-        void (*glDeleteSync)(GLsync sync);
-        GLenum (*glClientWaitSync)(GLsync sync, GLbitfield flags, GLuint64 timeout);
-        void (*glGetSynciv)(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei* length, GLint* values);
-
-        bool isExtensionSupported(const char* extension) {
-            /* !docs
-            Checks if the given OpenGL extension is supported.
-            */
-
-            GLint num;
-            glGetIntegerv(GL_NUM_EXTENSIONS, &num);
-
-            for (GLint i = 0; i < num; i++) {
-                auto* ext = (const char*)glGetStringi(GL_EXTENSIONS, i);
-                if (strcmp(ext, extension) == 0) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-    };
-
-    using GLProcLoader = std::function<void*(const char*)>;
-    static GL33CoreInterface MakeGL33CoreInterface(GLProcLoader loader) {
-        /* !docs
-        Creates a interface object from a procedure loader.
-        */
-
-        GL33CoreInterface interface {};
-
-        #define LOAD_AND_CHECK(proc) { \
-            auto ptr = loader(#proc); \
-            if (!ptr) { \
-                throw std::runtime_error("failed to load " #proc); \
-            } \
-            using F = decltype(interface.proc); \
-            interface.proc = (F)ptr; \
-        }
-
-        LOAD_AND_CHECK(glGetError)
-        LOAD_AND_CHECK(glGetIntegerv)
-        LOAD_AND_CHECK(glGetFloatv)
-        LOAD_AND_CHECK(glGetBooleanv)
-        LOAD_AND_CHECK(glGetString)
-        LOAD_AND_CHECK(glGetStringi)
-        LOAD_AND_CHECK(glEnable)
-        LOAD_AND_CHECK(glDisable)
-        LOAD_AND_CHECK(glIsEnabled)
-        LOAD_AND_CHECK(glViewport)
-        LOAD_AND_CHECK(glScissor)
-        LOAD_AND_CHECK(glClearColor)
-        LOAD_AND_CHECK(glClear)
-        LOAD_AND_CHECK(glPixelStorei)
-        LOAD_AND_CHECK(glFlush)
-        LOAD_AND_CHECK(glFinish)
-
-        LOAD_AND_CHECK(glGenBuffers)
-        LOAD_AND_CHECK(glDeleteBuffers)
-        LOAD_AND_CHECK(glBindBuffer)
-        LOAD_AND_CHECK(glBufferData)
-        LOAD_AND_CHECK(glBufferSubData)
-        LOAD_AND_CHECK(glMapBuffer)
-        LOAD_AND_CHECK(glMapBufferRange)
-        LOAD_AND_CHECK(glUnmapBuffer)
-        LOAD_AND_CHECK(glBindBufferRange)
-        LOAD_AND_CHECK(glBindBufferBase)
-
-        LOAD_AND_CHECK(glGenVertexArrays)
-        LOAD_AND_CHECK(glDeleteVertexArrays)
-        LOAD_AND_CHECK(glBindVertexArray)
-        LOAD_AND_CHECK(glEnableVertexAttribArray)
-        LOAD_AND_CHECK(glDisableVertexAttribArray)
-        LOAD_AND_CHECK(glVertexAttribPointer)
-        LOAD_AND_CHECK(glVertexAttribIPointer)
-        LOAD_AND_CHECK(glVertexAttribDivisor)
-
-        LOAD_AND_CHECK(glCreateShader)
-        LOAD_AND_CHECK(glShaderSource)
-        LOAD_AND_CHECK(glCompileShader)
-        LOAD_AND_CHECK(glGetShaderiv)
-        LOAD_AND_CHECK(glGetShaderInfoLog)
-        LOAD_AND_CHECK(glDeleteShader)
-        LOAD_AND_CHECK(glCreateProgram)
-        LOAD_AND_CHECK(glAttachShader)
-        LOAD_AND_CHECK(glDetachShader)
-        LOAD_AND_CHECK(glLinkProgram)
-        LOAD_AND_CHECK(glUseProgram)
-        LOAD_AND_CHECK(glGetProgramiv)
-        LOAD_AND_CHECK(glGetProgramInfoLog)
-        LOAD_AND_CHECK(glDeleteProgram)
-        LOAD_AND_CHECK(glGetActiveAttrib)
-        LOAD_AND_CHECK(glGetActiveUniform)
-        LOAD_AND_CHECK(glGetAttribLocation)
-        LOAD_AND_CHECK(glGetUniformLocation)
-
-        LOAD_AND_CHECK(glUniform1f)
-        LOAD_AND_CHECK(glUniform2f)
-        LOAD_AND_CHECK(glUniform3f)
-        LOAD_AND_CHECK(glUniform4f)
-        LOAD_AND_CHECK(glUniform1i)
-        LOAD_AND_CHECK(glUniform2i)
-        LOAD_AND_CHECK(glUniform3i)
-        LOAD_AND_CHECK(glUniform4i)
-        LOAD_AND_CHECK(glUniform1fv)
-        LOAD_AND_CHECK(glUniform2fv)
-        LOAD_AND_CHECK(glUniform3fv)
-        LOAD_AND_CHECK(glUniform4fv)
-        LOAD_AND_CHECK(glUniform1iv)
-        LOAD_AND_CHECK(glUniform2iv)
-        LOAD_AND_CHECK(glUniform3iv)
-        LOAD_AND_CHECK(glUniform4iv)
-        LOAD_AND_CHECK(glUniformMatrix2fv)
-        LOAD_AND_CHECK(glUniformMatrix3fv)
-        LOAD_AND_CHECK(glUniformMatrix4fv)
-
-        LOAD_AND_CHECK(glGenTextures)
-        LOAD_AND_CHECK(glDeleteTextures)
-        LOAD_AND_CHECK(glBindTexture)
-        LOAD_AND_CHECK(glTexImage2D)
-        LOAD_AND_CHECK(glTexSubImage2D)
-        LOAD_AND_CHECK(glTexParameteri)
-        LOAD_AND_CHECK(glTexParameterf)
-        LOAD_AND_CHECK(glGenerateMipmap)
-        LOAD_AND_CHECK(glActiveTexture)
-        LOAD_AND_CHECK(glTexStorage2D)
-        LOAD_AND_CHECK(glTexImage2DMultisample)
-
-        LOAD_AND_CHECK(glGenFramebuffers)
-        LOAD_AND_CHECK(glDeleteFramebuffers)
-        LOAD_AND_CHECK(glBindFramebuffer)
-        LOAD_AND_CHECK(glCheckFramebufferStatus)
-        LOAD_AND_CHECK(glFramebufferTexture2D)
-        LOAD_AND_CHECK(glBlitFramebuffer)
-
-        LOAD_AND_CHECK(glGenRenderbuffers)
-        LOAD_AND_CHECK(glDeleteRenderbuffers)
-        LOAD_AND_CHECK(glBindRenderbuffer)
-        LOAD_AND_CHECK(glRenderbufferStorage)
-        LOAD_AND_CHECK(glFramebufferRenderbuffer)
-
-        LOAD_AND_CHECK(glDrawArrays)
-        LOAD_AND_CHECK(glDrawElements)
-        LOAD_AND_CHECK(glDrawArraysInstanced)
-        LOAD_AND_CHECK(glDrawElementsInstanced)
-
-        LOAD_AND_CHECK(glBlendFunc)
-        LOAD_AND_CHECK(glBlendFuncSeparate)
-        LOAD_AND_CHECK(glBlendEquation)
-        LOAD_AND_CHECK(glBlendEquationSeparate)
-        LOAD_AND_CHECK(glBlendColor)
-        LOAD_AND_CHECK(glDepthFunc)
-        LOAD_AND_CHECK(glDepthMask)
-        LOAD_AND_CHECK(glStencilFunc)
-        LOAD_AND_CHECK(glStencilOp)
-        LOAD_AND_CHECK(glStencilMask)
-        LOAD_AND_CHECK(glColorMask)
-
-        LOAD_AND_CHECK(glReadPixels)
-        LOAD_AND_CHECK(glCopyTexSubImage2D)
-        LOAD_AND_CHECK(glReadBuffer)
-        LOAD_AND_CHECK(glDrawBuffer)
-
-        LOAD_AND_CHECK(glGenQueries)
-        LOAD_AND_CHECK(glDeleteQueries)
-        LOAD_AND_CHECK(glBeginQuery)
-        LOAD_AND_CHECK(glEndQuery)
-        LOAD_AND_CHECK(glGetQueryObjectiv)
-        LOAD_AND_CHECK(glGetQueryObjectui64v)
-
-        LOAD_AND_CHECK(glFenceSync)
-        LOAD_AND_CHECK(glDeleteSync)
-        LOAD_AND_CHECK(glClientWaitSync)
-        LOAD_AND_CHECK(glGetSynciv)
-
-        return interface;
-    }
-    
-    struct GLvec2 {
-        GLfloat x, y;
-        
-        GLvec2() : x(0), y(0) {}
-        GLvec2(const Vec2& o) : x(o.x), y(o.y) {}
-        template <typename A, typename B> constexpr GLvec2(A a, B b) : x((GLfloat)a), y((GLfloat)b) {}
-
-        GLvec2 operator+(const GLvec2& o) const { return {x + o.x, y + o.y}; }
-        GLvec2 operator-(const GLvec2& o) const { return {x - o.x, y - o.y}; }
-        GLvec2 operator*(const GLvec2& o) const { return {x * o.x, y * o.y}; }
-        GLvec2 operator/(const GLvec2& o) const { return {x / o.x, y / o.y}; }
-        GLvec2 operator+(GLfloat o) const { return {x + o, y + o}; }
-        GLvec2 operator-(GLfloat o) const { return {x - o, y - o}; }
-        GLvec2 operator*(GLfloat o) const { return {x * o, y * o}; }
-        GLvec2 operator/(GLfloat o) const { return {x / o, y / o}; }
-        GLvec2 operator-() const { return {-x, -y}; }
-        GLvec2& operator+=(const GLvec2& o) { x += o.x; y += o.y; return *this; }
-        GLvec2& operator-=(const GLvec2& o) { x -= o.x; y -= o.y; return *this; }
-        GLvec2& operator*=(const GLvec2& o) { x *= o.x; y *= o.y; return *this; }
-        GLvec2& operator/=(const GLvec2& o) { x /= o.x; y /= o.y; return *this; }
-        GLvec2& operator+=(GLfloat o) { x += o; y += o; return *this; }
-        GLvec2& operator-=(GLfloat o) { x -= o; y -= o; return *this; }
-        GLvec2& operator*=(GLfloat o) { x *= o; y *= o; return *this; }
-        GLvec2& operator/=(GLfloat o) { x /= o; y /= o; return *this; }
-        bool operator==(const GLvec2& o) const { return x == o.x && y == o.y; }
-        bool operator!=(const GLvec2& o) const { return x != o.x || y != o.y; }
-    };
-    static_assert(offsetof(GLvec2, x) == 0, "GLvec2.x must be at offset 0");
-    static_assert(offsetof(GLvec2, y) == sizeof(GLfloat), "GLvec2.y must be at offset 1");
-
-    struct GLvec3 {
-        GLfloat x, y, z;
-        
-        GLvec3() : x(0), y(0), z(0) {}
-        template <typename A, typename B, typename C> constexpr GLvec3(A a, B b, C c) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c) {}
-
-        GLvec3 operator+(const GLvec3& o) const { return {x + o.x, y + o.y, z + o.z}; }
-        GLvec3 operator-(const GLvec3& o) const { return {x - o.x, y - o.y, z - o.z}; }
-        GLvec3 operator*(const GLvec3& o) const { return {x * o.x, y * o.y, z * o.z}; }
-        GLvec3 operator/(const GLvec3& o) const { return {x / o.x, y / o.y, z / o.z}; }
-        GLvec3 operator+(GLfloat o) const { return {x + o, y + o, z + o}; }
-        GLvec3 operator-(GLfloat o) const { return {x - o, y - o, z - o}; }
-        GLvec3 operator*(GLfloat o) const { return {x * o, y * o, z * o}; }
-        GLvec3 operator/(GLfloat o) const { return {x / o, y / o, z / o}; }
-        GLvec3 operator-() const { return {-x, -y, -z}; }
-        GLvec3& operator+=(const GLvec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
-        GLvec3& operator-=(const GLvec3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
-        GLvec3& operator*=(const GLvec3& o) { x *= o.x; y *= o.y; z *= o.z; return *this; }
-        GLvec3& operator/=(const GLvec3& o) { x /= o.x; y /= o.y; z /= o.z; return *this; }
-        GLvec3& operator+=(GLfloat o) { x += o; y += o; z += o; return *this; }
-        GLvec3& operator-=(GLfloat o) { x -= o; y -= o; z -= o; return *this; }
-        GLvec3& operator*=(GLfloat o) { x *= o; y *= o; z *= o; return *this; }
-        GLvec3& operator/=(GLfloat o) { x /= o; y /= o; z /= o; return *this; }
-        bool operator==(const GLvec3& o) const { return x == o.x && y == o.y && z == o.z; }
-        bool operator!=(const GLvec3& o) const { return x != o.x || y != o.y || z != o.z; }
-    };
-    static_assert(offsetof(GLvec3, x) == 0, "GLvec3.x must be at offset 0");
-    static_assert(offsetof(GLvec3, y) == sizeof(GLfloat), "GLvec3.y must be at offset 1");
-    static_assert(offsetof(GLvec3, z) == sizeof(GLfloat) * 2, "GLvec3.z must be at offset 2");
-
-    struct GLvec4 {
-        GLfloat x, y, z, w;
-        
-        GLvec4() : x(0), y(0), z(0), w(0) {}
-        GLvec4(const Color& o) : x(o.r), y(o.g), z(o.b), w(o.a) {}
-        template <typename A, typename B, typename C, typename D> constexpr GLvec4(A a, B b, C c, D d) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c), w((GLfloat)d) {}
-
-        GLvec4 operator+(const GLvec4& o) const { return {x + o.x, y + o.y, z + o.z, w + o.w}; }
-        GLvec4 operator-(const GLvec4& o) const { return {x - o.x, y - o.y, z - o.z, w - o.w}; }
-        GLvec4 operator*(const GLvec4& o) const { return {x * o.x, y * o.y, z * o.z, w * o.w}; }
-        GLvec4 operator/(const GLvec4& o) const { return {x / o.x, y / o.y, z / o.z, w / o.w}; }
-        GLvec4 operator+(GLfloat o) const { return {x + o, y + o, z + o, w + o}; }
-        GLvec4 operator-(GLfloat o) const { return {x - o, y - o, z - o, w - o}; }
-        GLvec4 operator*(GLfloat o) const { return {x * o, y * o, z * o, w * o}; }
-        GLvec4 operator/(GLfloat o) const { return {x / o, y / o, z / o, w / o}; }
-        GLvec4 operator-() const { return {-x, -y, -z, -w}; }
-        GLvec4& operator+=(const GLvec4& o) { x += o.x; y += o.y; z += o.z; w += o.w; return *this; }
-        GLvec4& operator-=(const GLvec4& o) { x -= o.x; y -= o.y; z -= o.z; w -= o.w; return *this; }
-        GLvec4& operator*=(const GLvec4& o) { x *= o.x; y *= o.y; z *= o.z; w *= o.w; return *this; }
-        GLvec4& operator/=(const GLvec4& o) { x /= o.x; y /= o.y; z /= o.z; w /= o.w; return *this; }
-        GLvec4& operator+=(GLfloat o) { x += o; y += o; z += o; w += o; return *this; }
-        GLvec4& operator-=(GLfloat o) { x -= o; y -= o; z -= o; w -= o; return *this; }
-        GLvec4& operator*=(GLfloat o) { x *= o; y *= o; z *= o; w *= o; return *this; }
-        GLvec4& operator/=(GLfloat o) { x /= o; y /= o; z /= o; w /= o; return *this; }
-        bool operator==(const GLvec4& o) const { return x == o.x && y == o.y && z == o.z && w == o.w; }
-        bool operator!=(const GLvec4& o) const { return x != o.x || y != o.y || z != o.z || w != o.w; }
-
-        static GLvec4 White() { return { 1.0, 1.0, 1.0, 1.0 }; }
-        static GLvec4 Black() { return { 0.0, 0.0, 0.0, 1.0 }; }
-        static GLvec4 Red() { return { 1.0, 0.0, 0.0, 1.0 }; }
-        static GLvec4 Green() { return { 0.0, 1.0, 0.0, 1.0 }; }
-        static GLvec4 Blue() { return { 0.0, 0.0, 1.0, 1.0 }; }
-        static GLvec4 Transparent() { return { 0.0, 0.0, 0.0, 0.0 }; }
-        static GLvec4 Gray(GLfloat v = 0.5) { return { v, v, v, 1.0 }; }
-    };
-    static_assert(offsetof(GLvec4, x) == 0, "GLvec4.x must be at offset 0");
-    static_assert(offsetof(GLvec4, y) == sizeof(GLfloat), "GLvec4.y must be at offset 1");
-    static_assert(offsetof(GLvec4, z) == sizeof(GLfloat) * 2, "GLvec4.z must be at offset 2");
-    static_assert(offsetof(GLvec4, w) == sizeof(GLfloat) * 3, "GLvec4.w must be at offset 3");
-
-    struct Vertex {
-        /* !docs
-        A vertex, with position and texture coordinates.
-        */
-
-        GLvec2 position;
-        GLvec2 texCoord;
-    };
-
-    struct BufferInfo;
-    struct VertexArrayInfo;
-    struct ShaderInfo;
-    struct ProgramInfo;
-    struct TextureInfo;
-    struct FramebufferInfo;
-    struct RenderbufferInfo;
-    struct QueryInfo;
-    struct SyncInfo;
-
-    struct VertexPool {
-        /* !docs
-        A pool of vertices, which can be allocated from.
-        */
-
-        struct Chunk {
-            std::vector<Vertex> vertices;
-            ep_u64 offset;
-
-            static ep_sp<Chunk> Make(ep_u64 size) {
-                auto* ck = new Chunk();
-                ck->vertices.resize(size);
-                return ep_sp<Chunk>(ck);
-            }
-
-            Vertex* alloc(ep_u64 count) {
-                if (offset + count > vertices.size()) return nullptr;
-                auto* ret = &vertices[offset];
-                offset += count;
-                return ret;
-            }
-        };
-
-        static constexpr ep_u64 defaultChunkSize = 4096;
-        static constexpr ep_u64 defaultChunkCount = 4;
-
-        std::vector<ep_sp<Chunk>> chunks;
-        ep_u64 offset;
-
-        static ep_sp<VertexPool> Make() {
-            auto* vp = new VertexPool();
-            vp->chunks.resize(defaultChunkCount);
-            for (ep_u64 i = 0; i < defaultChunkCount; i++) {
-                vp->chunks[i] = Chunk::Make(defaultChunkSize);
-            }
-            return ep_sp<VertexPool>(vp);
-        }
-
-        struct AllocResult {
-            /* !docs
-            The result of allocating vertices from a `@../VertexPool`.
-            */
-
-            Vertex* vertices;
-            ep_u64 count;
-            ep_u64 sig;
-            ep_u64 offset;
-
-            Vertex* next() {
-                if (offset >= count) return nullptr;
-                return vertices + (offset++);
-            }
-
-            void reset() {
-                offset = 0;
-            }
-
-            Vertex* begin() { return vertices; }
-            Vertex* end() { return vertices + count; }
-            const Vertex* begin() const { return vertices; }
-            const Vertex* end() const { return vertices + count; }
-        };
-
-        AllocResult alloc(ep_u64 count) {
-            while (offset < chunks.size()) {
-                auto& chunk = chunks[offset];
-                auto* ptr = chunk->alloc(count);
-                if (ptr) return allocSuccess(ptr, count);
-                offset++;
-            }
-
-            chunks.push_back(Chunk::Make(std::max(defaultChunkSize, count)));
-            return allocSuccess(chunks[offset]->alloc(count), count);
-        }
-
-        void reset() {
-            /* !docs
-            Resets the vertex pool, freeing all allocated vertices.
-            */
-
-            offset = 0;
-            for (auto& chunk : chunks) chunk->offset = 0;
-            sig++;
-        }
-
-        bool valid(const AllocResult& result) {
-            return result.sig == sig;
-        }
-
-        private:
-        ep_u64 sig;
-
-        AllocResult allocSuccess(Vertex* ptr, ep_u64 count) {
-            return {
-                .vertices = ptr,
-                .count = count,
-                .sig = sig
-            };
-        }
-    };
-
-    struct Mesh {
-        /* !docs
-        A mesh of vertices, which can be drawn.
-        */
-
-        VertexPool::AllocResult vertices;
-        GLvec4 color;
-        TextureInfo* texture;
-        ProgramInfo* program;
-
-        void addRect(const GLvec2& position, const GLvec2& size, const GLvec2& uvPosition, const GLvec2& uvSize) {
-            if (size.x <= 0 || size.y <= 0) return;
-
-            *vertices.next() = { position, uvPosition };
-            *vertices.next() = { position + GLvec2 { size.x, 0 }, uvPosition + GLvec2 { uvSize.x, 0 } };
-            *vertices.next() = { position + size, uvPosition + uvSize };
-
-            *vertices.next() = { position, uvPosition };
-            *vertices.next() = { position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y } };
-            *vertices.next() = { position + size, uvPosition + uvSize };
-        }
-
-        void addFullRect() {
-            /* !docs
-            Adds a full-screen rectangle to the mesh.
-            */
-
-            addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
-        }
-
-        static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) {
-            /* !docs
-            Get the number of vertices required to draw a polygon with the given number of points.
-            */
-
-            return (pointsCount - 2) * 3;
-        }
-
-        void addPolygon(const std::vector<GLvec2>& points, const std::vector<GLvec2>& uvs) {
-            /* !docs
-            Adds a polygon to the mesh.
-            */
-
-            for (ep_u64 i = 0; i < points.size() - 2; i++) {
-                *vertices.next() = { points[0], uvs[0] };
-                *vertices.next() = { points[i + 1], uvs[i + 1] };
-                *vertices.next() = { points[i + 2], uvs[i + 2] };
-            }
-        }
-    };
-
-    struct BufferInfo {
-        /* !docs
-        A buffer object, which is created by `glGenBuffers`.
-        */
-        
-        BufferInfo() = default;
-        BufferInfo(const BufferInfo&) = delete;
-        BufferInfo& operator=(const BufferInfo&) = delete;
-
-        BufferInfo(BufferInfo&& other) noexcept
-            : glRef(other.glRef)
-            , id(std::exchange(other.id, 0))
-            , target(other.target)
-        {}
-
-        BufferInfo& operator=(BufferInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                id = std::exchange(other.id, 0);
-                target = other.target;
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLuint id;
-        GLenum target;
-
-        struct UsingGuard {
-            BufferInfo* ref;
-
-            UsingGuard(BufferInfo& buffer) : ref(&buffer) {
-                ref->glRef->glBindBuffer(ref->target, ref->id);
-            }
-
-            UsingGuard(const UsingGuard&) = delete;
-            UsingGuard& operator=(const UsingGuard&) = delete;
-            UsingGuard(UsingGuard&&) = delete;
-            UsingGuard& operator=(UsingGuard&&) = delete;
-
-            void data(GLsizeiptr size, const void* data, GLenum usage) {
-                ref->glRef->glBufferData(ref->target, size, data, usage);
-            }
-
-            template <typename T>
-            void data(std::span<const T> data, GLenum usage) {
-                data(ref->target, data.size() * sizeof(T), data.data(), usage);
-            }
-
-            void subData(GLintptr offset, GLsizeiptr size, const void* data) {
-                ref->glRef->glBufferSubData(ref->target, offset, size, data);
-            }
-
-            template <typename T>
-            void subData(GLintptr offset, std::span<const T> data) {
-                ref->glRef->glBufferSubData(ref->target, offset, data.size() * sizeof(T), data.data());
-            }
-
-            struct MappingGuard {
-                UsingGuard* ref;
-                void* data;
-
-                MappingGuard(UsingGuard& buffer, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
-                    data = ref->ref->glRef->glMapBuffer(ref->ref->target, access);
-                }
-
-                MappingGuard(const MappingGuard&) = delete;
-                MappingGuard& operator=(const MappingGuard&) = delete;
-                MappingGuard(MappingGuard&&) = delete;
-                MappingGuard& operator=(MappingGuard&&) = delete;
-
-                ~MappingGuard() {
-                    ref->ref->glRef->glUnmapBuffer(ref->ref->target);
-                }
-            };
-
-            struct RangeMappingGuard {
-                UsingGuard* ref;
-                void* data;
-
-                RangeMappingGuard(UsingGuard& buffer, GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
-                    data = ref->ref->glRef->glMapBufferRange(ref->ref->target, offset, length, access);
-                }
-
-                RangeMappingGuard(const RangeMappingGuard&) = delete;
-                RangeMappingGuard& operator=(const RangeMappingGuard&) = delete;
-                RangeMappingGuard(RangeMappingGuard&&) = delete;
-                RangeMappingGuard& operator=(RangeMappingGuard&&) = delete;
-
-                ~RangeMappingGuard() {
-                    ref->ref->glRef->glUnmapBuffer(ref->ref->target);
-                }
-            };
-
-            MappingGuard map(GLbitfield access) {
-                return MappingGuard(*this, access);
-            }
-
-            ep_sp<MappingGuard> mapSp(GLbitfield access) {
-                auto* guard = new MappingGuard(*this, access);
-                return ep_sp<MappingGuard>(guard);
-            }
-
-            RangeMappingGuard mapRange(GLintptr offset, GLsizeiptr length, GLbitfield access) {
-                return RangeMappingGuard(*this, offset, length, access);
-            }
-
-            ep_sp<RangeMappingGuard> mapRangeSp(GLintptr offset, GLsizeiptr length, GLbitfield access) {
-                auto* guard = new RangeMappingGuard(*this, offset, length, access);
-                return ep_sp<RangeMappingGuard>(guard);
-            }
-
-            ~UsingGuard() {
-                ref->glRef->glBindBuffer(ref->target, 0);
-            }
-        };
-
-        UsingGuard use() {
-            return UsingGuard(*this);
-        }
-
-        ep_sp<UsingGuard> useSp() {
-            auto* guard = new UsingGuard(*this);
-            return ep_sp<UsingGuard>(guard);
-        }
-
-        ~BufferInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (id) {
-                glRef->glDeleteBuffers(1, &id);
-                id = 0;
-            }
-        }
-    };
-
-    struct VertexArrayInfo {
-        /* !docs
-        A vertex array object (VAO), which is created by `glGenVertexArrays`.
-        */
-
-        VertexArrayInfo() = default;
-        VertexArrayInfo(const VertexArrayInfo&) = delete;
-        VertexArrayInfo& operator=(const VertexArrayInfo&) = delete;
-
-        VertexArrayInfo(VertexArrayInfo&& other) noexcept
-            : glRef(other.glRef)
-            , id(std::exchange(other.id, 0))
-        {}
-
-        VertexArrayInfo& operator=(VertexArrayInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                id = std::exchange(other.id, 0);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLuint id;
-
-        struct UsingGuard {
-            VertexArrayInfo* ref;
-
-            UsingGuard(VertexArrayInfo& array) : ref(&array) {
-                ref->glRef->glBindVertexArray(ref->id);
-            }
-
-            UsingGuard(const UsingGuard&) = delete;
-            UsingGuard& operator=(const UsingGuard&) = delete;
-            UsingGuard(UsingGuard&&) = delete;
-            UsingGuard& operator=(UsingGuard&&) = delete;
-
-            void enable(GLuint index) { ref->glRef->glEnableVertexAttribArray(index); }
-            void disable(GLuint index) { ref->glRef->glDisableVertexAttribArray(index); }
-
-            void pointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer) {
-                ref->glRef->glVertexAttribPointer(index, size, type, normalized, stride, pointer);
-            }
-
-            void iPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer) {
-                ref->glRef->glVertexAttribIPointer(index, size, type, stride, pointer);
-            }
-
-            void divisor(GLuint index, GLuint divisor) {
-                ref->glRef->glVertexAttribDivisor(index, divisor);
-            }
-
-            ~UsingGuard() {
-                // ref->glRef->glBindVertexArray(0);
-            }
-        };
-
-        UsingGuard use() {
-            return UsingGuard(*this);
-        }
-
-        ~VertexArrayInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (id) {
-                glRef->glDeleteVertexArrays(1, &id);
-                id = 0;
-            }
-        }
-    };
-
-    struct ShaderInfo {
-        /* !docs
-        A shader object, which is created by `glCreateShader`.
-        */
-
-        ShaderInfo() = default;
-        ShaderInfo(const ShaderInfo&) = delete;
-        ShaderInfo& operator=(const ShaderInfo&) = delete;
-
-        ShaderInfo(ShaderInfo&& other) noexcept
-            : glRef(other.glRef)
-            , type(other.type)
-            , id(std::exchange(other.id, 0))
-        {}
-
-        ShaderInfo& operator=(ShaderInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                type = other.type;
-                id = std::exchange(other.id, 0);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLenum type;
-        GLuint id;
-
-        void source(const std::string& source) {
-            const GLchar* ptr = (GLchar*)source.c_str();
-            GLint len = source.length();
-            glRef->glShaderSource(id, 1, &ptr, &len);
-        }
-
-        void source(std::span<const std::string> sources) {
-            std::vector<const GLchar*> ptrs;
-            std::vector<GLint> lens;
-            ptrs.reserve(sources.size());
-            lens.reserve(sources.size());
-            for (const auto& source : sources) {
-                ptrs.push_back((GLchar*)source.c_str());
-                lens.push_back(source.length());
-            }
-            glRef->glShaderSource(id, sources.size(), ptrs.data(), lens.data());
-        }
-
-        bool compile(std::string* outLog = nullptr) {
-            glRef->glCompileShader(id);
-            GLint status = 0;
-            glRef->glGetShaderiv(id, GL_COMPILE_STATUS, &status);
-            if (outLog) {
-                GLint logLen;
-                glRef->glGetShaderiv(id, GL_INFO_LOG_LENGTH, &logLen);
-                if (logLen > 0) {
-                    outLog->resize(logLen);
-                    GLsizei written = 0;
-                    glRef->glGetShaderInfoLog(id, logLen, &written, (GLchar*)outLog->data());
-                    outLog->resize(written);
-                }
-            }
-            return status == GL_TRUE;
-        }
-
-        ~ShaderInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (id) {
-                glRef->glDeleteShader(id);
-                id = 0;
-            }
-        }
-    };
-
-    struct VertexLayout {
-        /* !docs
-        A vertex layout, which is used to describe the structure of the vertex data and store the vertex buffer.
-        It includes a vertex array object (VAO) and a vertex buffer object (VBO).
-        */
-
-        ep_sp<VertexArrayInfo> vao;
-        ep_sp<BufferInfo> vbo;
-    };
-
-    struct VertexLayoutPool {
-        /* !docs
-        A vertex layout pool.
-        */
-
-        std::vector<VertexLayout> layouts;
-        ep_u64 currentIndex;
-        ep_u64 frameSig;
-
-        using LayoutCreator = std::function<VertexLayout()>;
-        void resize(ep_u64 size,const LayoutCreator& creator) {
-            layouts.resize(size);
-            for (auto& layout : layouts) layout = creator();
-        }
-
-        using ConfigureFunc = std::function<void(VertexArrayInfo*, BufferInfo*)>;
-        void configure(const ConfigureFunc& func) {
-            for (auto& layout : layouts) {
-                func(layout.vao.get(), layout.vbo.get());
-            }
-        }
-
-        void checkAndNext(ep_u64 newFrameSig) {
-            if (frameSig != newFrameSig) {
-                frameSig = newFrameSig;
-                currentIndex = (currentIndex + 1) % layouts.size();
-            }
-        }
-
-        VertexLayout& current() {
-            return layouts[currentIndex];
-        }
-    };
-
-    struct ProgramInfo {
-        /* !docs
-        A program object, which is created by `glCreateProgram`.
-        */
-
-        ProgramInfo() = default;
-        ProgramInfo(const ProgramInfo&) = delete;
-        ProgramInfo& operator=(const ProgramInfo&) = delete;
-
-        ProgramInfo(ProgramInfo&& other) noexcept
-            : glRef(other.glRef)
-            , id(std::exchange(other.id, 0))
-            , vertexLayoutPool(std::move(other.vertexLayoutPool))
-            , bufferFiller(other.bufferFiller)
-            , fragConfig(std::move(other.fragConfig))
-            , attribLocations(std::move(other.attribLocations))
-            , uniformLocations(std::move(other.uniformLocations))
-        {}
-
-        ProgramInfo& operator=(ProgramInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                id = std::exchange(other.id, 0);
-                vertexLayoutPool = std::move(other.vertexLayoutPool);
-                bufferFiller = other.bufferFiller;
-                fragConfig = std::move(other.fragConfig);
-                attribLocations = std::move(other.attribLocations);
-                uniformLocations = std::move(other.uniformLocations);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLuint id;
-
-        VertexLayoutPool vertexLayoutPool;
-
-        using BufferFillerFunc = std::function<void(ProgramInfo*, const VertexLayout&, VertexPool::AllocResult&)>;
-        BufferFillerFunc bufferFiller;
-
-        struct {
-            std::string textureUniformName = "uTexture";
-            std::optional<std::string> colorUniformName = "uColor";
-        } fragConfig;
-
-        void attachShader(ShaderInfo* shader) {
-            glRef->glAttachShader(id, shader->id);
-            attribLocations.clear();
-            uniformLocations.clear();
-        }
-
-        bool link(std::string* outLog = nullptr) {
-            glRef->glLinkProgram(id);
-            GLint status = 0;
-            glRef->glGetProgramiv(id, GL_LINK_STATUS, &status);
-            if (outLog) {
-                GLint logLen = 0;
-                glRef->glGetProgramiv(id, GL_INFO_LOG_LENGTH, &logLen);
-                if (logLen > 0) {
-                    outLog->resize(logLen);
-                    GLsizei written = 0;
-                    glRef->glGetProgramInfoLog(id, logLen, &written, (GLchar*)outLog->data());
-                    outLog->resize(written);
-                }
-            }
-            return status == GL_TRUE;
-        }
-
-        struct UsingGuard {
-            ProgramInfo* ref;
-
-            UsingGuard(ProgramInfo& program) : ref(&program) {
-                ref->glRef->glUseProgram(ref->id);
-            }
-
-            UsingGuard(const UsingGuard&) = delete;
-            UsingGuard& operator=(const UsingGuard&) = delete;
-            UsingGuard(UsingGuard&&) = delete;
-            UsingGuard& operator=(UsingGuard&&) = delete;
-
-            ~UsingGuard() {
-                // ref->glRef->glUseProgram(0);
-            }
-        };
-
-        UsingGuard use() {
-            return UsingGuard(*this);
-        }
-
-        struct Location {
-            ProgramInfo* ref;
-
-            GLint location;
-
-            void setf(GLfloat v0) { ref->glRef->glUniform1f(location, v0); }
-            void setf(GLfloat v0, GLfloat v1) { ref->glRef->glUniform2f(location, v0, v1); }
-            void setf(GLfloat v0, GLfloat v1, GLfloat v2) { ref->glRef->glUniform3f(location, v0, v1, v2); }
-            void setf(GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3) { ref->glRef->glUniform4f(location, v0, v1, v2, v3); }
-            
-            void seti(GLint v0) { ref->glRef->glUniform1i(location, v0); }
-            void seti(GLint v0, GLint v1) { ref->glRef->glUniform2i(location, v0, v1); }
-            void seti(GLint v0, GLint v1, GLint v2) { ref->glRef->glUniform3i(location, v0, v1, v2); }
-            void seti(GLint v0, GLint v1, GLint v2, GLint v3) { ref->glRef->glUniform4i(location, v0, v1, v2, v3); }
-
-            void setfa2(const std::array<GLfloat, 2>& value) { setf(value[0], value[1]); }
-            void setfa3(const std::array<GLfloat, 3>& value) { setf(value[0], value[1], value[2]); }
-            void setfa4(const std::array<GLfloat, 4>& value) { setf(value[0], value[1], value[2], value[3]); }
-
-            void setv2(const GLvec2& value) { setf(value.x, value.y); }
-            void setv3(const GLvec3& value) { setf(value.x, value.y, value.z); }
-            void setv4(const GLvec4& value) { setf(value.x, value.y, value.z, value.w); }
-
-            void set1fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform1fv(location, count, value); }
-            void set2fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform2fv(location, count, value); }
-            void set3fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform3fv(location, count, value); }
-            void set4fv(GLsizei count, const GLfloat* value) { ref->glRef->glUniform4fv(location, count, value); }
-
-            void set1iv(GLsizei count, const GLint* value) { ref->glRef->glUniform1iv(location, count, value); }
-            void set2iv(GLsizei count, const GLint* value) { ref->glRef->glUniform2iv(location, count, value); }
-            void set3iv(GLsizei count, const GLint* value) { ref->glRef->glUniform3iv(location, count, value); }
-            void set4iv(GLsizei count, const GLint* value) { ref->glRef->glUniform4iv(location, count, value); }
-
-            void setMatrix2fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix2fv(location, count, transpose, value); }
-            void setMatrix3fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix3fv(location, count, transpose, value); }
-            void setMatrix4fv(GLsizei count, GLboolean transpose, const GLfloat* value) { ref->glRef->glUniformMatrix4fv(location, count, transpose, value); }
-
-            void set(const PhiShaderUniform& u) {
-                if (u.used == 1) setf(u.value[0]);
-                else if (u.used == 2) setf(u.value[0], u.value[1]);
-                else if (u.used == 3) setf(u.value[0], u.value[1], u.value[2]);
-                else if (u.used == 4) setf(u.value[0], u.value[1], u.value[2], u.value[3]);
-            }
-        };
-
-        GLint getAttribLocationPosition(const std::string& name) {
-            if (attribLocations.find(name) == attribLocations.end()) {
-                attribLocations[name] = glRef->glGetAttribLocation(id, (GLchar*)name.c_str());
-            }
-
-            return attribLocations[name];
-        }
-
-        GLint getUniformLocationPosition(const std::string& name) {
-            if (uniformLocations.find(name) == uniformLocations.end()) {
-                uniformLocations[name] = glRef->glGetUniformLocation(id, (GLchar*)name.c_str());
-            }
-
-            return uniformLocations[name];
-        }
-
-        Location getAttribLocation(const std::string& name) {
-            Location result;
-            result.ref = this;
-            result.location = getAttribLocationPosition(name);
-            return result;
-        }
-
-        Location getUniformLocation(const std::string& name) {
-            Location result;
-            result.ref = this;
-            result.location = getUniformLocationPosition(name);
-            return result;
-        }
-
-        void setVertices(VertexPool::AllocResult& vertices) {
-            if (!bufferFiller) return;
-            auto& vertexLayout = vertexLayoutPool.current();
-            bufferFiller(this, vertexLayout, vertices);
-        }
-
-        ~ProgramInfo() {
-            reset();
-        }
-
-        private:
-        std::unordered_map<std::string, GLint> attribLocations;
-        std::unordered_map<std::string, GLint> uniformLocations;
-
-        void reset() {
-            if (id) {
-                glRef->glDeleteProgram(id);
-                id = 0;
-            }
-        }
-    };
-
-    struct TextureInfo {
-        /* !docs
-        A texture object, which is created by `glGenTextures`.
-        */
-
-        TextureInfo() = default;
-        TextureInfo(const TextureInfo&) = delete;
-        TextureInfo& operator=(const TextureInfo&) = delete;
-
-        TextureInfo(TextureInfo&& other) noexcept
-            : glRef(other.glRef)
-            , target(other.target)
-            , id(std::exchange(other.id, 0))
-            , width(other.width) , height(other.height)
-            , frameBuffer(std::move(other.frameBuffer))
-            , pingPong(std::move(other.pingPong))
-        {}
-
-        TextureInfo& operator=(TextureInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                target = other.target;
-                id = std::exchange(other.id, 0);
-                width = other.width; height = other.height;
-                frameBuffer = std::move(other.frameBuffer);
-                pingPong = std::move(other.pingPong);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLenum target;
-        GLuint id;
-        
-        GLsizei width, height;
-        ep_sp<FramebufferInfo> frameBuffer;
-        ep_sp<TextureInfo> pingPong;
-
-        struct UsingGuard {
-            TextureInfo* ref;
-
-            GLenum index;
-
-            UsingGuard(TextureInfo& texture, GLenum index) : ref(&texture) {
-                this->index = index;
-                ref->glRef->glActiveTexture(GL_TEXTURE0 + index);
-                ref->glRef->glBindTexture(ref->target, ref->id);
-            }
-
-            // only GL_RGBA and GL_UNSIGNED_BYTE ;)
-            void image2D(GLsizei width, GLsizei height, const void* pixels) {
-                if (width <= 0 || height <= 0) return;
-
-                ref->glRef->glTexImage2D(ref->target, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-
-                GLfloat maxAniso = 0.0;
-                ref->glRef->glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
-                if (maxAniso > 0.0) ref->glRef->glTexParameterf(ref->target, GL_TEXTURE_MAX_ANISOTROPY_EXT, maxAniso);
-
-                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-                ref->width = width; ref->height = height;
-            }
-
-            void image2D(const DecodedRGBATexture& decoded) {
-                image2D(decoded.width, decoded.height, (void*)decoded.data.data());
-            }
-
-            void storage2D(GLint levels, GLenum internalformat, GLsizei width, GLsizei height) {
-                ref->glRef->glTexStorage2D(ref->target, levels, internalformat, width, height);
-            }
-
-            void image2DMultisample(GLsizei width, GLsizei height, GLsizei samples) {
-                ref->glRef->glTexImage2DMultisample(ref->target, samples, GL_RGBA8, width, height, GL_TRUE);
-                ref->width = width; ref->height = height;
-            }
-
-            ~UsingGuard() {
-                ref->glRef->glBindTexture(ref->target, 0);
-            }
-        };
-
-        UsingGuard use(GLenum index = 0) {
-            return UsingGuard(*this, index);
-        }
-
-        bool sizeIsSame(TextureInfo* other) {
-            return other->width == width && other->height == height;
-        }
-
-        bool sizeIsSame(GLsizei width, GLsizei height) {
-            return this->width == width && this->height == height;
-        }
-
-        GLvec2 size() {
-            return { width, height };
-        }
-
-        ~TextureInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (id) {
-                glRef->glDeleteTextures(1, &id);
-                id = 0;
-            }
-        }
-    };
-
-    struct FramebufferInfo {
-        /* !docs
-        A framebuffer object (FBO), which is created by `glGenFramebuffers`.
-        */
-
-        FramebufferInfo() = default;
-        FramebufferInfo(const FramebufferInfo&) = delete;
-        FramebufferInfo& operator=(const FramebufferInfo&) = delete;
-
-        FramebufferInfo(FramebufferInfo&& other) noexcept
-            : glRef(other.glRef)
-            , id(std::exchange(other.id, 0))
-        {}
-
-        FramebufferInfo& operator=(FramebufferInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                id = std::exchange(other.id, 0);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLuint id;
-
-        struct UsingGuard {
-            FramebufferInfo* ref;
-            GLenum target;
-            GLint savedId;
-
-            UsingGuard(FramebufferInfo& framebuffer, TextureInfo* texture, GLenum target) : ref(&framebuffer), target(target) {
-                ref->glRef->glGetIntegerv(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING : (target == GL_DRAW_FRAMEBUFFER ? GL_DRAW_FRAMEBUFFER_BINDING : GL_FRAMEBUFFER_BINDING), &savedId);
-                ref->glRef->glBindFramebuffer(target, ref->id);
-                ref->glRef->glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, texture->target, texture->id, 0);
-            }
-
-            ~UsingGuard() {
-                ref->glRef->glBindFramebuffer(target, savedId);
-            }
-        };
-
-        UsingGuard use(TextureInfo* texture, GLenum target) {
-            return UsingGuard(*this, texture, target);
-        }
-
-        ep_sp<UsingGuard> useSp(TextureInfo* texture, GLenum target) {
-            auto* guard = new UsingGuard(*this, texture, target);
-            return ep_sp<UsingGuard>(guard);
-        }
-
-        ~FramebufferInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (id) {
-                glRef->glDeleteFramebuffers(1, &id);
-                id = 0;
-            }
-        }
-    };
-
-    struct RenderbufferInfo {
-        /* !docs
-        A renderbuffer object (RBO), which is created by `glGenRenderbuffers`.
-        */
-
-        RenderbufferInfo() = default;
-        RenderbufferInfo(const RenderbufferInfo&) = delete;
-        RenderbufferInfo& operator=(const RenderbufferInfo&) = delete;
-
-        RenderbufferInfo(RenderbufferInfo&& other) noexcept
-            : glRef(other.glRef)
-            , id(std::exchange(other.id, 0))
-        {}
-
-        RenderbufferInfo& operator=(RenderbufferInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                id = std::exchange(other.id, 0);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLuint id;
-
-        struct UsingGuard {
-            RenderbufferInfo* ref;
-            GLint savedId;
-
-            UsingGuard(RenderbufferInfo& renderbuffer) : ref(&renderbuffer) {
-                ref->glRef->glGetIntegerv(GL_RENDERBUFFER_BINDING, &savedId);
-                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, ref->id);
-            }
-
-            void storage(GLenum internalformat, GLsizei width, GLsizei height) {
-                ref->glRef->glRenderbufferStorage(GL_RENDERBUFFER, internalformat, width, height);
-            }
-
-            ~UsingGuard() {
-                ref->glRef->glBindRenderbuffer(GL_RENDERBUFFER, savedId);
-            }
-        };
-
-        UsingGuard use() {
-            return UsingGuard(*this);
-        }
-
-        ~RenderbufferInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (id) {
-                glRef->glDeleteRenderbuffers(1, &id);
-                id = 0;
-            }
-        }
-    };
-
-    struct QueryInfo {
-        /* !docs
-        A query object, which is created by `glGenQueries`.
-        */
-
-        QueryInfo() = default;
-        QueryInfo(const QueryInfo&) = delete;
-        QueryInfo& operator=(const QueryInfo&) = delete;
-
-        QueryInfo(QueryInfo&& other) noexcept
-            : glRef(other.glRef)
-            , id(std::exchange(other.id, 0))
-        {}
-
-        QueryInfo& operator=(QueryInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                id = std::exchange(other.id, 0);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLuint id;
-
-        struct UsingGuard {
-            QueryInfo* ref;
-            GLenum target;
-
-            UsingGuard(QueryInfo& query, GLenum target) : ref(&query), target(target) {
-                ref->glRef->glBeginQuery(target, ref->id);
-            }
-
-            ~UsingGuard() {
-                ref->glRef->glEndQuery(target);
-            }
-        };
-
-        UsingGuard use(GLenum target = GL_TIME_ELAPSED) {
-            return UsingGuard(*this, target);
-        }
-
-        GLint getResultInt() const {
-            GLint result = 0;
-            glRef->glGetQueryObjectiv(id, GL_QUERY_RESULT, &result);
-            return result;
-        }
-
-        GLuint64 getResultUInt64() const {
-            GLuint64 result = 0;
-            glRef->glGetQueryObjectui64v(id, GL_QUERY_RESULT, &result);
-            return result;
-        }
-
-        bool isResultAvailable() const {
-            GLint result = 0;
-            glRef->glGetQueryObjectiv(id, GL_QUERY_RESULT_AVAILABLE, &result);
-            return result != 0;
-        }
-
-        ~QueryInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (id) {
-                glRef->glDeleteQueries(1, &id);
-                id = 0;
-            }
-        }
-    };
-
-    struct SyncInfo {
-        /* !docs
-        A sync object, which is created by `glFenceSync`.
-        */
-
-        SyncInfo() = default;
-        SyncInfo(const SyncInfo&) = delete;
-        SyncInfo& operator=(const SyncInfo&) = delete;
-
-        SyncInfo(SyncInfo&& other) noexcept
-            : glRef(other.glRef)
-            , sync(std::exchange(other.sync, nullptr))
-        {}
-
-        SyncInfo& operator=(SyncInfo&& other) noexcept {
-            if (this != &other) {
-                reset();
-                glRef = other.glRef;
-                sync = std::exchange(other.sync, nullptr);
-            }
-
-            return *this;
-        }
-
-        GL33CoreInterface* glRef;
-
-        GLsync sync;
-
-        GLenum wait(GLbitfield flags, GLuint64 timeout = GL_TIMEOUT_IGNORED) const {
-            return glRef->glClientWaitSync(sync, flags, timeout);
-        }
-
-        bool isSignaled() const {
-            GLint status;
-            glRef->glGetSynciv(sync, GL_SYNC_STATUS, 1, nullptr, &status);
-            return status == GL_SIGNALED;
-        }
-
-        ~SyncInfo() {
-            reset();
-        }
-
-        private:
-        void reset() {
-            if (sync) {
-                glRef->glDeleteSync(sync);
-                sync = nullptr;
-            }
-        }
-    };
-
-    template <typename T, typename U>
-    bool operator==(const ep_sp<T>& a, const ep_sp<U>& b) { return a.get() == b.get(); }
-    template <typename T>
-    bool operator==(const ep_sp<T>& a, std::nullptr_t) { return !a; }
-    template <typename T>
-    bool operator==(std::nullptr_t, const ep_sp<T>& a) { return !a; }
-
-    static const char* defaultVertexShaderSource = R"(
-#version 330 core
-
-in vec2 inPosition;
-in vec2 inTexCoord;
-
-out vec2 fragTexCoord;
-
-void main() {
-    gl_Position = vec4(inPosition, 0.0, 1.0);
-    fragTexCoord = inTexCoord;
-}
-)";
-
-    static const char* defaultVertexShaderSource_RPE = R"(
-#version 100
-
-attribute vec2 inPosition;
-attribute vec2 inTexCoord;
-
-varying vec2 uv;
-
-void main() {
-    gl_Position = vec4(inPosition, 0.0, 1.0);
-    uv = inTexCoord;
-}
-)";
-
-    static const char* defaultFragmentShaderSource = R"(
-#version 330 core
-
-in vec2 fragTexCoord;
-
-uniform vec4 uColor;
-uniform sampler2D uTexture;
-
-out vec4 outColor;
-
-void main() {
-    outColor = uColor * texture(uTexture, fragTexCoord);
-}
-)";
-
-    struct YUV420Frame {
-        /* !docs
-        A YUV420 frame.
-        The data is stored in a `aligned_vector` with the following layout:
-        ```
-        y[width * height]
-        u[width * height / 4]
-        v[width * height / 4]
-        ```
-        */
-
-        aligned_vector<ep_u8, 16> data;
-        ep_u64 width, height;
-
-        void ensureSize() {
-            if (data.size() != getDataSize()) {
-                data.resize(getDataSize());
-            }
-        }
-
-        static ep_sp<YUV420Frame> Make(ep_u64 width, ep_u64 height) {
-            auto* frame = new YUV420Frame();
-            frame->width = width;
-            frame->height = height;
-            frame->ensureSize();
-            return ep_sp<YUV420Frame>(frame);
-        }
-
-        ep_sp<YUV420Frame> move() {
-            auto* frame = new YUV420Frame();
-            frame->data = std::move(data);
-            frame->width = width;
-            frame->height = height;
-            return ep_sp<YUV420Frame>(frame);
-        }
-
-        ep_u64 getDataSize() const { return width * height * 3 / 2; }
-
-        ep_u8* y() const { return (ep_u8*)data.data(); }
-        ep_u8* u() const { return (ep_u8*)data.data() + width * height; }
-        ep_u8* v() const { return (ep_u8*)data.data() + width * height + width * height / 4; }
-        ep_u64 rowBytesY() const { return width; }
-        ep_u64 rowBytesU() const { return width / 2; }
-        ep_u64 rowBytesV() const { return width / 2; }
-
-        void fromPtr(void* ptr) {
-            /* !docs
-            Fills the frame with data from a pointer.
-            */
-
-            memcpy(data.data(), ptr, getDataSize());
-        }
-    };
-
-    struct GL33Context {
-        /* !docs
-        A gl context.
-        */
-
-        GL33Context() = default;
-        GL33Context(const GL33Context&) = delete;
-        GL33Context& operator=(const GL33Context&) = delete;
-        GL33Context(GL33Context&&) = delete;
-        GL33Context& operator=(GL33Context&&) = delete;
-
-        GL33CoreInterface gl;
-
-        ep_u64 drawCallsCount = 0;
-
-        static ep_sp<GL33Context> Make(const GL33CoreInterface& interface) {
-            auto* ctx = new GL33Context();
-            ctx->gl = interface;
-            ctx->initDefaultResources();
-            return ep_sp<GL33Context>(ctx);
-        }
-
-        GLenum getError() const { return gl.glGetError(); }
-        bool hasError() const { return getError() != GL_NO_ERROR; }
-
-        void enable(GLenum cap) { gl.glEnable(cap); }
-        void disable(GLenum cap) { gl.glDisable(cap); }
-        bool isEnabled(GLenum cap) const { return gl.glIsEnabled(cap); }
-
-        struct GLFeatureGuard {
-            GL33Context* glCtx;
-            GLenum cap; bool enable;
-
-            GLFeatureGuard(GL33Context* glCtx, GLenum cap, bool enable) : glCtx(glCtx), cap(cap), enable(enable) {}
-            GLFeatureGuard(const GLFeatureGuard&) = delete;
-            GLFeatureGuard& operator=(const GLFeatureGuard&) = delete;
-            GLFeatureGuard(GLFeatureGuard&& other) = delete;
-            GLFeatureGuard& operator=(GLFeatureGuard&& other) = delete;
-
-            ~GLFeatureGuard() {
-                if (enable && !glCtx->isEnabled(cap)) glCtx->enable(cap);
-                else if (!enable && glCtx->isEnabled(cap)) glCtx->disable(cap);
-            }
-        };
-
-        GLFeatureGuard getFeatureGuard(GLenum cap) {
-            /* !docs
-            Returns a guard that will keep the feature enabled or disabled when it goes out of scope.
-            */
-
-            return GLFeatureGuard(this, cap, isEnabled(cap));
-        }
-
-        void setViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
-            currentViewport = { x, y, width, height };
-            gl.glViewport(x, y, width, height);
-        }
-
-        void setViewport(GLsizei width, GLsizei height) { setViewport(0, 0, width, height); }
-        void setViewport(const GLvec2& xy, const GLvec2& wh) { setViewport(xy.x, xy.y, wh.x, wh.y); }
-        void setViewport(const GLvec4& rect) { setViewport(rect.x, rect.y, rect.z, rect.w); }
-
-        void setScissor(GLint x, GLint y, GLsizei width, GLsizei height) { gl.glScissor(x, y, width, height); }
-        void setScissor(GLsizei width, GLsizei height) { gl.glScissor(0, 0, width, height); }
-
-        void setClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) { gl.glClearColor(r, g, b, a); }
-        
-        void clear(GLbitfield mask) { gl.glClear(mask); }
-
-        void flush() { gl.glFlush(); }
-        void finish() { gl.glFinish(); }
-
-        GLint getInteger(GLenum pname) const { GLint result; gl.glGetIntegerv(pname, &result); return result; }
-        GLfloat getFloat(GLenum pname) const { GLfloat result; gl.glGetFloatv(pname, &result); return result; }
-        const char* getString(GLenum pname) const { auto* res = (const char*)gl.glGetString(pname); return res ? res : ""; }
-        const char* getStringi(GLenum pname, GLuint index) const { auto* res = (const char*)gl.glGetStringi(pname, index); return res ? res : ""; }
-
-        ep_sp<BufferInfo> createBuffer(GLenum target = GL_ARRAY_BUFFER) {
-            auto* info = new BufferInfo();
-            info->glRef = &gl;
-            info->target = target;
-            gl.glGenBuffers(1, &info->id);
-            return ep_sp<BufferInfo>(info);
-        }
-
-        ep_sp<VertexArrayInfo> createVertexArray() {
-            auto* info = new VertexArrayInfo();
-            info->glRef = &gl;
-            gl.glGenVertexArrays(1, &info->id);
-            return ep_sp<VertexArrayInfo>(info);
-        }
-
-        ep_sp<ShaderInfo> createShader(GLenum type) {
-            auto* info = new ShaderInfo();
-            info->glRef = &gl;
-            info->type = type;
-            info->id = gl.glCreateShader(type);
-            return ep_sp<ShaderInfo>(info);
-        }
-
-        ep_sp<ProgramInfo> createProgram() {
-            auto* info = new ProgramInfo();
-            info->glRef = &gl;
-            info->id = gl.glCreateProgram();
-            return ep_sp<ProgramInfo>(info);
-        }
-
-        ep_sp<TextureInfo> createTexture(GLenum target = GL_TEXTURE_2D) {
-            auto* info = new TextureInfo();
-            info->glRef = &gl;
-            info->target = target;
-            gl.glGenTextures(1, &info->id);
-            info->frameBuffer = createFramebuffer();
-            return ep_sp<TextureInfo>(info);
-        }
-
-        ep_sp<FramebufferInfo> createFramebuffer() {
-            auto* info = new FramebufferInfo();
-            info->glRef = &gl;
-            gl.glGenFramebuffers(1, &info->id);
-            return ep_sp<FramebufferInfo>(info);
-        }
-
-        GLenum checkFramebufferStatus(GLenum target = GL_FRAMEBUFFER) const {
-            return gl.glCheckFramebufferStatus(target);
-        }
-
-        bool isFramebufferComplete(GLenum target = GL_FRAMEBUFFER) const {
-            return gl.glCheckFramebufferStatus(target) == GL_FRAMEBUFFER_COMPLETE;
-        }
-
-        ep_sp<RenderbufferInfo> createRenderbuffer() {
-            auto* info = new RenderbufferInfo();
-            info->glRef = &gl;
-            gl.glGenRenderbuffers(1, &info->id);
-            return ep_sp<RenderbufferInfo>(info);
-        }
-
-        void framebufferRenderbuffer(GLenum target, GLenum attachment, const RenderbufferInfo& renderbuffer) {
-            gl.glFramebufferRenderbuffer(target, attachment, GL_RENDERBUFFER, renderbuffer.id);
-        }
-        
-        void blendFunc(GLenum sfactor, GLenum dfactor) { gl.glBlendFunc(sfactor, dfactor); }
-        void blendFuncSeparate(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha) { gl.glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha); }
-        void blendEquation(GLenum mode) { gl.glBlendEquation(mode); }
-        void blendEquationSeparate(GLenum modeRGB, GLenum modeAlpha) { gl.glBlendEquationSeparate(modeRGB, modeAlpha); }
-        void blendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) { gl.glBlendColor(r, g, b, a); }
-        
-        void depthFunc(GLenum func) { gl.glDepthFunc(func); }
-        void depthMask(GLboolean flag) { gl.glDepthMask(flag); }
-
-        void stencilFunc(GLenum func, GLint ref, GLuint mask) { gl.glStencilFunc(func, ref, mask); }
-        void stencilOp(GLenum sfail, GLenum dpfail, GLenum dppass) { gl.glStencilOp(sfail, dpfail, dppass); }
-        void stencilMask(GLuint mask) { gl.glStencilMask(mask); }
-
-        void colorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a) { gl.glColorMask(r, g, b, a); }
-
-        ep_sp<QueryInfo> createQuery() {
-            auto* info = new QueryInfo();
-            info->glRef = &gl;
-            gl.glGenQueries(1, &info->id);
-            return ep_sp<QueryInfo>(info);
-        }
-
-        ep_sp<SyncInfo> createSync(GLenum condition = GL_SYNC_GPU_COMMANDS_COMPLETE, GLbitfield flags = 0) {
-            auto* info = new SyncInfo();
-            info->glRef = &gl;
-            info->sync = gl.glFenceSync(condition, flags);
-            return ep_sp<SyncInfo>(info);
-        }
-
-        ep_sp<ProgramInfo> createConfiguredProgram(const std::string& fragCode, const std::string& vertCode = defaultVertexShaderSource) {
-            /* !docs
-            Creates a configured program with default vertex shader and given fragment shader.
-            */
-
-            auto vert = createShader(GL_VERTEX_SHADER);
-            auto frag = createShader(GL_FRAGMENT_SHADER);
-            
-            vert->source(vertCode);
-            frag->source(fragCode);
-
-            std::string log;
-            if (!vert->compile(&log)) throw std::runtime_error("vertex compile: " + log);
-            if (!frag->compile(&log)) throw std::runtime_error("fragment compile: " + log);
-
-            auto prog = createProgram();
-            prog->attachShader(vert.get());
-            prog->attachShader(frag.get());
-            if (!prog->link(&log)) throw std::runtime_error("program link: " + log);
-
-            prog->vertexLayoutPool.resize(8, [&]() { return VertexLayout { .vao = createVertexArray(), .vbo = createBuffer() }; });
-            prog->vertexLayoutPool.configure([&](VertexArrayInfo* vao, BufferInfo* vbo) {
-                auto vaoGuard = vao->use();
-                auto vboGuard = vbo->use();
-                auto inPosition = prog->getAttribLocationPosition("inPosition");
-                auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
-                vaoGuard.enable(inPosition);
-                vaoGuard.enable(inTexCoord);
-                vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
-                vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
-            });
-
-            prog->bufferFiller = [](ProgramInfo* prog, const VertexLayout& vertexLayout, VertexPool::AllocResult& vertices) {
-                auto vaoGuard = vertexLayout.vao->use();
-                auto vboGuard = vertexLayout.vbo->use();
-                vboGuard.data(
-                    vertices.count * sizeof(Vertex),
-                    vertices.vertices,
-                    GL_DYNAMIC_DRAW
-                );
-            };
-
-            return prog;
-        }
-
-        struct ProgramPresets {
-            /* !docs
-            A struct containing some preconfigured programs.
-            */
-
-            static ep_sp<ProgramInfo> gaussianBlur(GL33Context* glCtx) {
-                return glCtx->createConfiguredProgram(R"(
-#version 330 core
-
-in vec2 fragTexCoord;
-
-uniform vec4 uColor;
-uniform sampler2D uTexture;
-
-uniform vec2 uDelta; // (0, 1) or (1, 0)
-uniform float uRadius; // 0.0 - 1.0
-uniform int uIterations;
-uniform bool uUseColor;
-
-out vec4 outColor;
-
-vec4 sampleTexture(vec2 texCoord) {
-    return texture(uTexture, texCoord);
-}
-
-float gaussian(float x) {
-    return exp(-x * x / 0.24);
-}
-
-void main() {
-    vec4 sum = vec4(0.0);
-    float wsum = 0.0;
-    
-    for (int i = -uIterations; i <= uIterations; i++) {
-        float offset = float(i) / float(uIterations);
-        float weight = gaussian(offset);
-        sum += sampleTexture(fragTexCoord + uDelta * offset * uRadius) * weight;
-        wsum += weight;
-    }
-
-    outColor = sum / wsum;
-    outColor.a = 1.0;
-
-    if (uUseColor) {
-        outColor *= uColor;
-    }
-}
-)");
-            }
-
-            static ep_sp<ProgramInfo> yuvConverter(GL33Context* glCtx) {
-                auto prog = glCtx->createConfiguredProgram(R"(
-#version 330 core
-
-in vec2 fragTexCoord;
-
-uniform sampler2D uTexture;
-uniform ivec2 uResolution;
-uniform bool uFlipY;
-
-out vec4 outColor;
-
-vec3 getPixel(int x, int y) {
-    return texelFetch(uTexture, ivec2(x, uResolution.y - y - 1), 0).xyz;
-}
-
-float getY(int x, int y) {
-    vec3 pixel = getPixel(x, y);
-    return dot(pixel, vec3(0.299, 0.587, 0.114));
-}
-
-float getU(int x, int y) {
-    vec3 pixel = (
-        getPixel(x, y)
-        + getPixel(x, y + 1)
-        + getPixel(x + 1, y)
-        + getPixel(x + 1, y + 1)
-    ) * 0.25;
-    return dot(pixel, vec3(-0.168736, -0.331264, 0.5)) + 0.5;
-}
-
-float getV(int x, int y) {
-    vec3 pixel = (
-        getPixel(x, y)
-        + getPixel(x, y + 1)
-        + getPixel(x + 1, y)
-        + getPixel(x + 1, y + 1)
-    ) * 0.25;
-    return dot(pixel, vec3(0.5, -0.418688, -0.081312)) + 0.5;
-}
-
-float getYI(int index) {
-    return getY(index % uResolution.x, index / uResolution.x);
-}
-
-float getUI(int index) {
-    return getU((index % (uResolution.x / 2)) * 2, index / (uResolution.x / 2) * 2);
-}
-
-float getVI(int index) {
-    return getV((index % (uResolution.x / 2)) * 2, index / (uResolution.x / 2) * 2);
-}
-
-void main() {
-    int w = uResolution.x; int h = uResolution.y;
-    ivec2 curr_pos = ivec2(fragTexCoord * vec2(uResolution));
-    if (!uFlipY) curr_pos.y = h - curr_pos.y - 1;
-    int byte_index = (int(curr_pos.x) + int(curr_pos.y) * w) * 4;
-
-    int y_bytes = w * h; int uv_bytes = y_bytes / 4;
-
-    if (byte_index < y_bytes) {
-        int pixel_index = byte_index;
-        outColor = vec4(
-            getYI(pixel_index), getYI(pixel_index + 1),
-            getYI(pixel_index + 2), getYI(pixel_index + 3)
-        );
-    } else if (byte_index < y_bytes + uv_bytes) {
-        int pixel_index = byte_index - y_bytes;
-        outColor = vec4(
-            getUI(pixel_index), getUI(pixel_index + 1),
-            getUI(pixel_index + 2), getUI(pixel_index + 3)
-        );
-    } else if (byte_index < y_bytes + uv_bytes * 2) {
-        int pixel_index = byte_index - y_bytes - uv_bytes;
-        outColor = vec4(
-            getVI(pixel_index), getVI(pixel_index + 1),
-            getVI(pixel_index + 2), getVI(pixel_index + 3)
-        );
-    } else outColor = vec4(0);
-}
-)");
-                prog->fragConfig.colorUniformName = std::nullopt;
-                return prog;
-            }
-        };
-
-        void drawMesh(Mesh& mesh) noexcept {
-            /* !docs
-            Draw a mesh.
-            */
-
-            if (!vertexPool->valid(mesh.vertices)) {
-                std::abort();
-            }
-
-            auto* prog = mesh.program ? mesh.program : defaultProgram.get();
-            auto* tex = mesh.texture ? mesh.texture : defaultWhiteTexture.get();
-
-            prog->vertexLayoutPool.checkAndNext(frameSig);
-            prog->setVertices(mesh.vertices);
-
-            auto progGuard = prog->use();
-            auto& vertexLayout = prog->vertexLayoutPool.current();
-            auto vaoGuard = vertexLayout.vao->use();
-            auto texGuard = tex->use();
-
-            if (prog->fragConfig.colorUniformName.has_value()) {
-                prog->getUniformLocation(prog->fragConfig.colorUniformName.value()).setv4(mesh.color);
-            }
-
-            prog->getUniformLocation(prog->fragConfig.textureUniformName).seti(texGuard.index);
-
-            gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.count);
-            drawCallsCount++;
-        }
-
-        struct Canvas;
-        Canvas getCanvas();
-
-        GLvec4 getViewport() const { return currentViewport; }
-
-        struct ViewportGuard {
-            GL33Context* glCtx;
-            GLvec4 vp;
-
-            ViewportGuard(GL33Context* glCtx, GLvec4 vp) : glCtx(glCtx), vp(vp) {}
-            ViewportGuard(const ViewportGuard&) = delete;
-            ViewportGuard& operator=(const ViewportGuard&) = delete;
-            ViewportGuard(ViewportGuard&& other) = delete;
-            ViewportGuard& operator=(ViewportGuard&& other) = delete;
-            ~ViewportGuard() { glCtx->setViewport(vp); }
-        };
-
-        ViewportGuard getViewportGuard() {
-            /* !docs
-            Get a guard that will restore viewport on destruction.
-            */
-
-            return ViewportGuard(this, getViewport());
-        }
-
-        void copyTexture(TextureInfo* src, TextureInfo* dst) {
-            /* !docs
-            Copy texture to another texture.
-            */
-
-            if (!dst->sizeIsSame(src)) {
-                dst->use().image2D(src->width, src->height, nullptr);
-            }
-
-            auto srcFbGuard = src->frameBuffer->use(src, GL_READ_FRAMEBUFFER);
-            auto dstGuard = dst->use();
-
-            gl.glCopyTexSubImage2D(
-                GL_TEXTURE_2D, 0,
-                0, 0,
-                0, 0,
-                src->width, src->height
-            );
-        }
-
-        void copyCurrentToTexture(TextureInfo* dst) {
-            /* !docs
-            Copy current framebuffer to texture.
-            It supports multisampling framebuffers.
-            */
-
-            auto kfboGuard = getFBOGuard();
-            auto texFboGuard = dst->frameBuffer->use(dst, GL_DRAW_FRAMEBUFFER);
-            gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, kfboGuard.drawFbo);
-            gl.glBlitFramebuffer(
-                0, 0, dst->width, dst->height,
-                0, 0, dst->width, dst->height,
-                GL_COLOR_BUFFER_BIT, GL_NEAREST
-            );
-        }
-
-        ep_sp<TextureInfo> ensureTexturePingPong(TextureInfo* texture) {
-            /* !docs
-            Ensures that texture has a ping-pong texture and returns it.
-            */
-
-            if (!texture->pingPong) texture->pingPong = createTexture();
-            copyTexture(texture, texture->pingPong.get());
-            return texture->pingPong;
-        }
-
-        void renderIntoTexture(TextureInfo* texture, Mesh& descMesh) {
-            /* !docs
-            Render mesh into texture.
-            */
-
-            auto vpGuard = getViewportGuard();
-            auto pingPong = ensureTexturePingPong(texture);
-            auto fbGuard = texture->frameBuffer->use(texture, GL_DRAW_FRAMEBUFFER);
-            auto feGuard = getFeatureGuard(GL_BLEND);
-
-            setViewport(texture->width, texture->height);
-            disable(GL_BLEND);
-
-            descMesh.vertices.reset();
-            descMesh.addFullRect();
-            descMesh.texture = pingPong.get();
-            drawMesh(descMesh);
-        }
-
-        void gaussianBlurToTexture(TextureInfo* texture, ep_f64 radius) {
-            /* !docs
-            Apply gaussian blur to texture.
-            */
-
-            auto mesh = requestMesh(6);
-            mesh.program = preloadedPrograms.gaussianBlur.get();
-            mesh.color = GLvec4::White();
-
-            auto progGuard = mesh.program->use();
-            mesh.program->getUniformLocation("uIterations").seti(std::ceil(radius / (1.0 + 0.15 * std::log2(radius + 1))));
-
-            mesh.program->getUniformLocation("uDelta").setv2({ 0.0, 1.0 });
-            mesh.program->getUniformLocation("uRadius").setf(radius / texture->height);
-            mesh.program->getUniformLocation("uUseColor").seti(false);
-            renderIntoTexture(texture, mesh);
-
-            mesh.program->getUniformLocation("uDelta").setv2({ 1.0, 0.0 });
-            mesh.program->getUniformLocation("uRadius").setf(radius / texture->width);
-            mesh.program->getUniformLocation("uUseColor").seti(true);
-            renderIntoTexture(texture, mesh);
-        }
-
-        void renderToDrawFbo(ep_u64 width, ep_u64 height, Mesh& descMesh) {
-            /* !docs
-            Render mesh into draw framebuffer.
-            */
-
-            auto tempTexGuard = allocTempTexture(width, height);
-            auto tempTex = tempTexGuard.get();
-            copyCurrentToTexture(tempTex.get());
-            auto feGuard = getFeatureGuard(GL_BLEND);
-
-            setViewport(width, height);
-            disable(GL_BLEND);
-
-            descMesh.vertices.reset();
-            descMesh.addFullRect();
-            descMesh.texture = tempTex.get();
-            drawMesh(descMesh);
-        }
-
-        bool getCurrentIsMultiSampled() {
-            /* !docs
-            Check if current framebuffer is multisampled.
-            */
-
-            GLint samples;
-            gl.glGetIntegerv(GL_SAMPLES, &samples);
-            return samples > 1;
-        }
-
-        struct {
-            ep_sp<ProgramInfo> gaussianBlur;
-            ep_sp<ProgramInfo> yuvConverter;
-        } preloadedPrograms; // !inline-docs| Preloaded programs.
-
-        void frameEnded() {
-            /* !docs
-            Please call this function at the end of each frame.
-            */
-
-            drawCallsCount = 0;
-            frameSig++;
-        }
-
-        Mesh requestMesh(ep_u64 verticesCount) {
-            /* !docs
-            Request mesh with specified number of vertices.
-            */
-
-            return {
-                .vertices = vertexPool->alloc(verticesCount)
-            };
-        }
-
-        struct AsyncFrameReader {
-            /* !docs
-            A frame reader which is used to read YUV420 frames from GPU.
-            */
-
-            GL33Context* glCtx;
-            ep_u64 frameWidth, frameHeight;
-
-            AsyncFrameReader() = default;
-            AsyncFrameReader(const AsyncFrameReader&) = delete;
-            AsyncFrameReader& operator=(const AsyncFrameReader&) = delete;
-            AsyncFrameReader(AsyncFrameReader&& other) = default;
-            AsyncFrameReader& operator=(AsyncFrameReader&& other) = default;
-
-            void initBufferSlots(ep_u64 size) {
-                for (ep_u64 i = 0; i < size; i++) addBufferSlot();
-            }
-
-            struct ReadResult {
-                ep_u64 size;
-                ep_u64 frameIndex;
-
-                ReadResult() = default;
-                ReadResult(const ReadResult&) = delete;
-                ReadResult& operator=(const ReadResult&) = delete;
-                ReadResult(ReadResult&& other) = default;
-                ReadResult& operator=(ReadResult&& other) = default;
-
-                static ep_sp<ReadResult> Make(ep_u64 size, ep_u64 frameIndex) {
-                    auto* result = new ReadResult();
-                    result->size = size;
-                    result->frameIndex = frameIndex;
-                    return ep_sp<ReadResult>(result);
-                }
-
-                ep_sp<BufferInfo> pbo;
-
-                struct UsingGuard {
-                    ep_sp<BufferInfo::UsingGuard> pboGuard;
-                    ep_sp<BufferInfo::UsingGuard::MappingGuard> mapGuard;
-
-                    UsingGuard(const ep_sp<BufferInfo>& pbo)
-                        : pboGuard(pbo->useSp())
-                        , mapGuard(pboGuard->mapSp(GL_READ_ONLY))
-                    {}
-                    
-                    UsingGuard(const UsingGuard&) = delete;
-                    UsingGuard& operator=(const UsingGuard&) = delete;
-                    UsingGuard(UsingGuard&& other) = default;
-                    UsingGuard& operator=(UsingGuard&& other) = default;
-
-                    ep_u8* data() const {
-                        return (ep_u8*)mapGuard->data;
-                    }
-                };
-
-                UsingGuard use() {
-                    return UsingGuard(pbo);
-                }
-            };
-
-            void requestRead() {
-                /* !docs
-                Requests read this frame.
-                It will automatically call `@flush`.
-                */
-
-                flush();
-
-                for (auto& slot : bufferSlots) {
-                    if (!slot.sync) {
-                        readToSlot(slot);
-                        return;
-                    }
-                }
-
-                addBufferSlot();
-                readToSlot(bufferSlots.back());
-            }
-
-            using CallbackFunc = std::function<void(ReadResult&)>;
-            CallbackFunc callback;
-
-            void flush() {
-                /* !docs
-                Flushes read results.
-                */
-
-                for (auto& slot : bufferSlots) {
-                    if (!slot.sync || !slot.sync->isSignaled()) continue;
-                    slot.sync = nullptr;
-
-                    auto result = ReadResult::Make(getBufferSize(), slot.frameIndex);
-                    result->pbo = std::move(slot.buffer);
-                    readResults.push_back(result);
-                }
-
-                emit();
-            }
-
-            void finish() {
-                /* !docs
-                Waits for all read results to be flushed.
-                */
-
-                glCtx->finish();
-
-                for (auto& slot : bufferSlots) {
-                    if (!slot.sync) continue;
-                    slot.sync->wait(GL_SYNC_FLUSH_COMMANDS_BIT);
-                    flush();
-                }
-            }
-
-            private:
-            struct BufferSlot {
-                ep_sp<BufferInfo> buffer;
-                ep_sp<TextureInfo> texture;
-                ep_sp<SyncInfo> sync;
-                ep_u64 frameIndex;
-            };
-
-            std::vector<BufferSlot> bufferSlots;
-            std::vector<ep_sp<BufferInfo>> pendingBuffers;
-            std::vector<ep_sp<ReadResult>> readResults;
-            ep_u64 currentFrameIndex;
-            ep_u64 lastEmitFrameIndex;
-
-            void addBufferSlot() {
-                if (frameWidth % 2 != 0 || frameHeight % 2 != 0) throw std::runtime_error("Frame size must be even");
-
-                auto& slot = bufferSlots.emplace_back();
-                slot.buffer = allocPbo();
-            }
-
-            void readToSlot(BufferSlot& slot) {
-                if (!slot.buffer) slot.buffer = allocPbo();
-
-                if (glCtx->getCurrentIsMultiSampled()) {
-                    if (!slot.texture) {
-                        slot.texture = glCtx->createTexture();
-                        slot.texture->use().image2D(frameWidth, frameHeight, nullptr);
-                    }
-
-                    glCtx->copyCurrentToTexture(slot.texture.get());
-                    auto fboGuard = slot.texture->frameBuffer->use(slot.texture.get(), GL_FRAMEBUFFER);
-                    readToSlotDirect(slot);
-                } else {
-                    readToSlotDirect(slot);
-                }
-            }
-
-            void readToSlotDirect(BufferSlot& slot) {
-                glCtx->convertToYUV(frameWidth, frameHeight, true);
-                auto pboGuard = slot.buffer->use();
-                glCtx->gl.glReadPixels(0, 0, frameWidth, getBufferHeight(), GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-                slot.sync = glCtx->createSync();
-                slot.frameIndex = currentFrameIndex++;
-            }
-
-            void emit() {
-                while (readResults.size()) {
-                    for (ep_u64 i = 0; i < readResults.size(); i++) {
-                        auto& result = readResults[i];
-                        if (result->frameIndex == 0 || result->frameIndex == lastEmitFrameIndex + 1) {
-                            lastEmitFrameIndex = result->frameIndex;
-                            callback(*result);
-                            pendingBuffers.push_back(std::move(result->pbo));
-                            readResults.erase(readResults.begin() + i);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            ep_sp<BufferInfo> allocPbo() {
-                if (pendingBuffers.empty()) {
-                    auto pbo = glCtx->createBuffer(GL_PIXEL_PACK_BUFFER);
-                    pbo->use().data(getBufferSize(), nullptr, GL_STREAM_READ);
-                    return pbo;
-                }
-
-                auto ret = std::move(pendingBuffers.back());
-                pendingBuffers.pop_back();
-                return ret;
-            }
-
-            ep_u64 getBufferHeight() {
-                return (frameHeight * 3 + 7) / 8;
-            }
-
-            ep_u64 getBufferSize() {
-                return frameWidth * getBufferHeight() * 4;
-            }
-        };
-
-        AsyncFrameReader createAsyncFrameReader(ep_u64 frameWidth, ep_u64 frameHeight) {
-            /* !docs
-            Creates an reader for reading frames from the current context.
-            */
-
-            AsyncFrameReader reader {};
-            reader.glCtx = this;
-            reader.frameWidth = frameWidth;
-            reader.frameHeight = frameHeight;
-            reader.initBufferSlots(4);
-            return reader;
-        }
-
-        struct FBOGuard {
-            GL33Context* glCtx;
-            GLint readFbo, drawFbo;
-
-            FBOGuard(GL33Context* glCtx) : glCtx(glCtx) {
-                glCtx->gl.glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFbo);
-                glCtx->gl.glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
-            }
-
-            FBOGuard(const FBOGuard&) = delete;
-            FBOGuard& operator=(const FBOGuard&) = delete;
-            FBOGuard(FBOGuard&& other) = delete;
-            FBOGuard& operator=(FBOGuard&& other) = delete;
-
-            ~FBOGuard() {
-                glCtx->gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
-                glCtx->gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFbo);
-            }
-        };
-
-        FBOGuard getFBOGuard() {
-            /* !docs
-            Creates a guard that will restore the draw&read framebuffer bindings when it goes out of scope.
-            */
-
-            return FBOGuard(this);
-        }
-
-        void convertToYUV(ep_u64 width, ep_u64 height, bool flipY = false) {
-            /* !docs
-            Converts the current framebuffer to YUV420 format.
-            */
-
-            auto mesh = requestMesh(6);
-            mesh.program = preloadedPrograms.yuvConverter.get();
-            mesh.color = GLvec4::White();
-
-            auto progGuard = mesh.program->use();
-            mesh.program->getUniformLocation("uResolution").seti(width, height);
-            mesh.program->getUniformLocation("uFlipY").seti(flipY);
-            renderToDrawFbo(width, height, mesh);
-        }
-
-        private:
-        ep_sp<ProgramInfo> defaultProgram;
-        ep_sp<TextureInfo> defaultWhiteTexture;
-        ep_sp<VertexPool> vertexPool;
-        bool resourcesInitialized = false;
-        GLvec4 currentViewport;
-        ep_u64 frameSig;
-
-        struct TempTextureSlot {
-            ep_sp<TextureInfo> tex;
-            bool isUsing;
-        };
-
-        std::vector<TempTextureSlot> tempTextureSlots;
-
-        void initDefaultResources() {
-            if (resourcesInitialized) return;
-            resourcesInitialized = true;
-            
-            defaultProgram = createConfiguredProgram(defaultFragmentShaderSource);
-            preloadedPrograms.gaussianBlur = ProgramPresets::gaussianBlur(this);
-            preloadedPrograms.yuvConverter = ProgramPresets::yuvConverter(this);
-
-            unsigned char whiteTextureData[16] = {
-                255, 255, 255, 255,
-                255, 255, 255, 255,
-                255, 255, 255, 255,
-                255, 255, 255, 255
-            };
-
-            defaultWhiteTexture = createTexture();
-            defaultWhiteTexture->use().image2D(
-                2, 2,
-                (void*)(&whiteTextureData[0])
-            );
-
-            enable(GL_BLEND);
-            blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-            gl.glReadBuffer(GL_COLOR_ATTACHMENT0);
-            gl.glDrawBuffer(GL_COLOR_ATTACHMENT0);
-
-            vertexPool = VertexPool::Make();
-        }
-
-        struct TempTextureGuard {
-            GL33Context* glCtx;
-            ep_u64 index;
-
-            TempTextureGuard(GL33Context* glCtx, ep_u64 index, ep_u64 width, ep_u64 height) : glCtx(glCtx), index(index) {
-                glCtx->tempTextureSlots[index].isUsing = true;
-
-                auto tex = get();
-                if (!tex->sizeIsSame(width, height)) {
-                    tex->use().image2D(width, height, nullptr);
-                }
-            }
-
-            ep_sp<TextureInfo> get() {
-                return glCtx->tempTextureSlots[index].tex;
-            }
-
-            TempTextureGuard(const TempTextureGuard&) = delete;
-            TempTextureGuard& operator=(const TempTextureGuard&) = delete;
-            TempTextureGuard(TempTextureGuard&& other) = delete;
-            TempTextureGuard& operator=(TempTextureGuard&& other) = delete;
-
-            ~TempTextureGuard() {
-                glCtx->tempTextureSlots[index].isUsing = false;
-            }
-        };
-
-        TempTextureGuard allocTempTexture(ep_u64 width, ep_u64 height) {
-            for (auto& slot : tempTextureSlots) {
-                if (!slot.isUsing) return TempTextureGuard(this, &slot - &tempTextureSlots[0], width, height);
-            }
-
-            auto& slot = tempTextureSlots.emplace_back();
-            slot.tex = createTexture();
-            return TempTextureGuard(this, &slot - &tempTextureSlots[0], width, height);
-        }
-    };
-
-    struct GL33Context::Canvas {
-        /* !docs
-        A canvas to draw on.
-        */
-
-        Transform2D transform;
-        GL33Context* glCtx;
-
-        GLvec2 toNDC(const GLvec2& pos) {
-            auto vp = glCtx->getViewport();
-            return {
-                (pos.x - vp.x) / vp.z * 2.0 - 1.0,
-                -((pos.y - vp.y) / vp.w * 2.0 - 1.0)
-            };
-        }
-
-        GLvec2 transformPoint(const GLvec2& pos) {
-            auto p = transform.transformPoint(pos.x, pos.y);
-            return { p.x, p.y };
-        }
-
-        void normVertices(VertexPool::AllocResult& vertices) {
-            for (auto& v : vertices) {
-                v.position = toNDC(transformPoint(v.position));
-            }
-        }
-
-        void resetTransform() { transform = Transform2D(); }
-        void translate(ep_f64 x, ep_f64 y) { transform.translate(x, y); }
-        void translate(const GLvec2& pos) { transform.translate(pos.x, pos.y); }
-        void scale(ep_f64 x, ep_f64 y) { transform.scale(x, y); }
-        void scale(const GLvec2& scale) { transform.scale(scale.x, scale.y); }
-        void rotate(ep_f64 angle) { transform.rotate(angle); }
-        void rotateDegrees(ep_f64 angle) { rotate(angle / 180.0 * std::numbers::pi); }
-
-        void save() { transformHistory.push_back(transform); }
-        void restore() { transform = transformHistory.back(); transformHistory.pop_back(); }
-
-        void drawMesh(Mesh& mesh) {
-            normVertices(mesh.vertices);
-            glCtx->drawMesh(mesh);
-        }
-
-        struct DrawRectConfig {
-            GLvec2 position, size;
-            GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
-            GLvec2 uvPosition = { 0.0, 0.0 };
-            GLvec2 uvSize = { 1.0, 1.0 };
-            TextureInfo* texture;
-        };
-        void drawRect(const DrawRectConfig& config) {
-            auto mesh = glCtx->requestMesh(6);
-            mesh.color = config.color;
-            mesh.texture = config.texture;
-            mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
-            drawMesh(mesh);
-        }
-
-        private:
-        std::vector<Transform2D> transformHistory;
-    };
-
-    GL33Context::Canvas GL33Context::getCanvas() {
-        /* !docs
-        Creates a canvas to draw on.
-        */
-
-        Canvas canvas {};
-        canvas.glCtx  = this;
-        return canvas;
-    }
-
-    struct VideoRecorder {
-        /* !docs
-        A video recorder, which records YUV420 frames to callback.
-        */
-
-        VideoRecorder() = default;
-        VideoRecorder(const VideoRecorder&) = delete;
-        VideoRecorder& operator=(const VideoRecorder&) = delete;
-        VideoRecorder(VideoRecorder&&) = delete;
-        VideoRecorder& operator=(VideoRecorder&&) = delete;
-
-        using CallbackFunc = std::function<void(ep_u64)>;
-        
-        struct Config {
-            ep_u64 nominalSize = 1920 * 1080 * 16;
-            bool callbackIsThreadSafe = false;
-            ep_u64 msaaSamples = 4;
-        };
-
-        static ep_sp<VideoRecorder> Make(
-            const ep_sp<GL33Context>& glCtx,
-            ep_u64 width, ep_u64 height,
-            const CallbackFunc& callback,
-            const Config& config
-        ) {
-            auto* recorder = new VideoRecorder();
-
-            recorder->glCtx = glCtx;
-            recorder->asyncFrameReader = glCtx->createAsyncFrameReader(width, height);
-            recorder->asyncFrameReader.callback = [=](GL33Context::AsyncFrameReader::ReadResult& result) {
-                recorder->ensureCallbackIsDone();
-                auto slotIndex = recorder->allocYUVFrameSlot();
-                auto& slot = recorder->yuvFrameSlots[slotIndex];
-                slot.frame->fromPtr(result.use().data());
-
-                if (!config.callbackIsThreadSafe) {
-                    recorder->callback(slotIndex);
-                } else {
-                    recorder->callbackThread = std::thread([=]() {
-                        recorder->callback(slotIndex);
-                    });
-                }
-            };
-
-            recorder->callback = callback;
-
-            auto surfacesCount = std::clamp<ep_u64>(
-                config.nominalSize / (width * height),
-                1, 512
-            );
-
-            for (ep_u64 i = 0; i < surfacesCount; i++) {
-                if (config.msaaSamples > 1) {
-                    auto surface = glCtx->createTexture(GL_TEXTURE_2D_MULTISAMPLE);
-                    surface->use().image2DMultisample(width, height, config.msaaSamples);
-                    recorder->surfaces.push_back(surface);
-                } else {
-                    auto surface = glCtx->createTexture(GL_TEXTURE_2D);
-                    surface->use().image2D(width, height, nullptr);
-                    recorder->surfaces.push_back(surface);
-                }
-            }
-
-            recorder->maxConcurrentYuvSlots = std::clamp<ep_u64>(
-                config.nominalSize / (width * height) * 4,
-                1, 4096
-            );
-
-            return ep_sp<VideoRecorder>(recorder);
-        }
-
-        struct FrameUsingGuard {
-            VideoRecorder* ref;
-
-            FrameUsingGuard(VideoRecorder& recorder) : ref(&recorder) {
-                auto& surface = ref->surfaces[ref->currentSurfaceIndex];
-                ref->currentSurfaceIndex = (ref->currentSurfaceIndex + 1) % ref->surfaces.size();
-                fboGuard = surface->frameBuffer->useSp(surface.get(), GL_FRAMEBUFFER);
-            }
-
-            FrameUsingGuard(const FrameUsingGuard&) = delete;
-            FrameUsingGuard& operator=(const FrameUsingGuard&) = delete;
-            FrameUsingGuard(FrameUsingGuard&&) = delete;
-            FrameUsingGuard& operator=(FrameUsingGuard&&) = delete;
-
-            ~FrameUsingGuard() {
-                ref->asyncFrameReader.requestRead();
-            }
-
-            private:
-            ep_sp<FramebufferInfo::UsingGuard> fboGuard;
-        };
-
-        FrameUsingGuard useFrame() {
-            return FrameUsingGuard(*this);
-        }
-
-        YUV420Frame* referYUVFrame(ep_u64 index) {
-            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
-            return yuvFrameSlots[index].frame.get();
-        }
-
-        void returnYUVFrame(ep_u64 index) {
-            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
-            yuvFrameSlots[index].isUsing = false;
-        }
-
-        void finish() {
-            asyncFrameReader.finish();
-            ensureCallbackIsDone();
-        }
-
-        ~VideoRecorder() {
-            finish();
-        }
-
-        private:
-        ep_sp<GL33Context> glCtx;
-        GL33Context::AsyncFrameReader asyncFrameReader;
-        CallbackFunc callback;
-        ep_u64 maxConcurrentYuvSlots;
-
-        std::vector<ep_sp<TextureInfo>> surfaces;
-        ep_u64 currentSurfaceIndex = 0;
-
-        struct YUVFrameSlot {
-            ep_sp<YUV420Frame> frame;
-            bool isUsing;
-        };
-
-        std::vector<YUVFrameSlot> yuvFrameSlots;
-        std::mutex yuvFrameSlotsMutex;
-        std::thread callbackThread;
-
-        void ensureCallbackIsDone() {
-            if (callbackThread.joinable()) callbackThread.join();
-        }
-
-        ep_u64 allocYUVFrameSlot() {
-            while (getYUVFrameSlotsInUse() > maxConcurrentYuvSlots) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            }
-
-            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
-
-            for (ep_u64 i = 0; i < yuvFrameSlots.size(); i++) {
-                auto& slot = yuvFrameSlots[i];
-                if (!slot.isUsing) {
-                    slot.isUsing = true;
-                    return i;
-                }
-            }
-
-            auto& slot = yuvFrameSlots.emplace_back();
-            slot.frame = YUV420Frame::Make(asyncFrameReader.frameWidth, asyncFrameReader.frameHeight);
-            slot.isUsing = true;
-            return yuvFrameSlots.size() - 1;
-        }
-
-        ep_u64 getYUVFrameSlotsInUse() {
-            std::lock_guard<std::mutex> guard(yuvFrameSlotsMutex);
-            return std::count_if(yuvFrameSlots.begin(), yuvFrameSlots.end(), [](const auto& slot) {
-                return slot.isUsing;
-            });
-        }
-    };
-};
-
-enum class ByteEndian {
-    Native,
-    Little,
-    Big
-};
-
-template<ByteEndian E>
-struct ByteWriter {
-    /* !docs
-    A class for writing bytes to a vector.
-    */
-
-    std::vector<ep_u8> data;
-
-    static ep_sp<ByteWriter<E>> Make() {
-        auto* writer = new ByteWriter<E>();
-        return ep_sp<ByteWriter<E>>(writer);
-    }
-
-    void writeBytes(const Data& data) {
-        this->data.insert(this->data.end(), data.data.begin(), data.data.end());
-    }
-
-    void writeBytes(const ep_u8* data, ep_u64 size) {
-        this->data.insert(this->data.end(), data, data + size);
-    }
-
-    void writeBytes(const std::string& data) {
-        writeBytes((const ep_u8*)data.data(), data.size());
-    }
-
-    void writeBytes(const std::vector<ep_u8>& data) {
-        writeBytes(data.data(), data.size());
-    }
-
-    template<typename T>
-    static T byte_swap(T val) {
-        if constexpr (sizeof(T) == 1) return val;
-        else if constexpr (sizeof(T) == 2) {
-            ep_u16 ret;
-            memcpy(&ret, &val, sizeof(T));
-            ret = __builtin_bswap16(ret);
-            memcpy(&val, &ret, sizeof(T));
-            return val;
-        } else if constexpr (sizeof(T) == 4) {
-            ep_u32 ret;
-            memcpy(&ret, &val, sizeof(T));
-            ret = __builtin_bswap32(ret);
-            memcpy(&val, &ret, sizeof(T));
-            return val;
-        } else if constexpr (sizeof(T) == 8) {
-            ep_u64 ret;
-            memcpy(&ret, &val, sizeof(T));
-            ret = __builtin_bswap64(ret);
-            memcpy(&val, &ret, sizeof(T));
-            return val;
-        } else {
-            static_assert(!sizeof(T), "Unsupported size");
-            return val;
-        }
-    }
-
-    template<typename T>
-    static T from_native(T val) {
-        if constexpr (E == ByteEndian::Native) return val;
-        #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-            else if constexpr (E == ByteEndian::Little) return val;
-            else return byte_swap(val);
-        #else
-            else if constexpr (E == ByteEndian::Big) return val;
-            else return byte_swap(val);
-        #endif
-    }
-
-    template<typename T>
-    void write(T value) {
-        static_assert(std::is_trivially_copyable_v<T>);
-        T write_val = from_native(value);
-        writeBytes((ep_u8*)&write_val, sizeof(T));
-    }
-
-    Data toData() const {
-        return { .data = data };
-    }
-};
-
-struct DecodedAudio {
-    /* !docs
-    A class to store decoded audio data.
-    The data is pcm 16-bit signed integer and interleaved.
-    */
-
-    std::vector<ep_i16> data;
-    ep_u64 channels;
-    ep_u64 sampleRate;
-
-    static ep_sp<DecodedAudio> Make() {
-        auto* audio = new DecodedAudio();
-        return ep_sp<DecodedAudio>(audio);
-    }
-
-    ep_u64 getSampleCount() const {
-        return data.size() / channels;
-    }
-
-    ep_u64 getSampleCount(ep_u64 sampleRate) const {
-        return (ep_f64)getSampleCount() * sampleRate / this->sampleRate;
-    }
-
-    ep_i16 sampleAt(ep_f64 index, ep_u64 channel_index, ep_u64 channels) const {
-        index = std::clamp<ep_f64>(index, 0, getSampleCount() - 1);
-
-        if (channels == this->channels) {
-            ep_f64 v1 = data[ep_i64(index) * channels + channel_index];
-            ep_f64 v2 = data[ep_i64(std::ceil(index)) * channels + channel_index];
-            return typed_clamp<ep_i16, ep_f64>(v1 + (v2 - v1) * (index - ep_i64(index)));
-        } else {
-            ep_f64 sum = 0;
-            for (ep_u64 i = 0; i < this->channels; i++) {
-                sum += data[ep_i64(index) * this->channels + i];
-            }
-
-            return typed_clamp<ep_i16, ep_f64>(sum / this->channels);
-        }
-    }
-
-    ep_i16 sampleAt(ep_i64 index, ep_u64 channel_index, ep_u64 channels, ep_u64 sampleRate) const {
-        return sampleAt((ep_f64)index / sampleRate * this->sampleRate, channel_index, channels);
-    }
-
-    ep_f64 getLengthInSeconds() const {
-        return (ep_f64)getSampleCount() / sampleRate;
-    }
-
-    ep_sp<DecodedAudio> copy() const {
-        auto audio = DecodedAudio::Make();
-        audio->data = data;
-        audio->channels = channels;
-        audio->sampleRate = sampleRate;
-        return audio;
-    }
-
-    void overlapIndex(const ep_sp<DecodedAudio>& other, ep_i64 start_index, ep_f64 volume = 1.0) {
-        ep_i64 end_index = start_index + other->getSampleCount(sampleRate);
-
-        if (start_index > (ep_i64)getSampleCount()) return;
-        if (end_index < 0) return;
-
-        start_index = std::max<ep_i64>(0, start_index);
-        end_index = std::min<ep_i64>(getSampleCount(), end_index);
-
-        for (ep_i64 i = start_index; i < end_index; i++) {
-            for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
-                ep_i64 k = i * channels + j;
-                data[k] = typed_clamp<ep_i16, ep_f64>((ep_f64)data[k] + other->sampleAt(i - start_index, j, channels, sampleRate) * volume);
-            }
-        }
-    }
-
-    void overlapSecond(const ep_sp<DecodedAudio>& other, ep_f64 start_time, ep_f64 volume = 1.0) {
-        overlapIndex(other, (ep_i64)(start_time * sampleRate), volume);
-    }
-
-    void applyVolume(ep_f64 volume) {
-        if (volume == 1.0) return;
-
-        for (ep_u64 i = 0; i < data.size(); i++) {
-            data[i] = typed_clamp<ep_i16, ep_f64>((ep_f64)data[i] * volume);
-        }
-    }
-
-    ep_u64 getSampleBytesSize() const {
-        return data.size() * sizeof(ep_i16);
-    }
-
-    Data toWav() const {
-        ByteWriter<ByteEndian::Little> writer;
-
-        writer.writeBytes("RIFF");
-        writer.write<ep_i32>(getSampleBytesSize() + 36);
-        writer.writeBytes("WAVEfmt ");
-        writer.write<ep_i32>(16);
-        writer.write<ep_i16>(1);
-        writer.write<ep_i16>(channels);
-        writer.write<ep_i32>(sampleRate);
-        writer.write<ep_i32>(sampleRate * channels * sizeof(ep_i16));
-        writer.write<ep_i16>(channels * sizeof(ep_i16));
-        writer.write<ep_i16>(16);
-        writer.writeBytes("data");
-        writer.write<ep_i32>(getSampleBytesSize());
-        for (ep_u64 i = 0; i < data.size(); i++) {
-            writer.write<ep_i16>(data[i]);
-        }
-        return writer.toData();
-    }
-
-    void resample(ep_u64 channels, ep_u64 sampleRate) {
-        std::vector<ep_i16> data;
-        ep_u64 sampleCount = getSampleCount(sampleRate);
-        data.resize(sampleCount * channels);
-
-        for (ep_u64 i = 0; i < sampleCount; i++) {
-            for (ep_u64 j = 0; j < channels; j++) {
-                data[i * channels + j] = sampleAt(i, j, channels, sampleRate);
-            }
-        }
-
-        this->data = data;
-        this->channels = channels;
-        this->sampleRate = sampleRate;
-    }
-};
-
-struct AudioEngine {
-    /* !docs
-    An audio engine to play audio.
-    */
-
-    AudioEngine() = default;
-    AudioEngine(const AudioEngine&) = delete;
-    AudioEngine& operator=(const AudioEngine&) = delete;
-    AudioEngine(AudioEngine&&) = delete;
-    AudioEngine& operator=(AudioEngine&&) = delete;
-
-    void* audioContext;
-    std::function<void(void*)> audioContextDestructor;
-
-    ep_u64 channels;
-    ep_u64 sampleRate;
-
-    struct Task {
-        ep_sp<DecodedAudio> audio;
-        ep_i64 offset;
-        ep_f64 volume = 1.0;
-        bool stopped;
-
-        static ep_sp<Task> Make() {
-            auto* task = new Task();
-            return ep_sp<Task>(task);
-        }
-    };
-
-    ep_i64 currentOffset;
-    ep_f64 currentOffsetTime;
-    std::vector<ep_sp<Task>> tasks;
-    ep_f64 volume = 1.0;
-
-    static ep_sp<AudioEngine> Make() {
-        auto* eng = new AudioEngine();
-        return ep_sp<AudioEngine>(eng);
-    }
-
-    ep_sp<Task> createTask(const ep_sp<DecodedAudio>& audio) {
-        auto task = Task::Make();
-        task->audio = audio;
-        task->offset = currentOffset;
-
-        std::lock_guard<std::mutex> guard(mtx);
-        tasks.push_back(task);
-        return task;
-    }
-
-    ep_f64 getTaskTime(const ep_sp<Task>& task) const {
-        return (ep_f64)(currentOffset - task->offset) / sampleRate + (globalTimer() - currentOffsetTime);
-    }
-
-    bool getTaskEnded(const ep_sp<Task>& task) const {
-        return (task->offset + (ep_i64)task->audio->getSampleCount(sampleRate) <= currentOffset) || task->stopped;
-    }
-
-    void seekTask(const ep_sp<Task>& task, ep_f64 time) const {
-        task->offset = currentOffset - (ep_i64)(time * sampleRate);
-    }
-
-    void callback(ep_i16* buffer, ep_i64 frameCount) {
-        /* !docs
-        Fills the buffer with audio data.
-        */
-
-        {
-            std::lock_guard<std::mutex> guard(mtx);
-            tasks.erase(std::remove_if(
-                tasks.begin(),
-                tasks.end(),
-                [&](const auto& task) { return getTaskEnded(task); }
-            ), tasks.end());
-            tasksCopied = tasks;
-        }
-
-        bufferCache.resize(frameCount * channels);
-        std::fill(bufferCache.begin(), bufferCache.end(), 0);
-
-        for (const auto& task : tasksCopied) {
-            ep_i64 startSample = currentOffset - task->offset;
-            ep_i64 endSample = startSample + frameCount;
-
-            if (startSample > (ep_i64)task->audio->getSampleCount(sampleRate)) continue;
-            if (endSample <= 0) continue;
-
-            startSample = std::max<ep_i64>(0, startSample);
-            endSample = std::min<ep_i64>(task->audio->getSampleCount(sampleRate), endSample);
-
-            for (ep_i64 i = startSample; i < endSample; i++) {
-                for (ep_i64 j = 0; j < (ep_i64)channels; j++) {
-                    ep_i16 sample = task->audio->sampleAt(i, j, channels, sampleRate);
-                    bufferCache[(i - startSample) * channels + j] += (ep_i32)sample * task->volume;
-                }
-            }
-        }
-
-        for (ep_i64 i = 0; i < (ep_i64)(frameCount * channels); i++) {
-            buffer[i] = typed_clamp<ep_i16, ep_i32>(bufferCache[i] * volume);
-        }
-
-        currentOffset += frameCount;
-        currentOffsetTime = globalTimer();
-    }
-
-    ~AudioEngine() {
-        if (audioContextDestructor) {
-            audioContextDestructor(audioContext);
-        }
-    }
-
-    private:
-    std::mutex mtx;
-    std::vector<ep_sp<Task>> tasksCopied;
-    std::vector<ep_i32> bufferCache;
-};
-
-struct PhiLineAttachUIData {
-    /* !docs
-    Data for attaching a phigros line which is attached ui.
-    */
-
-    Vec2 position, scale = { 1.0, 1.0 };
-    ep_f64 rotation;
-    Color color = { 1.0, 1.0, 1.0, 1.0 };
 };
 
 struct PhiCalculateFrameConfig {
@@ -8010,7 +7936,17 @@ struct PhiCalculatedFrame {
     }
 
     struct Cache {
-        std::unordered_map<EnumPhiLineAttachUI, PhiLineAttachUIData> attachUIDatas;
+        struct AttachUIData {
+            /* !docs
+            Data for attaching a phigros line which is attached ui.
+            */
+
+            Vec2 position, scale = { 1.0, 1.0 };
+            ep_f64 rotation;
+            Color color = { 1.0, 1.0, 1.0, 1.0 };
+        };
+
+        std::unordered_map<EnumPhiLineAttachUI, AttachUIData> attachUIDatas;
         std::unordered_map<EnumPhiNoteType, std::vector<CalculatedObject>> noteObjects;
 
         void clear() {
@@ -8862,7 +8798,7 @@ struct PhiTakeOverer {
             return tex;
         });
 
-        auto cvs = glCtx->getCanvas();
+        auto cvs = GL33Canvas::Make(glCtx.get());
 
         cvs.drawRect({
             .position = { calculatedFrame.unsafeBackgroundRect.x, calculatedFrame.unsafeBackgroundRect.y },
@@ -8989,13 +8925,8 @@ struct PhiTakeOverer {
                 {
                     auto guard = prog->use();
 
-                    for (auto& [k, v] : shadersDefaultUniforms[shader.id]) {
-                        prog->getUniformLocation(k).set(v);
-                    }
-
-                    for (auto& [k, v] : shader.uniforms) {
-                        prog->getUniformLocation(k).set(v);
-                    }
+                    for (auto& [k, v] : shadersDefaultUniforms[shader.id]) v.setToGlLocation(prog->getUniformLocation(k));
+                    for (auto& [k, v] : shader.uniforms) v.setToGlLocation(prog->getUniformLocation(k));
 
                     prog->getUniformLocation("screenSize").setf(calcConfig.screenSize.x, calcConfig.screenSize.y);
                 }
@@ -9092,7 +9023,7 @@ struct PhiTakeOverer {
     };
 
     void drawText(
-        GL::GL33Context::Canvas& cvs,
+        GL::GL33Canvas& cvs,
         DrawTextConfig& config
     ) {
         config.normScale();

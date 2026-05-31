@@ -180,11 +180,6 @@ struct VideoCap {
             avio_closep(&fmtCtx->pb);
         }
 
-        FreeResource();
-    }
-
-    private:
-    void FreeResource() {
         if (vSwFrame) av_frame_free(&vSwFrame);
         if (vCodecCtx) avcodec_free_context(&vCodecCtx);
         if (aCodecCtx) avcodec_free_context(&aCodecCtx);
@@ -498,7 +493,6 @@ struct Window {
         textRenderer = PhiStaticResourceHelpers::createTextRenderer();
 
         renderer = PhiTakeOverer::Make();
-
         renderer->textureDeocder = decodeImage;
         renderer->textRenderer = [this](const std::string& text, ep_u64 size) -> DecodedRGBATexture { return textRenderer->render(text, size); };
         renderer->noteTextureDataReader = PhiStaticResourceHelpers::noteTextureDataReader;

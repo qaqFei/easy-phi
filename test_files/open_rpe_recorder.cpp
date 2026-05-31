@@ -302,7 +302,7 @@ int main() {
             return;
         }
 
-        auto infos = easy_phi::parseRPEChartInfo(infoData);
+        auto infos = easy_phi::ParsedRPEChartInfo::parse(infoData);
         if (infos.empty()) {
             showErrorMsg(win.get(), L"info.txt 中找不到谱面信息");
         }

@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
             t += 1.0 / 120.0;
         }
 
-        info.Print();
+        info.print();
 
         return 0;
     }
