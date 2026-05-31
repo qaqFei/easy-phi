@@ -5056,13 +5056,10 @@ struct PhiEvent {
     A event item for the phigros chart.
     */
 
-    Vec2 timeZone; // !inline-docs| A second value.
+    Vec2 timeZone; // !inline-docs| in seconds.
     Vec2 valueZone;
     EnumPhiEventType type;
 
-    /* !docs
-    The easing component of the event.
-    */
     ep_f64 (* easingFunc)(void*, ep_f64);
     ep_f64 (* easingIntFunc)(void*, ep_f64);
     void* easingFuncContext;
@@ -9058,6 +9055,317 @@ struct PhiTakeOverer {
         auto task = audioEngine->createTask(audio);
         task->volume = sfxVolume;
     }
+};
+
+enum class EnumMilEventType : ep_u64 {
+    PositionX, PositionY,
+    Transparency, Size, Rotation,
+    FlowSpeed,
+    RelativeX, RelativeY,
+    LineBodyTransparency, LineHeadTransparency,
+    StoryBoardWidth, StoryBoardHeight,
+    Speed,
+    WholeTransparency,
+    StoryBoardLeftBottomX, StoryBoardLeftBottomY,
+    StoryBoardRightBottomX, StoryBoardRightBottomY,
+    StoryBoardLeftTopX, StoryBoardLeftTopY,
+    StoryBoardRightTopX, StoryBoardRightTopY,
+    Color,
+    VisibleArea,
+    MAX = VisibleArea + 1
+};
+
+enum class EnumMilNoteType {
+    Hit, Drag
+};
+
+enum class EnumMilStoryboardType {
+    Picture, Text
+};
+
+enum class EnumMilStoryboardLayer {
+    Background, Normal, Foreground
+};
+
+struct MilNoteTypeHelper {
+    /* !docs
+    A helper for converting milthm note type to `@EnumMilNoteType`.
+    */
+
+    static EnumMilNoteType FromInt(ep_u64 type) {
+        if (type == 0) return EnumMilNoteType::Hit;
+        if (type == 1) return EnumMilNoteType::Drag;
+        return EnumMilNoteType::Hit;
+    }
+};
+
+struct MilMeta {
+    /* !docs
+    The meta information of a milthm chart.
+    */
+
+    std::string title;
+    std::string composer;
+    std::string artist;
+    std::string charter;
+    std::string difficultyName;
+    ep_f64 difficultyValue;
+
+    enum class NoteFlowSpeedBehavior {
+        Override, Multiply, Add
+    };
+
+    NoteFlowSpeedBehavior noteFlowSpeedBehavior;
+
+    Vec2 worldOrigin, worldViewport; /* !inline-docs|
+    The world origin and viewport of the chart, used to normalize the positions.
+    */
+};
+
+struct MilBPMEvent {
+    /* !docs
+    A bpm event item for the milthm chart.
+    */
+
+    ep_f64 time; // !inline-docs| in seconds.
+    ep_f64 bpm;
+    ep_u64 beatsPerBar;
+};
+
+struct MilEventLayerIndexs {
+    /* !docs
+    The layer indexs preset of a milthm chart.
+    */
+
+    static constexpr ep_u64 UNIT = 1000000;
+
+    static constexpr ep_u64 DEFAULT = UNIT * 1;
+};
+
+struct MilEvent {
+    Vec2 timeZone; // !inline-docs| in seconds.
+    Vec2 valueZone;
+    EnumMilEventType type;
+
+    ep_f64 (* easingFunc)(void*, ep_f64);
+    ep_f64 (* easingIntFunc)(void*, ep_f64);
+    void* easingFuncContext;
+
+    ep_u64 layerIndex;
+
+    ep_f64 cumulativeValueAtStart;
+};
+
+struct MilAnimLayer {
+    /* !docs
+    A animation layer for the milthm chart.
+    Like `@PhiAnimLayer`.
+    */
+
+    std::vector<MilEvent> events[(ep_u64)EnumMilEventType::MAX];
+
+    void addEvent(const MilEvent& e) { events[(ep_u64)e.type].push_back(e); }
+    std::vector<MilEvent>& getEvents(EnumMilEventType type) { return events[(ep_u64)type]; }
+};
+
+struct MilAnimGroup {
+    /* !docs
+    A animation group for the milthm chart.
+    Like `@PhiAnimGroup`.
+    */
+
+    std::unordered_map<ep_u64, ep_u64> layerIndexMap;
+    std::vector<MilAnimLayer> layers;
+
+    void addEvent(const MilEvent& e) {
+        if (!layerIndexMap.contains(e.layerIndex)) {
+            layerIndexMap[e.layerIndex] = layers.size();
+            layers.push_back({});
+        }
+
+        layers[layerIndexMap[e.layerIndex]].addEvent(e);
+    }
+};
+
+struct MilAnimator {
+    /* !docs
+    The animator of a milthm chart.
+    Like `@PhiAnimator`.
+    */
+
+    std::unordered_map<ep_u64, MilAnimGroup> groups;
+
+    MilAnimGroup& requestGroup(ep_u64 index) {
+        return groups.try_emplace(index, MilAnimGroup {}).first->second;
+    }
+
+    template <typename T>
+    MilAnimGroup& requestGroup(T& obj) {
+        return requestGroup(obj.indexer.get());
+    }
+
+    template <typename T>
+    void addEvent(T& obj, const MilEvent& e) {
+        requestGroup(obj).addEvent(e);
+    }
+};
+
+struct MilNote {
+    ObjectIndexer indexer;
+
+    struct State {
+        ep_f64 lastUpdateTime;
+        bool playedHitsound;
+
+        void timeUpdated(ep_f64 t) noexcept {
+            if (lastUpdateTime > t) {
+                playedHitsound = false;
+            }
+
+            lastUpdateTime = t;
+        }
+
+        bool onPlayHitsound() noexcept {
+            if (!playedHitsound) {
+                playedHitsound = true;
+                return true;
+            }
+
+            return false;
+        }
+    };
+
+    EnumMilNoteType type;
+    Vec2 timeZone;
+    bool isFake, isAlwaysPerfect;
+
+    Vec2 floorPosition;
+    bool isSimul;
+
+    State state;
+
+    bool isHold() noexcept {
+        return !timeZone.isZeroZone() && type == EnumMilNoteType::Hit;
+    }
+};
+
+struct MilNoteGroup {
+    /* !docs
+    Like `@PhiNoteGroup`.
+    */
+
+    struct State {
+        ep_f64 lastUpdateTime;
+        ep_u64 firstNoteIndex;
+
+        void timeUpdated(ep_f64 t) noexcept {
+            if (lastUpdateTime > t) {
+                firstNoteIndex = 0;
+            }
+
+            lastUpdateTime = t;
+        }
+
+        void passedNoteIndex(ep_u64 index) noexcept {
+            if (firstNoteIndex == index) {
+                firstNoteIndex++;
+            }
+        }
+    };
+
+    std::vector<ep_u64> indexs;
+    bool breakable = true;
+
+    State state;
+};
+
+struct MilLine {
+    /* !docs
+    A line(track?) of the milthm chart.
+    */
+
+    ObjectIndexer indexer;
+
+    std::vector<MilNote> notes;
+
+    std::vector<MilNoteGroup> noteGroups;
+};
+
+struct MilStoryboardObject {
+    /* !docs
+    A storyboard object of the milthm chart.
+    */
+
+    ObjectIndexer indexer;
+
+    EnumMilStoryboardType type;
+    std::string data;
+    EnumMilStoryboardLayer layer;
+};
+
+struct MilStoryboardAssets {
+    /* !docs
+    The assets of the storyboard of a milthm chart.
+    */
+};
+
+struct MilHitEffectItem {
+    /* !docs
+    A hit effect item for the milthm chart.
+    */
+
+    struct Particle {
+
+    };
+
+    ep_f64 time;
+    ep_u64 lineIndex, noteIndex;
+    std::vector<Particle> particles;
+};
+
+struct MilChart {
+    /* !docs
+    The milthm chart.
+    */
+
+    struct State {
+        ep_f64 lastUpdateTime;
+        ep_u64 firstHitEffectIndex;
+
+        void timeUpdated(ep_f64 t) noexcept {
+            if (lastUpdateTime > t) {
+                firstHitEffectIndex = 0;
+            }
+
+            lastUpdateTime = t;
+        }
+
+        void passedHitEffectIndex(ep_u64 index) noexcept {
+            if (firstHitEffectIndex == index) {
+                firstHitEffectIndex++;
+            }
+        }
+    };
+
+    struct UserOptions {
+        ep_f64 noteScaling = 1.0;
+
+        ep_f64 backgroundDim = 0.6;
+    };
+
+    MilMeta meta;
+    std::vector<MilLine> lines;
+    std::vector<MilStoryboardObject> storyboardObjects;
+    MilAnimator animator;
+    MilStoryboardAssets storyboardAssets;
+    
+    std::vector<MilHitEffectItem> hitEffects;
+    std::vector<ep_f64> comboTimes;
+    ep_u64 rawHash;
+
+    UserOptions options;
+
+    State state;
 };
 
 } // namespace easy_phi
