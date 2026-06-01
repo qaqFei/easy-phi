@@ -1368,6 +1368,24 @@ struct ObjectIndexer {
     ep_u64 get() noexcept {
         return index ? index : (index = reqGlobalCounter());
     }
+
+    void set(ep_u64 given) noexcept {
+        index = given;
+    }
+};
+
+template <typename T>
+struct ObjectIndexGenerator {
+    ep_u64 get(const T& key) noexcept {
+        auto it = map.find(key);
+        if (it == map.end()) {
+            return map[key] = reqGlobalCounter();
+        }
+        return it->second;
+    }
+
+    private:
+    std::map<T, ep_u64> map;
 };
 
 struct Transform2D {
@@ -7454,7 +7472,7 @@ PhiChartLoadResult loadPhiChartFromData(const Data& data) {
     - PhiEdit Chart (pec)
     */
 
-    PhiChartLoadResult result{};
+    PhiChartLoadResult result {};
     result.success = false;
 
     #define TRY_LOAD_FUNC(func) \
@@ -9075,6 +9093,10 @@ enum class EnumMilEventType : ep_u64 {
     MAX = VisibleArea + 1
 };
 
+enum class EnumMilObjectType {
+    Line, Note, Storyboard
+};
+
 enum class EnumMilNoteType {
     Hit, Drag
 };
@@ -9085,6 +9107,40 @@ enum class EnumMilStoryboardType {
 
 enum class EnumMilStoryboardLayer {
     Background, Normal, Foreground
+};
+
+struct MilEventTypeHelper {
+    /* !docs
+    A helper for converting milthm event type to `@EnumMilEventType`.
+    */
+
+    static EnumMilEventType FromInt(ep_u64 type) {
+        if (type == 0) return EnumMilEventType::PositionX;
+        if (type == 1) return EnumMilEventType::PositionY;
+        if (type == 2) return EnumMilEventType::Transparency;
+        if (type == 3) return EnumMilEventType::Size;
+        if (type == 4) return EnumMilEventType::Rotation;
+        if (type == 5) return EnumMilEventType::FlowSpeed;
+        if (type == 6) return EnumMilEventType::RelativeX;
+        if (type == 7) return EnumMilEventType::RelativeY;
+        if (type == 8) return EnumMilEventType::LineBodyTransparency;
+        if (type == 9) return EnumMilEventType::LineHeadTransparency;
+        if (type == 10) return EnumMilEventType::StoryBoardWidth;
+        if (type == 11) return EnumMilEventType::StoryBoardHeight;
+        if (type == 12) return EnumMilEventType::Speed;
+        if (type == 13) return EnumMilEventType::WholeTransparency;
+        if (type == 14) return EnumMilEventType::StoryBoardLeftBottomX;
+        if (type == 15) return EnumMilEventType::StoryBoardLeftBottomY;
+        if (type == 16) return EnumMilEventType::StoryBoardRightBottomX;
+        if (type == 17) return EnumMilEventType::StoryBoardRightBottomY;
+        if (type == 18) return EnumMilEventType::StoryBoardLeftTopX;
+        if (type == 19) return EnumMilEventType::StoryBoardLeftTopY;
+        if (type == 20) return EnumMilEventType::StoryBoardRightTopX;
+        if (type == 21) return EnumMilEventType::StoryBoardRightTopY;
+        if (type == 22) return EnumMilEventType::Color;
+        if (type == 23) return EnumMilEventType::VisibleArea;
+        return EnumMilEventType::PositionX;
+    }
 };
 
 struct MilNoteTypeHelper {
@@ -9151,40 +9207,19 @@ struct MilEvent {
     ep_f64 (* easingIntFunc)(void*, ep_f64);
     void* easingFuncContext;
 
-    ep_u64 layerIndex;
-
     ep_f64 cumulativeValueAtStart;
-};
-
-struct MilAnimLayer {
-    /* !docs
-    A animation layer for the milthm chart.
-    Like `@PhiAnimLayer`.
-    */
-
-    std::vector<MilEvent> events[(ep_u64)EnumMilEventType::MAX];
-
-    void addEvent(const MilEvent& e) { events[(ep_u64)e.type].push_back(e); }
-    std::vector<MilEvent>& getEvents(EnumMilEventType type) { return events[(ep_u64)type]; }
 };
 
 struct MilAnimGroup {
     /* !docs
     A animation group for the milthm chart.
-    Like `@PhiAnimGroup`.
     */
 
-    std::unordered_map<ep_u64, ep_u64> layerIndexMap;
-    std::vector<MilAnimLayer> layers;
+    std::vector<MilEvent> events[(ep_u64)EnumMilEventType::MAX];
+    EnumMilObjectType objType;
 
-    void addEvent(const MilEvent& e) {
-        if (!layerIndexMap.contains(e.layerIndex)) {
-            layerIndexMap[e.layerIndex] = layers.size();
-            layers.push_back({});
-        }
-
-        layers[layerIndexMap[e.layerIndex]].addEvent(e);
-    }
+    void addEvent(const MilEvent& e) { events[(ep_u64)e.type].push_back(e); }
+    std::vector<MilEvent>& getEvents(EnumMilEventType type) { return events[(ep_u64)type]; }
 };
 
 struct MilAnimator {
@@ -9211,6 +9246,10 @@ struct MilAnimator {
 };
 
 struct MilNote {
+    /* !docs
+    A note of the milthm chart.
+    */
+
     ObjectIndexer indexer;
 
     struct State {
@@ -9315,7 +9354,11 @@ struct MilHitEffectItem {
     */
 
     struct Particle {
-
+        ep_f64 rotate;
+        ep_f64 initialSpeed;
+        ep_f64 initialSize;
+        Vec2 scale;
+        ep_f64 gravCoeff; // !inline-docs| gravity coefficient.
     };
 
     ep_f64 time;
@@ -9354,6 +9397,7 @@ struct MilChart {
     };
 
     MilMeta meta;
+    std::vector<MilBPMEvent> bpms;
     std::vector<MilLine> lines;
     std::vector<MilStoryboardObject> storyboardObjects;
     MilAnimator animator;
@@ -9367,6 +9411,55 @@ struct MilChart {
 
     State state;
 };
+
+struct MilChartLoadResult {
+    bool success;
+    std::vector<std::string> errors;
+    MilChart chart;
+};
+
+#define CHART_LOAD_FAILED(prefix, err) \
+    { \
+        return MilChartLoadResult { \
+            .success = false, \
+            .errors = { std::string(prefix) + ": " + (err) } \
+        }; \
+    }
+
+MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
+    JsonNode jsonRoot;
+    auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
+    if (!jsonParseSuccess) CHART_LOAD_FAILED("dev", std::string("failed to parse json: ") + err);
+
+    MilChart chart {};
+
+    chart.rawHash = data.getHash();
+
+    return MilChartLoadResult {
+        .success = true,
+        .chart = chart
+    };
+}
+
+MilChartLoadResult loadMilChartFromData(const Data& data) {
+    MilChartLoadResult result {};
+    result.success = false;
+
+    #define TRY_LOAD_FUNC(func) \
+        { \
+            auto res = func(data); \
+            if (res.success) return res; \
+            result.errors.insert(result.errors.end(), res.errors.begin(), res.errors.end()); \
+        }
+    
+    TRY_LOAD_FUNC(loadMilChartFromDevJson);
+
+    return result;
+    
+    #undef TRY_LOAD_FUNC
+}
+
+#undef CHART_LOAD_FAILED
 
 } // namespace easy_phi
 
@@ -9682,7 +9775,7 @@ namespace easy_phi {
         }
 
         static std::vector<Data> hitEffectDataReader() {
-            std::vector<easy_phi::Data> result;
+            std::vector<Data> result;
 
             for (ep_u64 i = 0; i < 60; i++) {
                 auto key = std::string("/hittexs/") + std::to_string(i + 1) + ".png";
