@@ -1400,6 +1400,14 @@ struct ObjectIndexGenerator {
     std::map<T, ep_u64> map;
 };
 
+struct Timer {
+    ep_f64 start;
+
+    Timer() : start(globalTimer()) {}
+
+    ep_f64 elapsed() const noexcept { return globalTimer() - start; }
+};
+
 struct Transform2D {
     /* !docs
     A 2D transformation by a 3x3 matrix.
@@ -5042,6 +5050,8 @@ namespace TakeOvererComponents {
         using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
         TextureDeocder textureDecoder;
 
+        ep_sp<GL::TextureInfo> illustionTexture;
+
         void check() {
             checkBoolAndThrow(!!textureDecoder, "textureDecoder is not set", "SharedComp");
         }
@@ -5133,6 +5143,21 @@ namespace TakeOvererComponents {
         ep_sp<AudioEngine::Task> bgmAudioTask;
         ep_f64 bgmVolume = 1.0, sfxVolume = 1.0;
         std::vector<ep_sp<AudioEngine::Task>> playingSfxs;
+    };
+
+    struct LoadChartResultInfo {
+        bool success = true;
+        std::vector<std::string> errors;
+
+        ep_f64 createObjectTook;
+        ep_f64 initTook;
+
+        void checkAndThrow() const {
+            if (success) return;
+            std::string messages = "";
+            for (const auto& error : errors) messages += error + "\n";
+            throw std::runtime_error("failed to load chart: " + messages);
+        }
     };
 };
 
@@ -8766,9 +8791,8 @@ struct PhiTakeOverer {
 
     void loadIllustion(const Data& data) {
         auto decoded = sharedComp.textureDecoder(data);
-        rawIllustionTexture = glCtx->createTextureFromDecoded(decoded);
+        sharedComp.illustionTexture = glCtx->createTextureFromDecoded(decoded);
         bluredIllustionCache.key = -1.0;
-        calcConfig.backgroundTextureSize = { rawIllustionTexture->width, rawIllustionTexture->height };
     }
 
     void loadIllustion(const std::string& path) { loadIllustion(Data::MakeFromFile(path)); }
@@ -8804,30 +8828,16 @@ struct PhiTakeOverer {
 
     using ChartIniter = std::function<void(PhiChart&)>;
 
-    struct LoadChartResultInfo {
-        bool success = true;
-        std::vector<std::string> errors;
-
-        ep_f64 createObjectTook;
-        ep_f64 initTook;
-
-        void checkAndThrow() const {
-            if (success) return;
-            std::string messages = "";
-            for (const auto& error : errors) messages += error + "\n";
-            throw std::runtime_error("failed to load chart: " + messages);
-        }
-    };
-
-    LoadChartResultInfo loadChart(const Data& data, const ChartIniter& initer = [](PhiChart& chart) {
-        chart.init();
-    }) {
-        LoadChartResultInfo resultInfo {};
+    TakeOvererComponents::LoadChartResultInfo loadChart(
+        const Data& data,
+        const ChartIniter& initer = [](PhiChart& chart) { chart.init(); }
+    ) {
+        TakeOvererComponents::LoadChartResultInfo resultInfo {};
 
         {
-            auto startTime = globalTimer();
+            Timer timer;
             auto loadResult = loadPhiChartFromData(data);
-            resultInfo.createObjectTook = globalTimer() - startTime;
+            resultInfo.createObjectTook = timer.elapsed();
 
             if (!loadResult.success) {
                 resultInfo.success = false;
@@ -8879,9 +8889,9 @@ struct PhiTakeOverer {
         shadersDefaultUniforms.clear();
 
         {
-            auto startTime = globalTimer();
+            Timer timer;
             initer(chart);
-            resultInfo.initTook = globalTimer() - startTime;
+            resultInfo.initTook = timer.elapsed();
         }
 
         return resultInfo;
@@ -8900,15 +8910,17 @@ struct PhiTakeOverer {
 
     RenderResultInfo& render(const RenderConfig& renderConfig) {
         calcConfig.songLength = audioManager.getBgmLength();
+        calcConfig.backgroundTextureSize = { sharedComp.illustionTexture->width, sharedComp.illustionTexture->height };
+
         auto t = renderConfig.time.value_or(audioManager.getBgmTime());
 
         {
-            auto startTime = globalTimer();
+            Timer timer;
             calculatePhiFrame(chart, t, calcConfig, calculatedFrame);
-            renderResultInfoCache.calculatedTook = globalTimer() - startTime;
+            renderResultInfoCache.calculatedTook = timer.elapsed();
         }
 
-        auto glOpsStartTime = globalTimer();
+        Timer glOpsTimer;
 
         using namespace GL;
 
@@ -8918,7 +8930,7 @@ struct PhiTakeOverer {
 
         auto illuTex = bluredIllustionCache.get(calculatedFrame.backgroundImageBlurRadius, [&]() {
             auto tex = glCtx->createTexture();
-            glCtx->copyTexture(rawIllustionTexture.get(), tex.get());
+            glCtx->copyTexture(sharedComp.illustionTexture.get(), tex.get());
             glCtx->gaussianBlurToTexture(tex.get(), calculatedFrame.backgroundImageBlurRadius);
             return tex;
         });
@@ -9067,7 +9079,7 @@ struct PhiTakeOverer {
             glCtx->flush();
         }
 
-        renderResultInfoCache.glOperationsTook = globalTimer() - glOpsStartTime;
+        renderResultInfoCache.glOperationsTook = glOpsTimer.elapsed();
 
         if (!renderConfig.disableHitsound) {
             for (ep_u64 i = std::max<ep_i64>(0, calculatedFrame.hitsounds.size() - audioManager.maxSfxPlaying); i < calculatedFrame.hitsounds.size(); ++i) {
@@ -9079,7 +9091,6 @@ struct PhiTakeOverer {
     }
 
     private:
-    ep_sp<GL::TextureInfo> rawIllustionTexture;
     SKVCache<ep_f64, ep_sp<GL::TextureInfo>> bluredIllustionCache;
     std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
     std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
@@ -9480,6 +9491,10 @@ struct MilChart {
     UserOptions options;
 
     State state;
+
+    void init() {
+
+    }
 };
 
 struct MilChartLoadResult {
@@ -9568,9 +9583,53 @@ struct MilTakeOverer {
     MilCalculatedFrame calculatedFrame;
 
     void init() {
-        // ...
+        checkBoolAndThrow(!!glCtx, "glCtx is not set");
+
+        textManager.glCtx = glCtx;
+
+        sharedComp.check();
+        textManager.check();
+        audioManager.check();
 
         loadResources();
+    }
+
+    void loadIllustion(const Data& data) {
+        auto decoded = sharedComp.textureDecoder(data);
+        sharedComp.illustionTexture = glCtx->createTextureFromDecoded(decoded);
+    }
+
+    void loadIllustion(const std::string& path) { loadIllustion(Data::MakeFromFile(path)); }
+
+    using ChartIniter = std::function<void(MilChart&)>;
+
+    TakeOvererComponents::LoadChartResultInfo loadChart(
+        const Data& data,
+        ChartIniter initer = [](MilChart& chart) { chart.init(); }
+    ) {
+        TakeOvererComponents::LoadChartResultInfo resultInfo {};
+
+        {
+            Timer timer;
+            auto loadResult = loadMilChartFromData(data);
+            resultInfo.createObjectTook = timer.elapsed();
+
+            if (!loadResult.success) {
+                resultInfo.success = false;
+                resultInfo.errors = std::move(loadResult.errors);
+                return resultInfo;
+            }
+
+            chart = std::move(loadResult.chart);
+        }
+
+        {
+            Timer timer;
+            initer(chart);
+            resultInfo.initTook = timer.elapsed();
+        }
+
+        return resultInfo;
     }
 
     private:
