@@ -85,10 +85,10 @@ int main(int argc, char** argv) {
         }
     }
 
-    Window window {};
-    window.fullscreen = hasArg("--fullscreen");
+    PhiWindow window {};
+    window.base.fullscreen = hasArg("--fullscreen");
+    window.base.setVSync(!hasArg("--disable-vsync"));
     window.init();
-    window.setVSync(!hasArg("--disable-vsync"));
 
     window.loadChart(chartPath, storyboardAssetsPath, nullptr);
 
@@ -98,14 +98,14 @@ int main(int argc, char** argv) {
     }
 
     window.renderer->loadIllustion(imagePath);
-    window.renderer->loadAudio(audioPath);
+    window.renderer->audioManager.load(audioPath);
 
     if (hasArg("--bench")) {
         auto info = TelemetryDeckClient::Performance::BaseInfo::make().toJson();
         info.getObject()["data"] = JsonNode::MakeArray();
 
         ep_f64 t = 0.0;
-        while (t < window.renderer->getBgmLength()) {
+        while (t < window.renderer->audioManager.getBgmLength()) {
             auto& frameInfo = window.renderer->render({ .time = t });
             info["data"].getArray().push_back(JsonNode::MakeNumber(frameInfo.calculatedTook * 1000));
             t += 1.0 / 120.0;
@@ -116,9 +116,9 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    window.renderer->startBgm();
+    window.renderer->audioManager.startBgm();
 
-    while (!window.renderer->getBpmIsEnded()) {
+    while (!window.renderer->audioManager.getBpmIsEnded()) {
         if (!window.mainloopFrame({})) {
             break;
         }

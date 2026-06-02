@@ -450,100 +450,27 @@ struct TelemetryDeckClient {
     };
 };
 
-struct Window {
+struct WindowBase {
     GLFWwindow* window;
-    ep_sp<TextRenderer> textRenderer;
     int width, height;
     bool hidden;
     double frameBusyWaitPercentage = 0.8;
-    std::string chartDir;
     bool fullscreen;
+    bool vsync;
+    std::string chartDir;
     double mouseX, mouseY;
 
     ep_sp<GL33Context> glCtx;
-    ep_sp<PhiTakeOverer> renderer;
 
-    void init() {
-        glfwInit();
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        glfwWindowHint(GLFW_SAMPLES, 4);
-        if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    std::function<void(ep_f64)> audioSeekTo;
 
-        auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
-        width = vm->width * 0.6;
-        height = vm->height * 0.6;
-
-        if (fullscreen) {
-            glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
-            glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
-            glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
-            width = vm->width; height = vm->height;
+    bool shouldClose() {
+        if (glfwWindowShouldClose(window)) {
+            glfwSetWindowShouldClose(window, false);
+            return true;
         }
 
-        width += width % 2;
-        height += height % 2;
-
-        window = glfwCreateWindow(width, height, "", nullptr, nullptr);
-
-        glfwMakeContextCurrent(window);
-        glCtx = GL33Context::Make(MakeGL33CoreInterface( [](const char* name) { return (void*)glfwGetProcAddress(name); } ));
-
-        textRenderer = PhiStaticResourceHelpers::createTextRenderer();
-
-        renderer = PhiTakeOverer::Make();
-        renderer->textureDeocder = decodeImage;
-        renderer->textRenderer = [this](const std::string& text, ep_u64 size) -> DecodedRGBATexture { return textRenderer->render(text, size); };
-        renderer->noteTextureDataReader = PhiStaticResourceHelpers::noteTextureDataReader;
-        renderer->hitEffectDataReader = PhiStaticResourceHelpers::hitEffectDataReader;
-        renderer->audioDecoder = decodeAudioMiniaudio;
-        renderer->hitsoundDataReader = PhiStaticResourceHelpers::hitsoundDataReader;
-
-        renderer->storyboardDataReader = [this](const std::string& name) -> Data {
-            auto path = PhiStoryboardHelpers::textureNameToPath(chartDir, name);
-            Data data;
-            Data::FromFile(&data, path);
-            return data;
-        };
-
-        renderer->shaderDataReader = [this](const std::string& name) -> std::string {
-            Data shaderText {};
-
-            if (!PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
-                if (!Data::FromFile(&shaderText, std::filesystem::path(chartDir + "/" + name).lexically_normal().string())) {
-                    std::cout << "failed to read shader file: " << name << std::endl;
-                }
-            }
-
-            return shaderText.toString();
-        };
-
-        renderer->glCtx = glCtx;
-        renderer->audioEngine = makeAudioEngineMiniaudio();
-        renderer->check();
-        renderer->loadResources();
-
-        glfwSetWindowUserPointer(window, this);
-
-        glfwSetCursorPosCallback(window, [](GLFWwindow* glfwWindow, double x, double y) {
-            auto* window = (Window*)glfwGetWindowUserPointer(glfwWindow);
-            window->mouseX = x;
-            window->mouseY = y;
-        });
-
-        glfwSetMouseButtonCallback(window, [](GLFWwindow* glfwWindow, int button, int action, int mods) {
-            auto* window = (Window*)glfwGetWindowUserPointer(glfwWindow);
-
-            if (action == GLFW_PRESS) {
-                if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                    window->renderer->seekBgm(
-                        window->renderer->getBgmLength()
-                        * window->mouseX / window->width
-                    );
-                }
-            }
-        });
+        return false;
     }
 
     void setHidden(bool newValue) {
@@ -552,15 +479,134 @@ struct Window {
         else glfwShowWindow(window);
     }
 
+    void setVSync(bool enabled) {
+        vsync = enabled;
+        glfwSwapInterval(vsync ? 1 : 0);
+    }
+
+    void busyWait(double frameSt, bool printInfo) {
+        if (!vsync) return;
+
+        double waitSt = globalTimer();
+        auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
+        volatile int* dummy = nullptr;
+        while ((globalTimer() - frameSt) < frameBusyWaitPercentage / vm->refreshRate) {
+            dummy++;
+        }
+
+        if (printInfo) {
+            std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+        }
+    }
+};
+
+void createGLfwWindow(WindowBase& wbase) {
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_SAMPLES, 4);
+
+    if (wbase.hidden) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
+
+    auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
+    wbase.width = vm->width * 0.6;
+    wbase.height = vm->height * 0.6;
+
+    if (wbase.fullscreen) {
+        glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+        wbase.width = vm->width; wbase.height = vm->height;
+    }
+
+    wbase.width += wbase.width % 2;
+    wbase.height += wbase.height % 2;
+
+    wbase.window = glfwCreateWindow(wbase.width, wbase.height, "", nullptr, nullptr);
+
+    glfwMakeContextCurrent(wbase.window);
+    wbase.glCtx = GL33Context::Make(MakeGL33CoreInterface( [](const char* name) { return (void*)glfwGetProcAddress(name); } ));
+
+    glfwSetWindowUserPointer(wbase.window, &wbase);
+
+    glfwSetCursorPosCallback(wbase.window, [](GLFWwindow* glfwWindow, double x, double y) {
+        auto* wbase = (WindowBase*)glfwGetWindowUserPointer(glfwWindow);
+        wbase->mouseX = x;
+        wbase->mouseY = y;
+    });
+
+    glfwSetMouseButtonCallback(wbase.window, [](GLFWwindow* glfwWindow, int button, int action, int mods) {
+        auto* wbase = (WindowBase*)glfwGetWindowUserPointer(glfwWindow);
+
+        if (action == GLFW_PRESS) {
+            if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                wbase->audioSeekTo(wbase->mouseX / wbase->width);
+            }
+        }
+    });
+
+    wbase.setVSync(wbase.vsync);
+}
+
+struct PhiWindow {
+    WindowBase base;
+
+    ep_sp<PhiTakeOverer> renderer;
+
+    void init() {
+        base.audioSeekTo = [this](ep_f64 p) {
+            renderer->audioManager.seekBgm(renderer->audioManager.getBgmLength() * p);
+        };
+
+        createGLfwWindow(base);
+
+        renderer = PhiTakeOverer::Make();
+        renderer->noteTextureDataReader = PhiStaticResourceHelpers::noteTextureDataReader;
+        renderer->hitEffectDataReader = PhiStaticResourceHelpers::hitEffectDataReader;
+        renderer->hitsoundDataReader = PhiStaticResourceHelpers::hitsoundDataReader;
+
+        renderer->storyboardDataReader = [this](const std::string& name) -> Data {
+            auto path = PhiStoryboardHelpers::textureNameToPath(base.chartDir, name);
+
+            Data data;
+            if (!Data::MakeFromFile(data, path)) {
+                std::cout << "failed to read storyboard file: " << name << std::endl;
+            }
+
+            return data;
+        };
+
+        renderer->shaderDataReader = [this](const std::string& name) -> std::string {
+            Data shaderText {};
+
+            if (!PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
+                if (!Data::MakeFromFile(shaderText, std::filesystem::path(base.chartDir + "/" + name).lexically_normal().string())) {
+                    std::cout << "failed to read shader file: " << name << std::endl;
+                }
+            }
+
+            return shaderText.toString();
+        };
+
+        renderer->glCtx = base.glCtx;
+        renderer->sharedComp.textureDecoder = decodeImage;
+        renderer->textManager.renderer = PhiStaticResourceHelpers::createTextRenderer();
+        renderer->audioManager.decoder = decodeAudioMiniaudio;
+        renderer->audioManager.engine = makeAudioEngineMiniaudio();
+        renderer->init();
+    }
+
     void loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
-        Data data;
-        if (!Data::FromFile(&data, path)) throw std::runtime_error("failed to read chart file");
+        auto data = Data::MakeFromFile(path);
 
-        this->chartDir = chartDir;
+        base.chartDir = chartDir;
 
-        auto resultInfo = renderer->loadChart(data, [&](auto& chart) {
+        auto resultInfo = renderer->loadChart(data, [this](auto& chart) {
             Data extraData;
-            if (Data::FromFile(&extraData, chartDir + "extra.json")) {
+            if (Data::MakeFromFile(extraData, base.chartDir + "extra.json")) {
                 auto extraLoadResult = loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
                 if (std::holds_alternative<PhiExtra>(extraLoadResult)) {
                     chart.extra = std::move(std::get<PhiExtra>(extraLoadResult));
@@ -578,31 +624,22 @@ struct Window {
         resultInfo.checkAndThrow();
     }
 
-    void setVSync(bool enabled) {
-        glfwSwapInterval(enabled ? 1 : 0);
-        vsync = enabled;
-    }
-
     struct MainloopConfig {
         std::optional<double> time;
         bool isRenderingVideo;
         TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi;
-        ep_sp<TextureInfo> renderTarget;
     };
 
     bool mainloopFrame(const MainloopConfig& mainloopConfig) {
         auto frameSt = globalTimer();
 
-        if (glfwWindowShouldClose(window)) {
-            glfwSetWindowShouldClose(window, GLFW_FALSE);
-            return false;
-        }
+        if (base.shouldClose()) return false;
 
         if (!mainloopConfig.isRenderingVideo) {
-            glfwGetFramebufferSize(window, &width, &height);
+            glfwGetFramebufferSize(base.window, &base.width, &base.height);
         }
 
-        renderer->calcConfig.screenSize = { (double)width, (double)height };
+        renderer->calcConfig.screenSize = { (double)base.width, (double)base.height };
 
         auto& resultInfo = renderer->render({
             .time = mainloopConfig.time,
@@ -616,47 +653,30 @@ struct Window {
         
         if (mainloopConfig.pccfi) {
             mainloopConfig.pccfi->calculationTook = resultInfo.calculatedTook * 1000;
-            mainloopConfig.pccfi->screenSize = { (double)width, (double)height };
+            mainloopConfig.pccfi->screenSize = { (double)base.width, (double)base.height };
             mainloopConfig.pccfi->timeRange = renderer->calculatedFrame.frameTimeRange.toPair();
             mainloopConfig.pccfi->renderTook = resultInfo.glOperationsTook * 1000;
         }
 
         if (!mainloopConfig.isRenderingVideo) {
             glfwPollEvents();
-
-            if (vsync) {
-                double waitSt = globalTimer();
-                auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
-                volatile int* dummy = nullptr;
-                while ((globalTimer() - frameSt) < frameBusyWaitPercentage / vm->refreshRate) {
-                    dummy++;
-                }
-
-                if (!mainloopConfig.isRenderingVideo) {
-                    std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
-                }
-            }
-
-            double waitSt = globalTimer();
-            glfwSwapBuffers(window);
-            if (!mainloopConfig.isRenderingVideo) {
-                std::cout << "swap took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
-            }
+            base.busyWait(frameSt, !mainloopConfig.isRenderingVideo);
+            glfwSwapBuffers(base.window);
         }
 
-        
         if (!mainloopConfig.isRenderingVideo) {
             std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
-            std::cout << "draw calls count: " << glCtx->drawCallsCount << std::endl;
+            std::cout << "draw calls count: " << base.glCtx->drawCallsCount << std::endl;
             std::cout << std::string(80, '.') << std::endl;
         }
 
-        glCtx->frameEnded();
+        base.glCtx->frameEnded();
         return true;
     }
+};
 
-    private:
-    bool vsync;
+struct MilWindow {
+
 };
 
 template<typename T>

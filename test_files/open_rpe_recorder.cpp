@@ -256,8 +256,8 @@ struct Settings {
 };
 
 int main() {
-    Window backendWin {};
-    backendWin.hidden = true;
+    PhiWindow backendWin {};
+    backendWin.base.hidden = true;
     backendWin.init();
 
     std::string chartRoot = "",
@@ -297,7 +297,7 @@ int main() {
         WidgetStatics::TextInput::setText(win->refWidget(chartRootInput), Win32Utils::stringToWstring(chartRoot));
 
         easy_phi::Data infoData;
-        if (!easy_phi::Data::FromFile(&infoData, infoPath)) {
+        if (!easy_phi::Data::MakeFromFile(infoData, infoPath)) {
             showErrorMsg(win.get(), L"无法打开 info.txt");
             return;
         }
@@ -505,7 +505,7 @@ int main() {
 
             backendWin.renderer->chart.options.noteScaling *= settings.noteScaling;
             backendWin.renderer->loadIllustion(imagePath);
-            backendWin.renderer->loadAudio(audioPath);
+            backendWin.renderer->audioManager.load(audioPath);
         } catch (const std::exception& e) {
             auto msg = Win32Utils::stringToWstring(e.what());
             showErrorMsg(win.get(), msg.c_str());
@@ -531,18 +531,18 @@ int main() {
             .loadingTook = loadingChartTook
         };
 
-        backendWin.setHidden(false);
-        backendWin.setVSync(true);
-        backendWin.renderer->startBgm();
+        backendWin.base.setHidden(false);
+        backendWin.base.setVSync(true);
+        backendWin.renderer->audioManager.startBgm();
 
-        backendWin.renderer->setBgmVolume(settings.musicVol);
-        backendWin.renderer->setSfxVolume(settings.sfxVol);
+        backendWin.renderer->audioManager.setBgmVolume(settings.musicVol);
+        backendWin.renderer->audioManager.setSfxVolume(settings.sfxVol);
 
-        while (!backendWin.renderer->getBpmIsEnded()) {
+        while (!backendWin.renderer->audioManager.getBpmIsEnded()) {
             if (!backendWin.mainloopFrame({
                 .pccfi = &performanceInfo.frames.emplace_back()
             })) {
-                backendWin.renderer->stopBgm();
+                backendWin.renderer->audioManager.stopBgm();
                 break;
             }
         }
@@ -552,7 +552,7 @@ int main() {
                 TelemetryDeckClient::Performance::ChartPlayback::completed(performanceInfo);
             }).detach();
         }
-        backendWin.setHidden(true);
+        backendWin.base.setHidden(true);
     } }));
     win->registerWidget(Widgets::Button({ .text = L"渲染视频", .onClick = [&]() {
         auto videoPath = selectSaveFile(win.get(),  L"视频文件 (*.mp4)\0*.mp4\0All Files (*.*)\0*.*\0", L"保存视频文件");
@@ -576,7 +576,7 @@ int main() {
         FrameQueueType frameQueue;
 
         auto videoRecorder = VideoRecorder::Make(
-            backendWin.glCtx,
+            backendWin.base.glCtx,
             settings.recordWidth, settings.recordHeight,
             [&](uint64_t slotIndex) {
                 frameQueue.enqueue(slotIndex);
@@ -605,8 +605,8 @@ int main() {
             }
         };
 
-        backendWin.width = settings.recordWidth;
-        backendWin.height = settings.recordHeight;
+        backendWin.base.width = settings.recordWidth;
+        backendWin.base.height = settings.recordHeight;
 
         pd.setLine(1, L"加载...");
         if (!load()) return;

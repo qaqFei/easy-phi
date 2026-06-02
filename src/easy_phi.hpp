@@ -185,6 +185,16 @@ std::string formatToStdString(const char* fmt, ...) {
     return std::string(buf.data(), len);
 }
 
+void checkBoolAndThrow(bool condition, const std::string& msg, const std::string& prefix = "") {
+    if (!condition) {
+        if (prefix.empty()) {
+            throw std::runtime_error(msg);
+        } else {
+            throw std::runtime_error(prefix + ": " + msg);
+        }
+    }
+}
+
 #ifdef EASY_PHI_IS_RELEASE
     #define ep_assert(condition, msg) ((void)0)
 #else
@@ -368,24 +378,26 @@ struct Data {
 
     std::vector<ep_u8> data;
 
-    static Data FromPtr(ep_u8* ptr, ep_u64 size) {
-        return Data {
-            .data = std::vector<ep_u8>(ptr, ptr + size)
-        };
-    }
-
-    static bool FromFile(Data* dst, const std::string& fn) {
+    static Data MakeFromFile(const std::string& fn) {
         std::ifstream file(std::filesystem::path((const char8_t*)fn.c_str()), std::ios::binary | std::ios::ate);
-        if (!file) return false;
+        if (!file) throw std::runtime_error("failed to read file");
 
         ep_u64 size = file.tellg();
         file.seekg(0);
         std::vector<ep_u8> buffer(size);
-        if (!file.read((char*)buffer.data(), size)) return false;
+        if (!file.read((char*)buffer.data(), size)) throw std::runtime_error("failed to read file");
         file.close();
 
-        *dst = Data { .data = buffer };
-        return true;
+        return { .data = std::move(buffer) };
+    }
+
+    static bool MakeFromFile(Data& data, const std::string& fn) {
+        try {
+            data = MakeFromFile(fn);
+            return true;
+        } catch (...) {
+            return false;
+        }
     }
 
     std::string toString() const {
@@ -4353,6 +4365,14 @@ void main() {
             renderToDrawFbo(width, height, mesh);
         }
 
+        ep_sp<TextureInfo> createTextureFromDecoded(const DecodedRGBATexture& decoded) {
+            if (!decoded.valid()) throw std::runtime_error("invalid decoded texture");
+
+            auto tex = createTexture();
+            tex->use().image2D(decoded);
+            return tex;
+        }
+
         private:
         ep_sp<ProgramInfo> defaultProgram;
         ep_sp<TextureInfo> defaultWhiteTexture;
@@ -4671,6 +4691,106 @@ void main() {
             });
         }
     };
+
+    struct TextManager {
+        static constexpr ep_u64 maxCacheSize = 128;
+
+        using Renderer = std::function<DecodedRGBATexture(const std::string&, ep_u64)>;
+        Renderer renderer;
+        ep_sp<GL33Context> glCtx;
+
+        void check() {
+            checkBoolAndThrow(!!renderer, "renderer is not set", "TextManager");
+            checkBoolAndThrow(!!glCtx, "glCtx is not set", "TextManager");
+        }
+
+        struct GetTextureResult {
+            TextureInfo* texture;
+            ep_f64 scale;
+
+            GLvec2 size() const noexcept {
+                return texture->size() * scale;
+            }
+        };
+
+        bool getTexture(
+            const std::string& text, ep_f64 fontSize,
+            GetTextureResult& result
+        ) {
+            if (fontSize <= 0.0) return false;
+
+            ep_u64 isize = std::ceil(fontSize / 48) * 48;
+            result.scale = fontSize / isize;
+            auto key = std::make_pair(text, isize);
+
+            {
+                auto it = cache.find(key);
+                if (it != cache.end()) {
+                    result.texture = it->second.get();
+                    return true;
+                }
+            }
+
+            if (cache.size() >= maxCacheSize) {
+                static std::mt19937 rng { std::random_device {} () };
+                std::uniform_int_distribution<ep_u64> dist { 0, cache.size() - 1 };
+                auto it = cache.begin();
+                std::advance(it, dist(rng));
+                cache.erase(it);
+            }
+
+            auto decoded = renderer(text, isize);
+            if (!decoded.valid()) throw std::runtime_error("texture is invalid");
+
+            auto tex = glCtx->createTexture();
+            tex->use().image2D(decoded);
+            cache[key] = tex;
+
+            result.texture = tex.get();
+            return true;
+        }
+
+        struct DrawTextConfig {
+            std::string text;
+            ep_f64 fontSize;
+            GLvec2 pos, anchor;
+            ep_f64 rotation;
+            GLvec2 scale;
+            GLvec4 color;
+
+            void normScale() noexcept {
+                auto wScale = std::min<ep_f64>(std::max(scale.x, scale.y), 16.0);
+
+                if (wScale > 1.0) {
+                    scale /= wScale;
+                    fontSize *= wScale;
+                }
+            }
+        };
+
+        void drawText(GL33Canvas& cvs, DrawTextConfig& config) {
+            config.normScale();
+
+            static GetTextureResult textureResult;
+            if (!getTexture(config.text, config.fontSize, textureResult)) return;
+
+            auto size = textureResult.size() * config.scale;
+
+            cvs.save();
+            cvs.translate(config.pos);
+            cvs.rotateDegrees(config.rotation);
+            cvs.drawRect({
+                .position = -size * config.anchor,
+                .size = size,
+                .color = config.color,
+                .texture = textureResult.texture
+            });
+            cvs.restore();
+        }
+
+        private:
+        std::map<std::pair<std::string, ep_u64>, ep_sp<TextureInfo>> cache;
+    };
 };
 
 struct DecodedAudio {
@@ -4915,6 +5035,105 @@ struct AudioEngine {
     std::mutex mtx;
     std::vector<ep_sp<Task>> tasksCopied;
     std::vector<ep_i32> bufferCache;
+};
+
+namespace TakeOvererComponents {
+    struct SharedComp {
+        using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
+        TextureDeocder textureDecoder;
+
+        void check() {
+            checkBoolAndThrow(!!textureDecoder, "textureDecoder is not set", "SharedComp");
+        }
+    };
+
+    struct AudioManager {
+        using Decoder = std::function<ep_sp<DecodedAudio>(const Data&)>;;
+
+        Decoder decoder;
+        ep_sp<AudioEngine> engine;
+        ep_u64 maxSfxPlaying = 16;
+
+        ep_sp<DecodedAudio> bgmAudio;
+
+        void check() {
+            checkBoolAndThrow(!!decoder, "decoder is not set", "AudioManager");
+            checkBoolAndThrow(!!engine, "engine is not set", "AudioManager");
+        }
+
+        ep_sp<DecodedAudio> decodeAndCheck(const Data& data) {
+            auto decoded = decoder(data);
+            if (!decoded) throw std::runtime_error("failed to decode audio");
+            return decoded;
+        }
+
+        void load(const Data& data) {
+            bgmAudio = decodeAndCheck(data);
+        }
+
+        void load(const std::string& path) { load(Data::MakeFromFile(path)); }
+
+        void startBgm() {
+            if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
+            stopBgm();
+            bgmAudioTask = engine->createTask(bgmAudio);
+        }
+
+        ep_f64 getBgmTime() {
+            return bgmAudioTask ? engine->getTaskTime(bgmAudioTask) : 0.0;
+        }
+
+        bool getBpmIsEnded() {
+            return bgmAudioTask && engine->getTaskEnded(bgmAudioTask);
+        }
+
+        void stopBgm() {
+            if (bgmAudioTask) {
+                bgmAudioTask->stopped = true;
+                bgmAudioTask.reset();
+            }
+        }
+
+        void setBgmVolume(ep_f64 vol) {
+            bgmVolume = vol;
+
+            if (bgmAudioTask) {
+                bgmAudioTask->volume = bgmVolume;
+            }
+        }
+
+        void setSfxVolume(ep_f64 vol) {
+            sfxVolume = vol;
+        }
+
+        void seekBgm(ep_f64 t) {
+            if (bgmAudioTask) {
+                engine->seekTask(bgmAudioTask, t);
+            }
+        }
+
+        ep_f64 getBgmLength() {
+            return bgmAudio ? bgmAudio->getLengthInSeconds() : 0.0;
+        }
+
+        void playSfx(const ep_sp<DecodedAudio>& audio) {
+            if (!maxSfxPlaying) return;
+
+            while (playingSfxs.size() >= maxSfxPlaying) {
+                auto& task = playingSfxs.front();
+                task->stopped = true;
+                playingSfxs.erase(playingSfxs.begin());
+            }
+
+            auto task = engine->createTask(audio);
+            task->volume = sfxVolume;
+        }
+
+        private:
+        ep_sp<AudioEngine::Task> bgmAudioTask;
+        ep_f64 bgmVolume = 1.0, sfxVolume = 1.0;
+        std::vector<ep_sp<AudioEngine::Task>> playingSfxs;
+    };
 };
 
 static const ep_f64 INF_TIME = 99999.0;
@@ -8466,6 +8685,19 @@ void calculatePhiFrame(
 struct PhiTakeOverer {
     /* !docs
     The take overer for phigros.
+
+    Following functions are necessary to be set:
+
+    - noteTextureDataReader
+    - hitEffectDataReader
+    - hitsoundDataReader
+    - storyboardDataReader
+    - shaderDataReader
+    - glCtx
+    - sharedComp.textureDecoder
+    - textManager.renderer
+    - audioManager.decoder
+    - audioManager.engine
     */
 
     PhiTakeOverer() = default;
@@ -8475,34 +8707,27 @@ struct PhiTakeOverer {
     PhiTakeOverer& operator=(PhiTakeOverer&&) = delete;
 
     static ep_sp<PhiTakeOverer> Make() {
-        auto* renderer = new PhiTakeOverer();
-        return ep_sp<PhiTakeOverer>(renderer);
+        auto* tor = new PhiTakeOverer();
+        return ep_sp<PhiTakeOverer>(tor);
     }
-    
-    using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
-    TextureDeocder textureDeocder;
-
-    using TextRenderer = std::function<DecodedRGBATexture(const std::string&, ep_u64)>;
-    TextRenderer textRenderer;
 
     struct NoteTextureDataReaderConfig {
         EnumPhiNoteType type;
         bool isSimul;
     };
+
     struct NoteTextureDataReaderResult {
         Data encoded;
         Vec2 cutPadding;
         bool cutPaddingIsPixel;
         bool ignoreCutPadding;
     };
+
     using NoteTextureDataReader = std::function<NoteTextureDataReaderResult(const NoteTextureDataReaderConfig&)>;
     NoteTextureDataReader noteTextureDataReader;
 
     using HitEffectDataReader = std::function<std::vector<Data>()>;
     HitEffectDataReader hitEffectDataReader;
-
-    using AudioDecoder = std::function<ep_sp<DecodedAudio>(const Data&)>;
-    AudioDecoder audioDecoder;
 
     using HitsoundDataReader = std::function<Data(EnumPhiNoteType)>;
     HitsoundDataReader hitsoundDataReader;
@@ -8513,156 +8738,40 @@ struct PhiTakeOverer {
     using ShaderDataReader = std::function<std::string(const std::string&)>;
     ShaderDataReader shaderDataReader;
 
+    ep_sp<GL::GL33Context> glCtx;
+    TakeOvererComponents::SharedComp sharedComp;
+    GL::TextManager textManager;
+    TakeOvererComponents::AudioManager audioManager;
+
     PhiCalculateFrameConfig calcConfig;
     PhiChart chart;
-    ep_sp<GL::GL33Context> glCtx;
-    ep_sp<AudioEngine> audioEngine;
     PhiCalculatedFrame calculatedFrame;
 
-    ep_u64 maxSfxPlaying = 16;
+    void init() {
+        checkBoolAndThrow(!!noteTextureDataReader, "noteTextureDataReader is not set");
+        checkBoolAndThrow(!!hitEffectDataReader, "hitEffectDataReader is not set");
+        checkBoolAndThrow(!!hitsoundDataReader, "hitsoundDataReader is not set");
+        checkBoolAndThrow(!!storyboardDataReader, "storyboardDataReader is not set");
+        checkBoolAndThrow(!!shaderDataReader, "shaderDataReader is not set");
+        checkBoolAndThrow(!!glCtx, "glCtx is not set");
 
-    void check() {
-        auto checkBool = [](bool cond, const std::string& err) {
-            if (!cond) {
-                throw std::runtime_error(err);
-            }
-        };
+        textManager.glCtx = glCtx;
 
-        checkBool(!!textureDeocder, "textureDeocder is not set");
-        checkBool(!!textRenderer, "textRenderer is not set");
-        checkBool(!!noteTextureDataReader, "noteTextureDataReader is not set");
-        checkBool(!!hitEffectDataReader, "hitEffectDataReader is not set");
-        checkBool(!!audioDecoder, "audioDecoder is not set");
-        checkBool(!!hitsoundDataReader, "hitsoundDataReader is not set");
-        checkBool(!!storyboardDataReader, "storyboardDataReader is not set");
-        checkBool(!!shaderDataReader, "shaderDataReader is not set");
-        checkBool(!!glCtx, "glCtx is not set");
-        checkBool(!!audioEngine, "audioEngine is not set");
+        sharedComp.check();
+        textManager.check();
+        audioManager.check();
+
+        loadResources();
     }
 
     void loadIllustion(const Data& data) {
-        auto decoded = textureDeocder(data);
-        rawIllustionTexture = loadTextureFromDecoded(decoded);
+        auto decoded = sharedComp.textureDecoder(data);
+        rawIllustionTexture = glCtx->createTextureFromDecoded(decoded);
         bluredIllustionCache.key = -1.0;
         calcConfig.backgroundTextureSize = { rawIllustionTexture->width, rawIllustionTexture->height };
     }
 
-    void loadIllustion(const std::string& path) {
-        Data data;
-        if (!Data::FromFile(&data, path)) throw std::runtime_error("failed to read file");
-        loadIllustion(data);
-    }
-
-    void loadAudio(const Data& data) {
-        bgmAudio = audioDecoder(data);
-        if (!bgmAudio) throw std::runtime_error("audioDecoder failed");
-        calcConfig.songLength = bgmAudio->getLengthInSeconds();
-    }
-
-    void loadAudio(const std::string& path) {
-        Data data;
-        if (!Data::FromFile(&data, path)) throw std::runtime_error("failed to read file");
-        loadAudio(data);
-    }
-
-    void loadResources() {
-        clearResources();
-
-        for (const auto type : {
-            EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
-            EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
-        }) {
-            noteTextures[type] = { nullptr, nullptr };
-            calcConfig.noteTextureInfos[type] = {};
-
-            for (const auto isSimul : { false, true }) {
-                auto loadResult = noteTextureDataReader(NoteTextureDataReaderConfig {
-                    .type = type,
-                    .isSimul = isSimul
-                });
-
-                auto decoded = textureDeocder(loadResult.encoded);
-                auto tex = loadTextureFromDecoded(decoded);
-                if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding *= decoded.height;
-                if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.height, (ep_f64)decoded.height } / 2;
-
-                if (!isSimul) noteTextures[type].first = tex;
-                else noteTextures[type].second = tex;
-
-                PhiCalculateFrameConfig::NoteTextureInfo::Item item {
-                    .textureSize = Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height },
-                    .cutPadding = loadResult.cutPadding
-                };
-
-                if (!isSimul) calcConfig.noteTextureInfos[type].single = item;
-                else calcConfig.noteTextureInfos[type].simul = item;
-            }
-
-            auto& info = calcConfig.noteTextureInfos[type];
-            auto simulScale = (ep_f64)info.simul.textureSize.x / info.single.textureSize.x;
-            info.simul.scaling = { simulScale, simulScale };
-        }
-
-        auto hitEffectDatas = hitEffectDataReader();
-        for (const auto& data : hitEffectDatas) {
-            auto decoded = textureDeocder(data);
-            auto tex = loadTextureFromDecoded(decoded);
-            hitEffectTextures.push_back(tex);
-        }
-
-        for (const auto type : {
-            EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
-            EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
-        }) {
-            auto data = hitsoundDataReader(type);
-            auto decoded = audioDecoder(data);
-            if (!decoded) throw std::runtime_error("audioDecoder failed");
-            hitsoundAudios[type] = decoded;
-        }
-    }
-
-    void startBgm() {
-        if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
-        if (bgmAudioTask) bgmAudioTask->stopped = true;
-        bgmAudioTask = audioEngine->createTask(bgmAudio);
-    }
-
-    ep_f64 getBgmTime() {
-        if (!bgmAudioTask) return 0.0;
-        return audioEngine->getTaskTime(bgmAudioTask);
-    }
-
-    bool getBpmIsEnded() {
-        if (!bgmAudioTask) return false;
-        return audioEngine->getTaskEnded(bgmAudioTask);
-    }
-
-    void stopBgm() {
-        if (!bgmAudioTask) return;
-        bgmAudioTask->stopped = true;
-        bgmAudioTask = nullptr;
-    }
-
-    void setBgmVolume(ep_f64 vol) {
-        bgmVolume = vol;
-        if (bgmAudioTask) {
-            bgmAudioTask->volume = bgmVolume;
-        }
-    }
-
-    void setSfxVolume(ep_f64 vol) {
-        sfxVolume = vol;
-    }
-
-    void seekBgm(ep_f64 time) {
-        if (!bgmAudioTask) return;
-        audioEngine->seekTask(bgmAudioTask, time);
-    }
-
-    ep_f64 getBgmLength() {
-        if (!bgmAudio) return 0.0;
-        return bgmAudio->getLengthInSeconds();
-    }
+    void loadIllustion(const std::string& path) { loadIllustion(Data::MakeFromFile(path)); }
 
     struct MixBgmConfig {
         ep_f64 musicVol = 1.0, sfxVol = 1.0;
@@ -8670,9 +8779,9 @@ struct PhiTakeOverer {
     };
 
     ep_sp<DecodedAudio> mixFinalBgm(const PhiChart& chart, const MixBgmConfig& config) {
-        if (!bgmAudio) throw std::runtime_error("bgm is not loaded");
+        if (!audioManager.bgmAudio) throw std::runtime_error("bgm is not loaded");
 
-        auto result = bgmAudio->copy();
+        auto result = audioManager.bgmAudio->copy();
         result->applyVolume(config.musicVol);
         
         std::mt19937 rng { std::random_device {} () };
@@ -8735,8 +8844,8 @@ struct PhiTakeOverer {
 
         chart.storyboardAssets.textureLoader = [&, this](const std::string& name) {
             auto data = storyboardDataReader(name);
-            auto decoded = textureDeocder(data);
-            auto tex = loadTextureFromDecoded(decoded);
+            auto decoded = sharedComp.textureDecoder(data);
+            auto tex = glCtx->createTextureFromDecoded(decoded);
             auto id = storyboardTextureId++;
             storyboardTextures[id] = tex;
             return std::make_pair(id, Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height });
@@ -8790,7 +8899,8 @@ struct PhiTakeOverer {
     };
 
     RenderResultInfo& render(const RenderConfig& renderConfig) {
-        auto t = renderConfig.time.value_or(getBgmTime());
+        calcConfig.songLength = audioManager.getBgmLength();
+        auto t = renderConfig.time.value_or(audioManager.getBgmTime());
 
         {
             auto startTime = globalTimer();
@@ -8873,7 +8983,7 @@ struct PhiTakeOverer {
             } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedText>(obj)) {
                 auto& text = std::get<PhiCalculatedFrame::CalculatedText>(obj);
 
-                DrawTextConfig config {
+                TextManager::DrawTextConfig config {
                     .text = text.text,
                     .fontSize = text.fontSize,
                     .pos = text.position,
@@ -8883,7 +8993,7 @@ struct PhiTakeOverer {
                     .color = text.color
                 };
 
-                drawText(cvs, config);
+                textManager.drawText(cvs, config);
             } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedStoryboardTexture>(obj)) {
                 auto& sbTexture = std::get<PhiCalculatedFrame::CalculatedStoryboardTexture>(obj);
                 auto& img = storyboardTextures[sbTexture.texture];
@@ -8959,9 +9069,9 @@ struct PhiTakeOverer {
 
         renderResultInfoCache.glOperationsTook = globalTimer() - glOpsStartTime;
 
-        if (!renderConfig.disableHitsound && maxSfxPlaying > 0) {
-            for (ep_u64 i = std::max<ep_i64>(0, calculatedFrame.hitsounds.size() - maxSfxPlaying); i < calculatedFrame.hitsounds.size(); ++i) {
-                playSfx(hitsoundAudios.at(calculatedFrame.hitsounds[i].first));
+        if (!renderConfig.disableHitsound) {
+            for (ep_u64 i = std::max<ep_i64>(0, calculatedFrame.hitsounds.size() - audioManager.maxSfxPlaying); i < calculatedFrame.hitsounds.size(); ++i) {
+                audioManager.playSfx(hitsoundAudios.at(calculatedFrame.hitsounds[i].first));
             }
         }
 
@@ -8971,107 +9081,68 @@ struct PhiTakeOverer {
     private:
     ep_sp<GL::TextureInfo> rawIllustionTexture;
     SKVCache<ep_f64, ep_sp<GL::TextureInfo>> bluredIllustionCache;
-    ep_sp<DecodedAudio> bgmAudio;
-    ep_sp<AudioEngine::Task> bgmAudioTask;
-    ep_f64 bgmVolume = 1.0, sfxVolume = 1.0;
-    std::vector<ep_sp<AudioEngine::Task>> playingSfxs;
     std::unordered_map<EnumPhiNoteType, std::pair<ep_sp<GL::TextureInfo>, ep_sp<GL::TextureInfo>>> noteTextures;
     std::vector<ep_sp<GL::TextureInfo>> hitEffectTextures;
     std::unordered_map<EnumPhiNoteType, ep_sp<DecodedAudio>> hitsoundAudios;
     std::unordered_map<ep_u64, ep_sp<GL::TextureInfo>> storyboardTextures;
-    ep_u64 maxTextTextures = 128;
-    std::map<std::pair<std::string, ep_u64>, ep_sp<GL::TextureInfo>> cachedTextTextures;
     RenderResultInfo renderResultInfoCache;
     std::unordered_map<ep_u64, ep_sp<GL::ProgramInfo>> shaders;
     std::unordered_map<ep_u64, std::unordered_map<std::string, PhiShaderUniform>> shadersDefaultUniforms;
 
-    ep_sp<GL::TextureInfo> loadTextureFromDecoded(const DecodedRGBATexture& decoded) {
-        if (!decoded.valid()) throw std::runtime_error("texture is invalid");
-
-        auto tex = glCtx->createTexture();
-        tex->use().image2D(decoded);
-        return tex;
-    }
-
-    void clearResources() {
+    void loadResources() {
         noteTextures.clear();
         hitEffectTextures.clear();
         storyboardTextures.clear();
-    }
 
-    ep_sp<GL::TextureInfo> getTextTexture(const std::string& text, ep_u64 fontSize) {
-        auto key = std::make_pair(text, fontSize);
+        for (const auto type : {
+            EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
+            EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
+        }) {
+            noteTextures[type] = { nullptr, nullptr };
+            calcConfig.noteTextureInfos[type] = {};
 
-        if (cachedTextTextures.find(key) == cachedTextTextures.end()) {
-            if (cachedTextTextures.size() >= maxTextTextures) {
-                static std::mt19937 rng { std::random_device {} () };
-                std::uniform_int_distribution<ep_u64> dist { 0, cachedTextTextures.size() - 1 };
-                
-                auto it = cachedTextTextures.begin();
-                std::advance(it, dist(rng));
-                cachedTextTextures.erase(it);
+            for (const auto isSimul : { false, true }) {
+                auto loadResult = noteTextureDataReader(NoteTextureDataReaderConfig {
+                    .type = type,
+                    .isSimul = isSimul
+                });
+
+                auto decoded = sharedComp.textureDecoder(loadResult.encoded);
+                auto tex = glCtx->createTextureFromDecoded(decoded);
+                if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding *= decoded.height;
+                if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.height, (ep_f64)decoded.height } / 2;
+
+                if (!isSimul) noteTextures[type].first = tex;
+                else noteTextures[type].second = tex;
+
+                PhiCalculateFrameConfig::NoteTextureInfo::Item item {
+                    .textureSize = Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height },
+                    .cutPadding = loadResult.cutPadding
+                };
+
+                if (!isSimul) calcConfig.noteTextureInfos[type].single = item;
+                else calcConfig.noteTextureInfos[type].simul = item;
             }
 
-            auto decoded = textRenderer(text, fontSize);
-            auto tex = loadTextureFromDecoded(decoded);
-            cachedTextTextures[key] = tex;
+            auto& info = calcConfig.noteTextureInfos[type];
+            auto simulScale = (ep_f64)info.simul.textureSize.x / info.single.textureSize.x;
+            info.simul.scaling = { simulScale, simulScale };
         }
 
-        return cachedTextTextures[key];
-    }
-
-    struct DrawTextConfig {
-        std::string text; ep_f64 fontSize;
-        GL::GLvec2 pos, anchor;
-        ep_f64 rotation;
-        GL::GLvec2 scale;
-        GL::GLvec4 color;
-
-        void normScale() {
-            auto wScale = std::min<ep_f64>(std::max(scale.x, scale.y), 16.0);
-
-            if (wScale > 1.0) {
-                scale /= wScale;
-                fontSize *= wScale;
-            }
-        }
-    };
-
-    void drawText(
-        GL::GL33Canvas& cvs,
-        DrawTextConfig& config
-    ) {
-        config.normScale();
-
-        ep_u64 isize = std::ceil(config.fontSize / 48) * 48;
-        auto tex = getTextTexture(config.text, isize);
-        ep_f64 scale = config.fontSize / isize;
-
-        auto size = tex->size() * scale * config.scale;
-
-        cvs.save();
-        cvs.translate(config.pos);
-        cvs.rotateDegrees(config.rotation);
-        cvs.drawRect({
-            .position = -size * config.anchor,
-            .size = size,
-            .color = config.color,
-            .texture = tex.get()
-        });
-        cvs.restore();
-    }
-
-    void playSfx(const ep_sp<DecodedAudio>& audio) {
-        if (!maxSfxPlaying) return;
-
-        while (playingSfxs.size() >= maxSfxPlaying) {
-            auto& task = playingSfxs.front();
-            task->stopped = true;
-            playingSfxs.erase(playingSfxs.begin());
+        auto hitEffectDatas = hitEffectDataReader();
+        for (const auto& data : hitEffectDatas) {
+            auto decoded = sharedComp.textureDecoder(data);
+            auto tex = glCtx->createTextureFromDecoded(decoded);
+            hitEffectTextures.push_back(tex);
         }
 
-        auto task = audioEngine->createTask(audio);
-        task->volume = sfxVolume;
+        for (const auto type : {
+            EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
+            EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
+        }) {
+            auto data = hitsoundDataReader(type);
+            hitsoundAudios[type] = audioManager.decodeAndCheck(data);
+        }
     }
 };
 
@@ -9397,7 +9468,6 @@ struct MilChart {
     };
 
     MilMeta meta;
-    std::vector<MilBPMEvent> bpms;
     std::vector<MilLine> lines;
     std::vector<MilStoryboardObject> storyboardObjects;
     MilAnimator animator;
@@ -9458,6 +9528,56 @@ MilChartLoadResult loadMilChartFromData(const Data& data) {
     
     #undef TRY_LOAD_FUNC
 }
+
+struct MilCalculateFrameConfig {
+    Vec2 screenSize;
+    ep_f64 songLength;
+};
+
+struct MilCalculatedFrame {
+    Vec2 frameTimeRange;
+};
+
+void calculateMilFrame(
+    MilChart& chart, ep_f64 time,
+    const MilCalculateFrameConfig& config,
+    MilCalculatedFrame& frame
+) {
+
+}
+
+struct MilTakeOverer {
+    MilTakeOverer() = default;
+    MilTakeOverer(const MilTakeOverer&) = delete;
+    MilTakeOverer& operator=(const MilTakeOverer&) = delete;
+    MilTakeOverer(MilTakeOverer&&) = default;
+    MilTakeOverer& operator=(MilTakeOverer&&) = default;
+
+    static ep_sp<MilTakeOverer> Make() {
+        auto* tor = new MilTakeOverer();
+        return ep_sp<MilTakeOverer>(tor);
+    }
+
+    ep_sp<GL::GL33Context> glCtx;
+    TakeOvererComponents::SharedComp sharedComp;
+    GL::TextManager textManager;
+    TakeOvererComponents::AudioManager audioManager;
+
+    MilCalculateFrameConfig calcConfig;
+    MilChart chart;
+    MilCalculatedFrame calculatedFrame;
+
+    void init() {
+        // ...
+
+        loadResources();
+    }
+
+    private:
+    void loadResources() {
+
+    }
+};
 
 #undef CHART_LOAD_FAILED
 
@@ -9819,10 +9939,12 @@ namespace easy_phi {
         }
 
         #ifdef EASY_PHI_TEXT_RENDERER
-        static ep_sp<TextRenderer> createTextRenderer() {
+        static GL::TextManager::Renderer createTextRenderer() {
             auto tr = TextRenderer::Make();
             tr->loadFont(getFontData());
-            return tr;
+            return [tr](const std::string& text, ep_u64 fontSize) -> DecodedRGBATexture {
+                return tr->render(text, fontSize);
+            };
         }
         #endif
     };
