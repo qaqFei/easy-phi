@@ -1141,6 +1141,10 @@ struct DecodedRGBATexture {
         };
     }
 
+    ep_u64 getIndexBase(ep_u64 x, ep_u64 y) const noexcept {
+        return (y * width + x) * 4;
+    }
+
     bool valid() const {
         return width > 0 && height > 0 && data.size() == (width * height * 4);
     }
@@ -1311,6 +1315,10 @@ struct Vec2 {
 
 struct Rect {
     ep_f64 x, y, w, h;
+
+    static Rect MakeCenter(ep_f64 x, ep_f64 y, ep_f64 w, ep_f64 h) noexcept {
+        return { x - w / 2, y - h / 2, w, h };
+    }
 
     Vec2 position() const noexcept { return { x, y }; }
     Vec2 size() const noexcept { return { w, h }; }
@@ -1610,6 +1618,22 @@ bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& scre
     */
 
     return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg, screenArea.center());
+}
+
+Rect getCoveredOrContainRect(const Rect& dst, const Vec2& size, bool isCovered) {
+    ep_f64 dst_ratio = dst.w / dst.h;
+    ep_f64 src_ratio = size.x / size.y;
+
+    ep_f64 w, h;
+    if (isCovered ? (src_ratio < dst_ratio) : (src_ratio > dst_ratio)) {
+        w = dst.w;
+        h = dst.w / src_ratio;
+    } else {
+        w = dst.h * src_ratio;
+        h = dst.h;
+    }
+
+    return Rect::MakeCenter(dst.x + dst.w / 2, dst.y + dst.h / 2, w, h);
 }
 
 void stripString(std::string& str) {
@@ -5089,7 +5113,7 @@ namespace TakeOvererComponents {
             bgmAudioTask = engine->createTask(bgmAudio);
         }
 
-        ep_f64 getBgmTime() {
+        ep_f64 getBgmTime() const {
             return bgmAudioTask ? engine->getTaskTime(bgmAudioTask) : 0.0;
         }
 
@@ -5168,6 +5192,10 @@ namespace TakeOvererComponents {
         std::optional<ep_f64> time;
         bool flushGl = true;
         bool disableHitsound = false;
+
+        ep_f64 getTime(const AudioManager& audioManager) const noexcept {
+            return time.value_or(audioManager.getBgmTime());
+        }
     };
 
     struct RenderResultInfoBase {
@@ -8248,28 +8276,8 @@ void calculatePhiFrame(
 
     frame.frameTimeRange = { frame.frameTimeRange.y, time };
 
-    auto calcCoveredOrContainRect = [](const Rect& dst, const Vec2& size, bool isCovered) {
-        ep_f64 dst_ratio = dst.w / dst.h;
-        ep_f64 src_ratio = size.x / size.y;
-
-        ep_f64 w, h;
-        if (isCovered ? (src_ratio < dst_ratio) : (src_ratio > dst_ratio)) {
-            w = dst.w;
-            h = dst.w / src_ratio;
-        } else {
-            w = dst.h * src_ratio;
-            h = dst.h;
-        }
-
-        return Rect {
-            (dst.x + dst.w / 2 - w / 2),
-            (dst.y + dst.h / 2 - h / 2),
-            w, h
-        };
-    };
-
     ep_f64 screenRatio = config.screenSize.x / config.screenSize.y;
-    Rect safeArea = screenRatio > chart.meta.maxViewRatio ? calcCoveredOrContainRect(
+    Rect safeArea = screenRatio > chart.meta.maxViewRatio ? getCoveredOrContainRect(
         { 0.0, 0.0, config.screenSize.x, config.screenSize.y },
         { chart.meta.maxViewRatio, 1.0 }, false
     ) : Rect { 0.0, 0.0, config.screenSize.x, config.screenSize.y };
@@ -8280,13 +8288,13 @@ void calculatePhiFrame(
 
     frame.backgroundImageBlurRadius = config.backgroundTextureSize.sum() * chart.options.backgroundTextureBlurRadius;
 
-    frame.unsafeBackgroundRect = calcCoveredOrContainRect(
+    frame.unsafeBackgroundRect = getCoveredOrContainRect(
         { 0.0, 0.0, config.screenSize.x, config.screenSize.y },
         config.backgroundTextureSize, true
     );
     frame.unsafeAreaDim = chart.options.unsafeBackgroundDim;
 
-    frame.backgroundRect = calcCoveredOrContainRect(safeArea, config.backgroundTextureSize, true);
+    frame.backgroundRect = getCoveredOrContainRect(safeArea, config.backgroundTextureSize, true);
     frame.backgroundDim = chart.options.backgroundDim;
 
     frame.objectsClipRect = safeArea;
@@ -8924,7 +8932,7 @@ struct PhiTakeOverer {
         calcConfig.songLength = audioManager.getBgmLength();
         calcConfig.backgroundTextureSize = { sharedComp.illustionTexture->width, sharedComp.illustionTexture->height };
 
-        auto t = renderConfig.base.time.value_or(audioManager.getBgmTime());
+        auto t = renderConfig.base.getTime(audioManager);
 
         {
             Timer timer;
@@ -9487,7 +9495,7 @@ struct MilChart {
     struct UserOptions {
         ep_f64 noteScaling = 1.0;
 
-        ep_f64 backgroundDim = 0.6;
+        ep_f64 backgroundDim = 0.8;
     };
 
     MilMeta meta;
@@ -9558,10 +9566,21 @@ MilChartLoadResult loadMilChartFromData(const Data& data) {
 
 struct MilCalculateFrameConfig {
     Vec2 screenSize;
+    Vec2 backgroundTextureSize;
     ep_f64 songLength;
 };
 
 struct MilCalculatedFrame {
+    Rect backgroundRect;
+    ep_f64 backgroundDim;
+
+    struct Cache {
+        void clear() {
+
+        }
+    };
+
+    Cache cache;
     Vec2 frameTimeRange;
 };
 
@@ -9570,7 +9589,32 @@ void calculateMilFrame(
     const MilCalculateFrameConfig& config,
     MilCalculatedFrame& frame
 ) {
+    frame.cache.clear();
 
+    frame.frameTimeRange = { frame.frameTimeRange.y, time };
+
+    frame.backgroundRect = getCoveredOrContainRect(
+        { 0.0, 0.0, config.screenSize.x, config.screenSize.y },
+        config.backgroundTextureSize, true
+    );
+    frame.backgroundDim = chart.options.backgroundDim;
+}
+
+DecodedRGBATexture spwanMilBackgroundMask() {
+    auto tex = DecodedRGBATexture::Make(2, 128);
+    const ep_f64 start = 0.2;
+    const ep_f64 alphaExp = 0.8;
+
+    for (ep_u64 i = 0; i < tex.width; i++) {
+        for (ep_u64 j = 0; j < tex.height; j++) {
+            ep_f64 p = (ep_f64)j / (tex.height - 1);
+            p = p * (start + 1) - start;
+            if (p <= 0.0) continue;
+            tex.data[tex.getIndexBase(i, j) + 3] = typed_clamp<ep_u8, ep_f64>(std::pow(p, alphaExp) * 270);
+        }
+    }
+
+    return tex;
 }
 
 struct MilTakeOverer {
@@ -9653,14 +9697,55 @@ struct MilTakeOverer {
     };
 
     RenderResultInfo& render(const RenderConfig& renderConfig) {
+        calcConfig.songLength = audioManager.getBgmLength();
+        calcConfig.backgroundTextureSize = { sharedComp.illustionTexture->width, sharedComp.illustionTexture->height };
+
+        auto t = renderConfig.base.getTime(audioManager);
+
+        {
+            Timer timer;
+            calculateMilFrame(chart, t, calcConfig, calculatedFrame);
+            renderResultInfoCache.base.calculatedTook = timer.elapsed();
+        }
+
+        Timer glOpsTimer;
+
+        using namespace GL;
+
+        glCtx->setViewport(calcConfig.screenSize.x, calcConfig.screenSize.y);
+        glCtx->setClearColor(0.0, 0.0, 0.0, 0.0);
+        glCtx->clear(GL_COLOR_BUFFER_BIT);
+
+        auto cvs = GL33Canvas::Make(glCtx.get());
+
+        cvs.drawRect({
+            .position = { calculatedFrame.backgroundRect.x, calculatedFrame.backgroundRect.y },
+            .size = { calculatedFrame.backgroundRect.w, calculatedFrame.backgroundRect.h },
+            .color = GLvec4::Gray(1.0 - calculatedFrame.backgroundDim),
+            .texture = sharedComp.illustionTexture.get()
+        });
+
+        cvs.drawRect({
+            .position = { calculatedFrame.backgroundRect.x, calculatedFrame.backgroundRect.y },
+            .size = { calculatedFrame.backgroundRect.w, calculatedFrame.backgroundRect.h },
+            .texture = backgroundMask.get()
+        });
+
+        if (renderConfig.base.flushGl) {
+            glCtx->flush();
+        }
+
+        renderResultInfoCache.base.glOperationsTook = glOpsTimer.elapsed();
+
         return renderResultInfoCache;
     }
 
     private:
     RenderResultInfo renderResultInfoCache;
+    ep_sp<GL::TextureInfo> backgroundMask;
 
     void loadResources() {
-
+        backgroundMask = glCtx->createTextureFromDecoded(spwanMilBackgroundMask());
     }
 };
 
