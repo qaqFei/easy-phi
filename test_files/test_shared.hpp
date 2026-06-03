@@ -498,6 +498,56 @@ struct WindowBase {
             std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
         }
     }
+
+    struct MainloopConfigBase {
+        std::optional<double> time;
+        bool isRenderingVideo;
+    };
+
+    template <typename TakeOverer, typename RenderConfig, typename RenderResultInfo>
+    bool mainloopFrame(
+        const MainloopConfigBase& config,
+        const TakeOverer& renderer,
+        std::function<RenderConfig(const RenderConfig&)> renderConfigurer = [](auto c) { return c; },
+        std::function<void(RenderResultInfo&)> callback = [](auto i) {}
+    ) {
+        auto frameSt = globalTimer();
+
+        if (shouldClose()) return false;
+
+        if (!config.isRenderingVideo) {
+            glfwGetFramebufferSize(window, &width, &height);
+        }
+
+        renderer->calcConfig.screenSize = { (double)width, (double)height };
+        
+        RenderResultInfo& resultInfo = renderer->render(renderConfigurer({
+            .base = {
+                .time = config.time,
+                .disableHitsound = !config.isRenderingVideo
+            }
+        }));
+
+        callback(resultInfo);
+
+        if (!config.isRenderingVideo) {
+            std::cout << "calculate took: " << (resultInfo.base.calculatedTook * 1000) << " ms" << std::endl;
+            std::cout << "gl operations took: " << (resultInfo.base.glOperationsTook * 1000) << " ms" << std::endl;
+
+            glfwPollEvents();
+            busyWait(frameSt, !config.isRenderingVideo);
+            glfwSwapBuffers(window);
+        }
+
+        if (!config.isRenderingVideo) {
+            std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
+            std::cout << "draw calls count: " << glCtx->drawCallsCount << std::endl;
+            std::cout << std::string(80, '.') << std::endl;
+        }
+
+        glCtx->frameEnded();
+        return true;
+    }
 };
 
 void createGLfwWindow(WindowBase& wbase) {
@@ -626,55 +676,28 @@ struct PhiWindow {
     }
 
     struct MainloopConfig {
-        std::optional<double> time;
-        bool isRenderingVideo;
+        WindowBase::MainloopConfigBase base;
         TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi;
     };
 
-    bool mainloopFrame(const MainloopConfig& mainloopConfig) {
-        auto frameSt = globalTimer();
-
-        if (base.shouldClose()) return false;
-
-        if (!mainloopConfig.isRenderingVideo) {
-            glfwGetFramebufferSize(base.window, &base.width, &base.height);
-        }
-
-        renderer->calcConfig.screenSize = { (double)base.width, (double)base.height };
-
-        auto& resultInfo = renderer->render({
-            .base = {
-                .time = mainloopConfig.time,
-                .disableHitsound = mainloopConfig.isRenderingVideo
+    bool mainloopFrame(const MainloopConfig& config) {
+        return base.mainloopFrame<
+            decltype(renderer),
+            decltype(renderer)::element_type::RenderConfig,
+            decltype(renderer)::element_type::RenderResultInfo
+        >(
+            config.base,
+            renderer,
+            [](auto c) { return c; },
+            [&](auto info) {
+                if (config.pccfi) {
+                    config.pccfi->calculationTook = info.base.calculatedTook * 1000;
+                    config.pccfi->screenSize = { (double)base.width, (double)base.height };
+                    config.pccfi->timeRange = renderer->calculatedFrame.frameTimeRange.toPair();
+                    config.pccfi->renderTook = info.base.glOperationsTook * 1000;
+                }
             }
-        });
-
-        if (!mainloopConfig.isRenderingVideo) {
-            std::cout << "calculate took: " << (resultInfo.base.calculatedTook * 1000) << " ms" << std::endl;
-            std::cout << "gl operations took: " << (resultInfo.base.glOperationsTook * 1000) << " ms" << std::endl;
-        }
-        
-        if (mainloopConfig.pccfi) {
-            mainloopConfig.pccfi->calculationTook = resultInfo.base.calculatedTook * 1000;
-            mainloopConfig.pccfi->screenSize = { (double)base.width, (double)base.height };
-            mainloopConfig.pccfi->timeRange = renderer->calculatedFrame.frameTimeRange.toPair();
-            mainloopConfig.pccfi->renderTook = resultInfo.base.glOperationsTook * 1000;
-        }
-
-        if (!mainloopConfig.isRenderingVideo) {
-            glfwPollEvents();
-            base.busyWait(frameSt, !mainloopConfig.isRenderingVideo);
-            glfwSwapBuffers(base.window);
-        }
-
-        if (!mainloopConfig.isRenderingVideo) {
-            std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
-            std::cout << "draw calls count: " << base.glCtx->drawCallsCount << std::endl;
-            std::cout << std::string(80, '.') << std::endl;
-        }
-
-        base.glCtx->frameEnded();
-        return true;
+        );
     }
 };
 
@@ -715,47 +738,20 @@ struct MilWindow {
     }
 
     struct MainloopConfig {
-        std::optional<double> time;
-        bool isRenderingVideo;
+        WindowBase::MainloopConfigBase base;
     };
     
-    bool mainloopFrame(const MainloopConfig& mainloopConfig) {
-        auto frameSt = globalTimer();
-
-        if (base.shouldClose()) return false;
-
-        if (!mainloopConfig.isRenderingVideo) {
-            glfwGetFramebufferSize(base.window, &base.width, &base.height);
-        }
-
-        renderer->calcConfig.screenSize = { (double)base.width, (double)base.height };
-
-        auto& resultInfo = renderer->render({
-            .base = {
-                .time = mainloopConfig.time,
-                .disableHitsound = mainloopConfig.isRenderingVideo
-            }
-        });
-
-        if (!mainloopConfig.isRenderingVideo) {
-            std::cout << "calculate took: " << (resultInfo.base.calculatedTook * 1000) << " ms" << std::endl;
-            std::cout << "gl operations took: " << (resultInfo.base.glOperationsTook * 1000) << " ms" << std::endl;
-        }
-        
-        if (!mainloopConfig.isRenderingVideo) {
-            glfwPollEvents();
-            base.busyWait(frameSt, !mainloopConfig.isRenderingVideo);
-            glfwSwapBuffers(base.window);
-        }
-
-        if (!mainloopConfig.isRenderingVideo) {
-            std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
-            std::cout << "draw calls count: " << base.glCtx->drawCallsCount << std::endl;
-            std::cout << std::string(80, '.') << std::endl;
-        }
-
-        base.glCtx->frameEnded();
-        return true;
+    bool mainloopFrame(const MainloopConfig& config) {
+        return base.mainloopFrame<
+            decltype(renderer),
+            decltype(renderer)::element_type::RenderConfig,
+            decltype(renderer)::element_type::RenderResultInfo
+        >(
+            config.base,
+            renderer,
+            [](auto c) { return c; },
+            [](auto i) { }
+        );
     }
 };
 

@@ -649,8 +649,10 @@ int main() {
 
             auto reGuard = videoRecorder->useFrame();
             backendWin.mainloopFrame({
-                .time = t,
-                .isRenderingVideo = true
+                .base = {
+                    .time = t,
+                    .isRenderingVideo = true
+                }
             });
 
             frameCut++;
