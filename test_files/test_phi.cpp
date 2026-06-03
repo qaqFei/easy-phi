@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     window.base.setVSync(!hasArg("--disable-vsync"));
     window.init();
 
-    window.loadChart(chartPath, storyboardAssetsPath, nullptr);
+    window.loadChart(chartPath, storyboardAssetsPath);
 
     if (window.renderer->chart.meta.title.empty()) {
         window.renderer->chart.meta.title = chartTitle;

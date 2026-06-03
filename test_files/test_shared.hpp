@@ -599,7 +599,7 @@ struct PhiWindow {
         renderer->init();
     }
 
-    void loadChart(const std::string& path, const std::string& chartDir, double* loadingTook) {
+    auto loadChart(const std::string& path, const std::string& chartDir) {
         auto data = Data::MakeFromFile(path);
 
         base.chartDir = chartDir;
@@ -622,6 +622,7 @@ struct PhiWindow {
         std::cout << "init chart took: " << resultInfo.initTook << " s" << std::endl;
 
         resultInfo.checkAndThrow();
+        return resultInfo;
     }
 
     struct MainloopConfig {
@@ -642,20 +643,22 @@ struct PhiWindow {
         renderer->calcConfig.screenSize = { (double)base.width, (double)base.height };
 
         auto& resultInfo = renderer->render({
-            .time = mainloopConfig.time,
-            .disableHitsound = mainloopConfig.isRenderingVideo
+            .base = {
+                .time = mainloopConfig.time,
+                .disableHitsound = mainloopConfig.isRenderingVideo
+            }
         });
 
         if (!mainloopConfig.isRenderingVideo) {
-            std::cout << "calculate took: " << (resultInfo.calculatedTook * 1000) << " ms" << std::endl;
-            std::cout << "gl operations took: " << (resultInfo.glOperationsTook * 1000) << " ms" << std::endl;
+            std::cout << "calculate took: " << (resultInfo.base.calculatedTook * 1000) << " ms" << std::endl;
+            std::cout << "gl operations took: " << (resultInfo.base.glOperationsTook * 1000) << " ms" << std::endl;
         }
         
         if (mainloopConfig.pccfi) {
-            mainloopConfig.pccfi->calculationTook = resultInfo.calculatedTook * 1000;
+            mainloopConfig.pccfi->calculationTook = resultInfo.base.calculatedTook * 1000;
             mainloopConfig.pccfi->screenSize = { (double)base.width, (double)base.height };
             mainloopConfig.pccfi->timeRange = renderer->calculatedFrame.frameTimeRange.toPair();
-            mainloopConfig.pccfi->renderTook = resultInfo.glOperationsTook * 1000;
+            mainloopConfig.pccfi->renderTook = resultInfo.base.glOperationsTook * 1000;
         }
 
         if (!mainloopConfig.isRenderingVideo) {
@@ -676,7 +679,84 @@ struct PhiWindow {
 };
 
 struct MilWindow {
+    WindowBase base;
 
+    ep_sp<MilTakeOverer> renderer;
+
+    void init() {
+        base.audioSeekTo = [this](ep_f64 p) {
+            renderer->audioManager.seekBgm(renderer->audioManager.getBgmLength() * p);
+        };
+
+        createGLfwWindow(base);
+
+        renderer = MilTakeOverer::Make();
+        
+        renderer->glCtx = base.glCtx;
+        renderer->sharedComp.textureDecoder = decodeImage;
+        renderer->textManager.renderer = PhiStaticResourceHelpers::createTextRenderer();
+        renderer->audioManager.decoder = decodeAudioMiniaudio;
+        renderer->audioManager.engine = makeAudioEngineMiniaudio();
+        renderer->init();
+    }
+
+    auto loadChart(const std::string& path, const std::string& chartDir) {
+        auto data = Data::MakeFromFile(path);
+
+        base.chartDir = chartDir;
+        
+        auto resultInfo = renderer->loadChart(data);
+
+        std::cout << "create chart object took: " << resultInfo.createObjectTook << " s" << std::endl;
+        std::cout << "init chart took: " << resultInfo.initTook << " s" << std::endl;
+
+        resultInfo.checkAndThrow();
+        return resultInfo;
+    }
+
+    struct MainloopConfig {
+        std::optional<double> time;
+        bool isRenderingVideo;
+    };
+    
+    bool mainloopFrame(const MainloopConfig& mainloopConfig) {
+        auto frameSt = globalTimer();
+
+        if (base.shouldClose()) return false;
+
+        if (!mainloopConfig.isRenderingVideo) {
+            glfwGetFramebufferSize(base.window, &base.width, &base.height);
+        }
+
+        renderer->calcConfig.screenSize = { (double)base.width, (double)base.height };
+
+        auto& resultInfo = renderer->render({
+            .base = {
+                .time = mainloopConfig.time,
+                .disableHitsound = mainloopConfig.isRenderingVideo
+            }
+        });
+
+        if (!mainloopConfig.isRenderingVideo) {
+            std::cout << "calculate took: " << (resultInfo.base.calculatedTook * 1000) << " ms" << std::endl;
+            std::cout << "gl operations took: " << (resultInfo.base.glOperationsTook * 1000) << " ms" << std::endl;
+        }
+        
+        if (!mainloopConfig.isRenderingVideo) {
+            glfwPollEvents();
+            base.busyWait(frameSt, !mainloopConfig.isRenderingVideo);
+            glfwSwapBuffers(base.window);
+        }
+
+        if (!mainloopConfig.isRenderingVideo) {
+            std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
+            std::cout << "draw calls count: " << base.glCtx->drawCallsCount << std::endl;
+            std::cout << std::string(80, '.') << std::endl;
+        }
+
+        base.glCtx->frameEnded();
+        return true;
+    }
 };
 
 template<typename T>

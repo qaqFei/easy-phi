@@ -5158,6 +5158,21 @@ namespace TakeOvererComponents {
             for (const auto& error : errors) messages += error + "\n";
             throw std::runtime_error("failed to load chart: " + messages);
         }
+
+        ep_f64 totalTook() const {
+            return createObjectTook + initTook;
+        }
+    };
+
+    struct RenderConfigBase {
+        std::optional<ep_f64> time;
+        bool flushGl = true;
+        bool disableHitsound = false;
+    };
+
+    struct RenderResultInfoBase {
+        ep_f64 calculatedTook;
+        ep_f64 glOperationsTook;
     };
 };
 
@@ -8898,26 +8913,23 @@ struct PhiTakeOverer {
     }
 
     struct RenderConfig {
-        std::optional<ep_f64> time;
-        bool flushGl = true;
-        bool disableHitsound = false;
+        TakeOvererComponents::RenderConfigBase base;
     };
 
     struct RenderResultInfo {
-        ep_f64 calculatedTook;
-        ep_f64 glOperationsTook;
+        TakeOvererComponents::RenderResultInfoBase base;
     };
 
     RenderResultInfo& render(const RenderConfig& renderConfig) {
         calcConfig.songLength = audioManager.getBgmLength();
         calcConfig.backgroundTextureSize = { sharedComp.illustionTexture->width, sharedComp.illustionTexture->height };
 
-        auto t = renderConfig.time.value_or(audioManager.getBgmTime());
+        auto t = renderConfig.base.time.value_or(audioManager.getBgmTime());
 
         {
             Timer timer;
             calculatePhiFrame(chart, t, calcConfig, calculatedFrame);
-            renderResultInfoCache.calculatedTook = timer.elapsed();
+            renderResultInfoCache.base.calculatedTook = timer.elapsed();
         }
 
         Timer glOpsTimer;
@@ -9075,13 +9087,13 @@ struct PhiTakeOverer {
             }
         }
 
-        if (renderConfig.flushGl) {
+        if (renderConfig.base.flushGl) {
             glCtx->flush();
         }
 
-        renderResultInfoCache.glOperationsTook = glOpsTimer.elapsed();
+        renderResultInfoCache.base.glOperationsTook = glOpsTimer.elapsed();
 
-        if (!renderConfig.disableHitsound) {
+        if (!renderConfig.base.disableHitsound) {
             for (ep_u64 i = std::max<ep_i64>(0, calculatedFrame.hitsounds.size() - audioManager.maxSfxPlaying); i < calculatedFrame.hitsounds.size(); ++i) {
                 audioManager.playSfx(hitsoundAudios.at(calculatedFrame.hitsounds[i].first));
             }
@@ -9632,7 +9644,21 @@ struct MilTakeOverer {
         return resultInfo;
     }
 
+    struct RenderConfig {
+        TakeOvererComponents::RenderConfigBase base;
+    };
+
+    struct RenderResultInfo {
+        TakeOvererComponents::RenderResultInfoBase base;
+    };
+
+    RenderResultInfo& render(const RenderConfig& renderConfig) {
+        return renderResultInfoCache;
+    }
+
     private:
+    RenderResultInfo renderResultInfoCache;
+
     void loadResources() {
 
     }

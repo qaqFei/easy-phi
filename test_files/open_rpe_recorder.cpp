@@ -495,7 +495,8 @@ int main() {
 
     auto load = [&]() {
         try {
-            backendWin.loadChart(chartPath, chartRoot, &loadingChartTook);
+            auto loadResult = backendWin.loadChart(chartPath, chartRoot);
+            loadingChartTook = loadResult.totalTook();
 
             if (chartInfo.has_value()) {
                 auto& info = chartInfo.value();

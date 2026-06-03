@@ -48,5 +48,21 @@ int main(int argc, char** argv) {
     storyboardAssetsPath = "./test_files/mil/" + chartNames[choice];
 
     MilWindow window {};
+    window.base.fullscreen = hasArg("--fullscreen");
+    window.base.setVSync(!hasArg("--disable-vsync"));
+    window.init();
+
+    window.loadChart(chartPath, storyboardAssetsPath);
+    window.renderer->loadIllustion(imagePath);
+    window.renderer->audioManager.load(audioPath);
+
+    window.renderer->audioManager.startBgm();
+
+    while (!window.renderer->audioManager.getBpmIsEnded()) {
+        if (!window.mainloopFrame({})) {
+            break;
+        }
+    }
+
     return 0;
 }
