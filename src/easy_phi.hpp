@@ -9967,6 +9967,7 @@ struct MilCalculateFrameConfig {
 struct MilCalculatedFrame {
     Rect backgroundRect;
     ep_f64 backgroundDim;
+    Rect progressbarRect;
 
     struct Cache {
         void clear() {
@@ -9992,6 +9993,12 @@ void calculateMilFrame(
         config.backgroundTextureSize, true
     );
     frame.backgroundDim = chart.options.backgroundDim;
+
+    frame.progressbarRect = {
+        0.0, 0.0,
+        time / config.songLength * config.screenSize.x,
+        config.screenSize.x * 0.0046875
+    };
 }
 
 DecodedRGBATexture spwanMilBackgroundMask() {
@@ -10005,6 +10012,21 @@ DecodedRGBATexture spwanMilBackgroundMask() {
             p = p * (start + 1) - start;
             if (p <= 0.0) continue;
             tex.data[tex.getIndexBase(i, j) + 3] = typed_clamp<ep_u8, ep_f64>(std::pow(p, alphaExp) * 270);
+        }
+    }
+
+    return tex;
+}
+
+DecodedRGBATexture spwanMilProgressbar() {
+    auto tex = DecodedRGBATexture::Make(128, 2);
+    std::fill(tex.data.begin(), tex.data.end(), 255);
+
+    for (ep_u64 i = 0; i < tex.width; i++) {
+        for (ep_u64 j = 0; j < tex.height; j++) {
+            ep_f64 p = (ep_f64)i / (tex.width - 1);
+            p = 1.0 - std::pow(1.0 - p, 2.2);
+            tex.data[tex.getIndexBase(i, j) + 3] = typed_clamp<ep_u8, ep_f64>(p * 255);
         }
     }
 
@@ -10125,6 +10147,12 @@ struct MilTakeOverer {
             .texture = backgroundMask.get()
         });
 
+        cvs.drawRect({
+            .position = { calculatedFrame.progressbarRect.x, calculatedFrame.progressbarRect.y },
+            .size = { calculatedFrame.progressbarRect.w, calculatedFrame.progressbarRect.h },
+            .texture = progressbarTex.get()
+        });
+
         if (renderConfig.base.flushGl) {
             glCtx->flush();
         }
@@ -10137,9 +10165,11 @@ struct MilTakeOverer {
     private:
     RenderResultInfo renderResultInfoCache;
     ep_sp<GL::TextureInfo> backgroundMask;
+    ep_sp<GL::TextureInfo> progressbarTex;
 
     void loadResources() {
         backgroundMask = glCtx->createTextureFromDecoded(spwanMilBackgroundMask());
+        progressbarTex = glCtx->createTextureFromDecoded(spwanMilProgressbar());
     }
 };
 
