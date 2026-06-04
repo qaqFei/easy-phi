@@ -5376,8 +5376,7 @@ struct PhiEvent {
 
     ep_f64 getProgressAtTime(ep_f64 t) noexcept {
         // if (t < timeZone.x) return 0.0;
-        ep_f64 p = std::clamp((t - timeZone.x) / (timeZone.y - timeZone.x), 0.0, 1.0);
-        return p;
+        return std::clamp((t - timeZone.x) / (timeZone.y - timeZone.x), 0.0, 1.0);
     }
 
     ep_f64 valueAtTime(ep_f64 t) noexcept {
@@ -9195,8 +9194,9 @@ enum class EnumMilEventType : ep_u64 {
     MAX = VisibleArea + 1
 };
 
-enum class EnumMilObjectType {
-    Line, Note, Storyboard
+enum class EnumMilObjectType : ep_u64{
+    Line, Note, Storyboard,
+    MAX = Storyboard + 1
 };
 
 enum class EnumMilNoteType {
@@ -9245,6 +9245,19 @@ struct MilEventTypeHelper {
     }
 };
 
+struct MilObjectTypeHelper {
+    /* !docs
+    A helper for converting milthm object type to `@EnumMilObjectType`.
+    */
+
+    static EnumMilObjectType FromInt(ep_u64 type) {
+        if (type == 0) return EnumMilObjectType::Line;
+        if (type == 1) return EnumMilObjectType::Note;
+        if (type == 2) return EnumMilObjectType::Storyboard;
+        return EnumMilObjectType::Line;
+    }
+};
+
 struct MilNoteTypeHelper {
     /* !docs
     A helper for converting milthm note type to `@EnumMilNoteType`.
@@ -9254,6 +9267,31 @@ struct MilNoteTypeHelper {
         if (type == 0) return EnumMilNoteType::Hit;
         if (type == 1) return EnumMilNoteType::Drag;
         return EnumMilNoteType::Hit;
+    }
+};
+
+struct MilStoryboardTypeHelper {
+    /* !docs
+    A helper for converting milthm storyboard type to `@EnumMilStoryboardType`.
+    */
+
+    static EnumMilStoryboardType FromInt(ep_u64 type) {
+        if (type == 0) return EnumMilStoryboardType::Picture;
+        if (type == 1) return EnumMilStoryboardType::Text;
+        return EnumMilStoryboardType::Picture;
+    }
+};
+
+struct MilStoryboardLayerHelper {
+    /* !docs
+    A helper for converting milthm storyboard layer to `@EnumMilStoryboardLayer`.
+    */
+
+    static EnumMilStoryboardLayer FromInt(ep_u64 type) {
+        if (type == 0) return EnumMilStoryboardLayer::Background;
+        if (type == 1) return EnumMilStoryboardLayer::Normal;
+        if (type == 2) return EnumMilStoryboardLayer::Foreground;
+        return EnumMilStoryboardLayer::Background;
     }
 };
 
@@ -9287,7 +9325,6 @@ struct MilBPMEvent {
 
     ep_f64 time; // !inline-docs| in seconds.
     ep_f64 bpm;
-    ep_u64 beatsPerBar;
 };
 
 struct MilEventLayerIndexs {
@@ -9308,8 +9345,68 @@ struct MilEvent {
     ep_f64 (* easingFunc)(void*, ep_f64);
     ep_f64 (* easingIntFunc)(void*, ep_f64);
     void* easingFuncContext;
+    ep_u64 index;
 
     ep_f64 cumulativeValueAtStart;
+
+    static ep_f64 getDefaultValue(EnumMilObjectType objType, EnumMilEventType eventType) {
+        static std::unordered_map<EnumMilObjectType, std::unordered_map<EnumMilEventType, ep_f64>> defaultValues = {
+            { EnumMilObjectType::Line, {
+                { EnumMilEventType::PositionY, -350 },
+                { EnumMilEventType::Transparency, 1 },
+                { EnumMilEventType::Size, 1 },
+                { EnumMilEventType::Rotation, 90 },
+                { EnumMilEventType::FlowSpeed, 1 },
+                { EnumMilEventType::LineBodyTransparency, 1 },
+                { EnumMilEventType::LineHeadTransparency, 1 },
+                { EnumMilEventType::Speed, 1 },
+                { EnumMilEventType::WholeTransparency, 1 },
+                { EnumMilEventType::Color, 0xffffffff },
+                { EnumMilEventType::VisibleArea, (ep_f64)2500 / 1080 }
+            } },
+            { EnumMilObjectType::Note, {
+                { EnumMilEventType::Transparency, 1 },
+                { EnumMilEventType::Size, 1 },
+                { EnumMilEventType::FlowSpeed, 1 },
+                { EnumMilEventType::Color, 0xffffffff }
+            } },
+            { EnumMilObjectType::Storyboard, {
+                { EnumMilEventType::Size, 1 },
+                { EnumMilEventType::StoryBoardWidth, 1 },
+                { EnumMilEventType::StoryBoardHeight, 1 },
+                { EnumMilEventType::StoryBoardLeftBottomX, -0.5 },
+                { EnumMilEventType::StoryBoardLeftBottomY, -0.5 },
+                { EnumMilEventType::StoryBoardRightBottomX, 0.5 },
+                { EnumMilEventType::StoryBoardRightBottomY, -0.5 },
+                { EnumMilEventType::StoryBoardLeftTopX, -0.5 },
+                { EnumMilEventType::StoryBoardLeftTopY, 0.5 },
+                { EnumMilEventType::StoryBoardRightTopX, 0.5 },
+                { EnumMilEventType::StoryBoardRightTopY, 0.5 },
+                { EnumMilEventType::Color, 0xffffffff }
+            } }
+        };
+
+        return defaultValues[objType][eventType];
+    }
+
+    ep_f64 getProgressAtTime(ep_f64 t) noexcept {
+        if (timeZone.isZeroZone()) return 1.0;
+        return std::clamp((t - timeZone.x) / (timeZone.y - timeZone.x), 0.0, 1.0);
+    }
+
+    ep_f64 valueAtTime(ep_f64 t) noexcept {
+        auto p = getProgressAtTime(t);
+
+        if (hasValueEasing()) {
+            p = easingFunc(easingFuncContext, p);
+        }
+
+        return valueZone.x + p * (valueZone.y - valueZone.x);
+    }
+
+    private:
+    bool hasValueEasing() const noexcept { return easingFunc != nullptr; }
+    bool hasAllEasing() const noexcept { return easingFunc != nullptr && easingIntFunc != nullptr; }
 };
 
 struct MilAnimGroup {
@@ -9322,6 +9419,54 @@ struct MilAnimGroup {
 
     void addEvent(const MilEvent& e) { events[(ep_u64)e.type].push_back(e); }
     std::vector<MilEvent>& getEvents(EnumMilEventType type) { return events[(ep_u64)type]; }
+
+    void init() {
+        for (ep_u64 i = 0; i < (ep_u64)EnumMilEventType::MAX; i++) {
+            auto& typed_events = events[i];
+
+            std::sort(typed_events.begin(), typed_events.end(), [](const auto& a, const auto& b) {
+                if (a.timeZone.x != b.timeZone.x) return a.timeZone.x < b.timeZone.x;
+                if (a.timeZone.y != b.timeZone.y) return a.timeZone.y < b.timeZone.y;
+                return a.index < b.index;
+            });
+
+            if (typed_events.empty()) {
+                currentValues[i] = MilEvent::getDefaultValue(objType, (EnumMilEventType)i);
+            }
+        }
+    }
+
+    void updateType(ep_u64 type, ep_f64 t) {
+        auto& typed_events = events[type];
+        if (typed_events.empty()) return;
+
+        if (lastUpdatedTimes[type] == t) return;
+        if (lastUpdatedTimes[type] > t) currentIndexs[type] = 0;
+        
+        while (
+            currentIndexs[type] < typed_events.size() - 1
+            && typed_events[currentIndexs[type] + 1].timeZone.x <= t
+        ) currentIndexs[type]++;
+
+        auto& e = typed_events[currentIndexs[type]];
+
+        if (type == (ep_u64)EnumMilEventType::Speed) {
+            // TODO: implement it
+        } else {
+            currentValues[type] = e.valueAtTime(t);
+        }
+        
+        lastUpdatedTimes[type] = t;
+    }
+
+    ep_f64 get(EnumMilEventType type) {
+        return currentValues[(ep_u64)type];
+    }
+
+    private:
+    ep_f64 lastUpdatedTimes[(ep_u64)EnumMilEventType::MAX];
+    ep_u64 currentIndexs[(ep_u64)EnumMilEventType::MAX];
+    ep_f64 currentValues[(ep_u64)EnumMilEventType::MAX];
 };
 
 struct MilAnimator {
@@ -9330,20 +9475,35 @@ struct MilAnimator {
     Like `@PhiAnimator`.
     */
 
+    ObjectIndexGenerator<std::pair<EnumMilObjectType, ep_u64>> indexGen;
     std::unordered_map<ep_u64, MilAnimGroup> groups;
 
     MilAnimGroup& requestGroup(ep_u64 index) {
         return groups.try_emplace(index, MilAnimGroup {}).first->second;
     }
 
-    template <typename T>
-    MilAnimGroup& requestGroup(T& obj) {
-        return requestGroup(obj.indexer.get());
+    void setGroupObjectType(ep_u64 index, EnumMilObjectType objType) {
+        requestGroup(index).objType = objType;
+    }
+
+    void addEvent(ep_u64 index, const MilEvent& e) {
+        requestGroup(index).addEvent(e);
+    }
+
+    void init() {
+        for (auto& [_, group] : groups) {
+            group.init();
+        }
     }
 
     template <typename T>
-    void addEvent(T& obj, const MilEvent& e) {
-        requestGroup(obj).addEvent(e);
+    ep_f64 get(T& obj, ep_f64 t, EnumMilEventType type) {
+        auto group_it = groups.find(obj.indexer.get());
+        if (group_it == groups.end()) return MilEvent::getDefaultValue(T::ObjType, type);
+
+        auto& group = group_it->second;
+        group.updateType((ep_u64)type, t);
+        return group.get(type);
     }
 };
 
@@ -9353,6 +9513,7 @@ struct MilNote {
     */
 
     ObjectIndexer indexer;
+    static constexpr auto ObjType = EnumMilObjectType::Note;
 
     struct State {
         ep_f64 lastUpdateTime;
@@ -9426,6 +9587,7 @@ struct MilLine {
     */
 
     ObjectIndexer indexer;
+    static constexpr auto ObjType = EnumMilObjectType::Line;
 
     std::vector<MilNote> notes;
 
@@ -9438,6 +9600,7 @@ struct MilStoryboardObject {
     */
 
     ObjectIndexer indexer;
+    static constexpr auto ObjType = EnumMilObjectType::Storyboard;
 
     EnumMilStoryboardType type;
     std::string data;
@@ -9513,7 +9676,7 @@ struct MilChart {
     State state;
 
     void init() {
-
+        animator.init();
     }
 };
 
@@ -9537,6 +9700,237 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
     if (!jsonParseSuccess) CHART_LOAD_FAILED("dev", std::string("failed to parse json: ") + err);
 
     MilChart chart {};
+    chart.meta.noteFlowSpeedBehavior = MilMeta::NoteFlowSpeedBehavior::Override;
+
+    if (!jsonRoot.isObject()) CHART_LOAD_FAILED("dev", "root is not an object");
+
+    if (!jsonRoot.hasKey("meta")) CHART_LOAD_FAILED("dev", "missing meta field");
+    if (!jsonRoot["meta"].isObject()) CHART_LOAD_FAILED("dev", "meta is not an object");
+
+    auto& metaNode = jsonRoot["meta"];
+
+    if (!metaNode.hasKey("Title")) CHART_LOAD_FAILED("dev", "missing Title field");
+    if (!metaNode["Title"].isString()) CHART_LOAD_FAILED("dev", "Title is not a string");
+    chart.meta.title = metaNode["Title"].getString();
+
+    if (!metaNode.hasKey("Composer")) CHART_LOAD_FAILED("dev", "missing Composer field");
+    if (!metaNode["Composer"].isString()) CHART_LOAD_FAILED("dev", "Composer is not a string");
+    chart.meta.composer = metaNode["Composer"].getString();
+
+    if (!metaNode.hasKey("Illustrator")) CHART_LOAD_FAILED("dev", "missing Illustrator field");
+    if (!metaNode["Illustrator"].isString()) CHART_LOAD_FAILED("dev", "Illustrator is not a string");
+    chart.meta.artist = metaNode["Illustrator"].getString();
+
+    if (!metaNode.hasKey("Beatmapper")) CHART_LOAD_FAILED("dev", "missing Beatmapper field");
+    if (!metaNode["Beatmapper"].isString()) CHART_LOAD_FAILED("dev", "Beatmapper is not a string");
+    chart.meta.charter = metaNode["Beatmapper"].getString();
+
+    if (!metaNode.hasKey("Difficulty")) CHART_LOAD_FAILED("dev", "missing Difficulty field");
+    if (!metaNode["Difficulty"].isString()) CHART_LOAD_FAILED("dev", "Difficulty is not a string");
+    chart.meta.difficultyName = metaNode["Difficulty"].getString();
+
+    if (!metaNode.hasKey("DifficultyValue")) CHART_LOAD_FAILED("dev", "missing DifficultyValue field");
+    if (!metaNode["DifficultyValue"].isNumber()) CHART_LOAD_FAILED("dev", "DifficultyValue is not a number");
+    chart.meta.difficultyValue = metaNode["DifficultyValue"].getNumber();
+
+    std::vector<MilBPMEvent> bpms;
+
+    if (!jsonRoot.hasKey("bpms")) CHART_LOAD_FAILED("dev", "missing bpms field");
+    if (!jsonRoot["bpms"].isArray()) CHART_LOAD_FAILED("dev", "bpms is not an array");
+
+    for (auto& bpmNode : jsonRoot["bpms"].getArray()) {
+        if (!bpmNode.isObject()) CHART_LOAD_FAILED("dev", "bpm is not an object");
+
+        if (!bpmNode.hasKey("start")) CHART_LOAD_FAILED("dev", "missing start field");
+        if (!bpmNode["start"].isNumber()) CHART_LOAD_FAILED("dev", "start is not a number");
+        ep_f64 start = bpmNode["start"].getNumber();
+
+        if (!bpmNode.hasKey("bpm")) CHART_LOAD_FAILED("dev", "missing bpm field");
+        if (!bpmNode["bpm"].isNumber()) CHART_LOAD_FAILED("dev", "bpm is not a number");
+        ep_f64 bpm = bpmNode["bpm"].getNumber();
+
+        bpms.push_back({ .time = start, .bpm = bpm });
+    }
+
+    auto cvtTime = [&](JsonNode& node, const std::string& key, ep_u64 bpm, ep_f64* dst) {
+        if (!node.hasKey(key)) return false;
+        auto& timeNode = node[key];
+
+        if (timeNode.isNumber()) {
+            *dst = timeNode.getNumber();
+            return true;
+        }
+
+        if (timeNode.isArray()) {
+            auto& timeArray = timeNode.getArray();
+            if (timeArray.size() != 3 && timeArray.size() != 4) return false;
+
+            if (!timeArray[0].isNumber()) return false;
+            if (!timeArray[1].isNumber()) return false;
+            if (!timeArray[2].isNumber()) return false;
+            if (timeArray.size() == 4 && !timeArray[3].isNumber()) return false;
+
+            ep_f64 beatTime = timeArray[0].getNumber() + timeArray[1].getNumber() / timeArray[2].getNumber();
+            auto& bpmEvent = bpms[timeArray.size() == 3 ? bpm : (ep_u64)timeArray[3].getNumber()];
+
+            *dst = bpmEvent.time + beatTime * (60.0 / bpmEvent.bpm);
+            return true;
+        }
+
+        return false;
+    };
+
+    if (!jsonRoot.hasKey("lines")) CHART_LOAD_FAILED("dev", "missing lines field");
+    if (!jsonRoot["lines"].isArray()) CHART_LOAD_FAILED("dev", "lines is not an array");
+
+    ep_u64 lineIndex = 0;
+    for (auto& lineNode : jsonRoot["lines"].getArray()) {
+        if (!lineNode.isObject()) CHART_LOAD_FAILED("dev", "line is not an object");
+
+        auto& line = chart.lines.emplace_back();
+        line.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Line, lineIndex++ }));
+
+        if (!lineNode.hasKey("notes")) CHART_LOAD_FAILED("dev", "missing notes field");
+        if (!lineNode["notes"].isArray()) CHART_LOAD_FAILED("dev", "notes is not an array");
+
+        for (auto& noteNode : lineNode["notes"].getArray()) {
+            if (!noteNode.isObject()) CHART_LOAD_FAILED("dev", "note is not an object");
+
+            auto& note = line.notes.emplace_back();
+
+            if (!noteNode.hasKey("bpm")) CHART_LOAD_FAILED("dev", "missing bpm field");
+            if (!noteNode["bpm"].isNumber()) CHART_LOAD_FAILED("dev", "bpm is not a number");
+            ep_u64 bpm = noteNode["bpm"].getNumber();
+
+            if (!cvtTime(noteNode, "startTime", bpm, &note.timeZone.x)) CHART_LOAD_FAILED("dev", "invalid startTime");
+            if (!cvtTime(noteNode, "endTime", bpm, &note.timeZone.y)) CHART_LOAD_FAILED("dev", "invalid endTime");
+
+            if (!noteNode.hasKey("type")) CHART_LOAD_FAILED("dev", "missing type field");
+            if (!noteNode["type"].isNumber()) CHART_LOAD_FAILED("dev", "type is not a number");
+            note.type = MilNoteTypeHelper::FromInt(noteNode["type"].getNumber());
+
+            if (!noteNode.hasKey("isFake")) CHART_LOAD_FAILED("dev", "missing isFake field");
+            if (!noteNode["isFake"].isBool()) CHART_LOAD_FAILED("dev", "isFake is not a bool");
+            note.isFake = noteNode["isFake"].getBool();
+
+            if (!noteNode.hasKey("isAlwaysPerfect")) CHART_LOAD_FAILED("dev", "missing isAlwaysPerfect field");
+            if (!noteNode["isAlwaysPerfect"].isBool()) CHART_LOAD_FAILED("dev", "isAlwaysPerfect is not a bool");
+            note.isAlwaysPerfect = noteNode["isAlwaysPerfect"].getBool();
+
+            if (!noteNode.hasKey("index")) CHART_LOAD_FAILED("dev", "missing index field");
+            if (!noteNode["index"].isNumber()) CHART_LOAD_FAILED("dev", "index is not a number");
+            ep_u64 noteIndex = noteNode["index"].getNumber();
+
+            note.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Note, noteIndex }));
+        }
+    }
+
+    if (!jsonRoot.hasKey("storyboardObjects")) CHART_LOAD_FAILED("dev", "missing storyboardObjects field");
+    if (!jsonRoot["storyboardObjects"].isArray()) CHART_LOAD_FAILED("dev", "storyboardObjects is not an array");
+
+    ep_u64 sbIndex = 0;
+    for (auto& sbNode : jsonRoot["storyboardObjects"].getArray()) {
+        if (!sbNode.isObject()) CHART_LOAD_FAILED("dev", "storyboardObject is not an object");
+
+        auto& sb = chart.storyboardObjects.emplace_back();
+        sb.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Storyboard, sbIndex++ }));
+
+        if (!sbNode.hasKey("type")) CHART_LOAD_FAILED("dev", "missing type field");
+        if (!sbNode["type"].isNumber()) CHART_LOAD_FAILED("dev", "type is not a number");
+        sb.type = MilStoryboardTypeHelper::FromInt(sbNode["type"].getNumber());
+
+        if (!sbNode.hasKey("data")) CHART_LOAD_FAILED("dev", "missing data field");
+        if (!sbNode["data"].isString()) CHART_LOAD_FAILED("dev", "data is not an object");
+        sb.data = sbNode["data"].getString();
+
+        if (!sbNode.hasKey("layer")) CHART_LOAD_FAILED("dev", "missing layer field");
+        if (!sbNode["layer"].isNumber()) CHART_LOAD_FAILED("dev", "layer is not a number");
+        sb.layer = MilStoryboardLayerHelper::FromInt(sbNode["layer"].getNumber());
+    }
+
+    auto cvtAnimVal = [](JsonNode& node, const std::string& key, ep_f64* dst) {
+        if (!node.hasKey(key)) return false;
+
+        auto& valNode = node[key];
+
+        if (valNode.isNumber()) {
+            *dst = valNode.getNumber();
+            return true;
+        } else if (valNode.isString()) {
+            auto& str = valNode.getString();
+
+            if (str.empty()) {
+                *dst = 0.0;
+                return true;
+            }
+
+            try { *dst = std::stod(str); }
+            catch (...) { return false; }
+            return true;
+        }
+
+        return false;
+    };
+
+    if (!jsonRoot.hasKey("animations")) CHART_LOAD_FAILED("dev", "missing animations field");
+    if (!jsonRoot["animations"].isArray()) CHART_LOAD_FAILED("dev", "animations is not an array");
+
+    ep_u64 eventIndex = 0;
+    for (auto& animNode : jsonRoot["animations"].getArray()) {
+        if (!animNode.isObject()) CHART_LOAD_FAILED("dev", "animation is not an object");
+
+        MilEvent e {};
+        e.index = eventIndex++;
+
+        if (!animNode.hasKey("bpmId")) CHART_LOAD_FAILED("dev", "missing bpmId field");
+        if (!animNode["bpmId"].isNumber()) CHART_LOAD_FAILED("dev", "bpmId is not a number");
+        ep_u64 bpm = animNode["bpmId"].getNumber();
+
+        if (!cvtTime(animNode, "fromBeat", bpm, &e.timeZone.x)) CHART_LOAD_FAILED("dev", "invalid fromBeat");
+        if (!cvtTime(animNode, "toBeat", bpm, &e.timeZone.y)) CHART_LOAD_FAILED("dev", "invalid toBeat");
+
+        if (!animNode.hasKey("key")) CHART_LOAD_FAILED("dev", "missing key field");
+        if (!animNode["key"].isNumber()) CHART_LOAD_FAILED("dev", "key is not a string");
+        e.type = MilEventTypeHelper::FromInt(animNode["key"].getNumber());
+
+        if (e.type == EnumMilEventType::Color) {
+            continue; // TODO: implement it
+        } else {
+            if (!cvtAnimVal(animNode, "fv", &e.valueZone.x)) CHART_LOAD_FAILED("dev", "invalid fv");
+            if (!cvtAnimVal(animNode, "tv", &e.valueZone.y)) CHART_LOAD_FAILED("dev", "invalid tv");
+        }
+
+        if (!animNode.hasKey("i1")) CHART_LOAD_FAILED("dev", "missing i1 field");
+        if (!animNode["i1"].isNumber()) CHART_LOAD_FAILED("dev", "i1 is not a number");
+        auto objType = MilObjectTypeHelper::FromInt(animNode["i1"].getNumber());
+
+        if (!animNode.hasKey("data")) CHART_LOAD_FAILED("dev", "missing data field");
+        if (!animNode["data"].isNumber()) CHART_LOAD_FAILED("dev", "data is not a number");
+        ep_u64 objIndex = animNode["data"].getNumber();
+
+        if (!animNode.hasKey("ease")) CHART_LOAD_FAILED("dev", "missing ease field");
+        if (!animNode["ease"].isNumber()) CHART_LOAD_FAILED("dev", "ease is not a number");
+        ep_u64 ease = std::clamp<ep_f64>(animNode["ease"].getNumber(), 0, 2);
+
+        if (!animNode.hasKey("press")) CHART_LOAD_FAILED("dev", "missing press field");
+        if (!animNode["press"].isNumber()) CHART_LOAD_FAILED("dev", "press is not a number");
+        ep_u64 press = std::clamp<ep_f64>(animNode["press"].getNumber(), 0, 10);
+
+        if (press != 0) {
+            e.easingFuncContext = (void*)(ease << 4 | press);
+            e.easingFunc = [](void* context, ep_f64 p) {
+                ep_u64 ctx = (ep_u64)context;
+                ep_u64 ease = ctx >> 4;
+                ep_u64 press = ctx & 0b1111;
+
+                return EaseSet::Milthm::easing(ease, press, p);
+            };
+        }
+
+        auto objFinalIndex = chart.animator.indexGen.get({ objType, objIndex });
+        chart.animator.addEvent(objFinalIndex, e);
+        chart.animator.setGroupObjectType(objFinalIndex, objType);
+    }
 
     chart.rawHash = data.getHash();
 
