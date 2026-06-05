@@ -5069,6 +5069,41 @@ struct AudioEngine {
     std::vector<ep_i32> bufferCache;
 };
 
+namespace SharedCalculatedObjects {
+    struct CalculatedText {
+        std::string text;
+        Vec2 position, scale, anchor;
+        ep_f64 fontSize, rotation;
+        Color color;
+    };
+
+    struct CalculatedRect {
+        Vec2 position, size;
+        ep_f64 rotation;
+        Color color;
+    };
+
+    struct CalculatedPoly {
+        Vec2 p1, p2, p3, p4;
+        Color color;
+
+        static CalculatedPoly Make(
+            const Vec2& point,
+            const Vec2& size,
+            const Color& color,
+            const Transform2D& transform = Transform2D()
+        ) noexcept {
+            return {
+                .p1 = transform.transformPoint(point),
+                .p2 = transform.transformPoint(point + Vec2 { size.x, 0.0 }),
+                .p3 = transform.transformPoint(point + size),
+                .p4 = transform.transformPoint(point + Vec2 { 0.0, size.y }),
+                .color = color
+            };
+        }
+    };
+};
+
 namespace TakeOvererComponents {
     struct SharedComp {
         using TextureDeocder = std::function<DecodedRGBATexture(const Data&)>;
@@ -8158,19 +8193,16 @@ struct PhiCalculatedFrame {
     The calculated frame.
     */
 
+    using CalculatedText = SharedCalculatedObjects::CalculatedText;
+    using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
+    using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
+
     struct CalculatedNote {
         Vec2 position;
         ep_f64 rotation;
         ep_f64 width, head, body, tail;
         EnumPhiNoteType type;
         bool isSimul;
-        Color color;
-    };
-
-    struct CalculatedText {
-        std::string text;
-        Vec2 position, scale, anchor;
-        ep_f64 fontSize, rotation;
         Color color;
     };
 
@@ -8188,29 +8220,18 @@ struct PhiCalculatedFrame {
         Color color;
     };
 
-    struct CalculatedRect {
-        Vec2 position, size;
-        ep_f64 rotation;
-        Color color;
-    };
-
-    struct CalculatedPoly {
-        Vec2 p1, p2, p3, p4;
-        Color color;
-    };
-
     struct CalculatedShader {
         ep_u64 id;
         std::unordered_map<std::string, PhiShaderUniform> uniforms;
     };
 
     using CalculatedObject = std::variant<
-        CalculatedNote,
         CalculatedText,
-        CalculatedStoryboardTexture,
-        CalculatedHitEffectTexture,
         CalculatedRect,
         CalculatedPoly,
+        CalculatedNote,
+        CalculatedStoryboardTexture,
+        CalculatedHitEffectTexture,
         CalculatedShader
     >;
 
@@ -8220,21 +8241,6 @@ struct PhiCalculatedFrame {
     Rect objectsClipRect;
     std::vector<CalculatedObject> objects;
     std::vector<std::pair<EnumPhiNoteType, ep_f64>> hitsounds;
-
-    void addPoly(
-        const Vec2& point,
-        const Vec2& size,
-        const Color& color,
-        const Transform2D& transform = Transform2D()
-    ) noexcept {
-        objects.push_back(CalculatedPoly {
-            .p1 = transform.transformPoint(point),
-            .p2 = transform.transformPoint(point + Vec2 { size.x, 0.0 }),
-            .p3 = transform.transformPoint(point + size),
-            .p4 = transform.transformPoint(point + Vec2 { 0.0, size.y }),
-            .color = color
-        });
-    }
 
     struct Cache {
         struct AttachUIData {
@@ -8440,14 +8446,14 @@ void calculatePhiFrame(
                         });
                     }
                 } else {
-                    frame.addPoly(
+                    frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
                         Vec2 { -lineWidth, -lineHeight } * line.anchor * lineScale,
                         Vec2 { lineWidth, lineHeight } * lineScale,
                         lineColor.applyAlpha(lineAlpha),
                         Transform2D()
                             .translate(lineScreenPosition)
                             .rotateDegrees(lineRotation)
-                    );
+                    ));
                 }
             }
         }
@@ -8621,7 +8627,7 @@ void calculatePhiFrame(
 
     auto& progressBarAttachUIData = frame.cache.attachUIDatas[EnumPhiLineAttachUI::Bar];
 
-    frame.addPoly(
+    frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
         { 0.0, 0.0 },
         { progressBarWidth, progressBarHeight },
         chart.options.progressBarDefaultColor.first * progressBarAttachUIData.color,
@@ -8630,9 +8636,9 @@ void calculatePhiFrame(
             .translate(progressBarAttachUIData.position)
             .scale(progressBarAttachUIData.scale)
             .rotateDegrees(progressBarAttachUIData.rotation)
-    );
+    ));
 
-    frame.addPoly(
+    frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
         { progressBarWidth - progressBarPointWidth, 0.0 },
         { progressBarPointWidth, progressBarHeight },
         chart.options.progressBarDefaultColor.second * progressBarAttachUIData.color,
@@ -8641,7 +8647,7 @@ void calculatePhiFrame(
             .translate(progressBarAttachUIData.position)
             .scale(progressBarAttachUIData.scale)
             .rotateDegrees(progressBarAttachUIData.rotation)
-    );
+    ));
 
     auto pauseButtonPosition = Vec2 { 3.16669, 3.6065 } * progressBarHeight;
     auto pauseButtonSize = Vec2 { safeAreaSize.x * 32 / 1920, safeAreaSize.x * 37.48 / 1920 };
@@ -8649,7 +8655,7 @@ void calculatePhiFrame(
 
     auto& pauseButtonAttachUIData = frame.cache.attachUIDatas[EnumPhiLineAttachUI::Pause];
 
-    frame.addPoly(
+    frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
         { 0.0, 0.0 },
         { pauseButtonItemWidth, pauseButtonSize.y },
         pauseButtonAttachUIData.color,
@@ -8659,9 +8665,9 @@ void calculatePhiFrame(
             .translate(pauseButtonAttachUIData.position)
             .scale(pauseButtonAttachUIData.scale)
             .rotateDegrees(pauseButtonAttachUIData.rotation)
-    );
+    ));
 
-    frame.addPoly(
+    frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
         { pauseButtonSize.x - pauseButtonItemWidth, 0.0 },
         { pauseButtonItemWidth, pauseButtonSize.y },
         pauseButtonAttachUIData.color,
@@ -8671,7 +8677,7 @@ void calculatePhiFrame(
             .translate(pauseButtonAttachUIData.position)
             .scale(pauseButtonAttachUIData.scale)
             .rotateDegrees(pauseButtonAttachUIData.rotation)
-    );
+    ));
 
     if (combo >= 3) {
         frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
@@ -9965,9 +9971,27 @@ struct MilCalculateFrameConfig {
 };
 
 struct MilCalculatedFrame {
+    using CalculatedText = SharedCalculatedObjects::CalculatedText;
+    using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
+    using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
+
+    struct CalculatedLineHead {
+        Vec2 position, size;
+        ep_f64 rotation;
+        Color color;
+    };
+
+    using CalculatedObject = std::variant<
+        CalculatedText,
+        CalculatedRect,
+        CalculatedPoly,
+        CalculatedLineHead
+    >;
+
     Rect backgroundRect;
     ep_f64 backgroundDim;
     Rect progressbarRect;
+    std::vector<CalculatedObject> objects;
 
     struct Cache {
         void clear() {
