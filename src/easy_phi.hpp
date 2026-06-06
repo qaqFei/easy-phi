@@ -9474,6 +9474,7 @@ struct MilAnimGroup {
         
         while (
             currentIndexs[type] < typed_events.size() - 1
+            && typed_events[currentIndexs[type]].timeZone.y <= t
             && typed_events[currentIndexs[type] + 1].timeZone.x <= t
         ) currentIndexs[type]++;
 
