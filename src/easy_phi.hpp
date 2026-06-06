@@ -5486,7 +5486,7 @@ struct PhiEvent {
         return valueZone.x + p * (valueZone.y - valueZone.x);
     }
 
-    static ep_f64 GetDefaultValue(EnumPhiEventType type) noexcept {
+    static ep_f64 getDefaultValue(EnumPhiEventType type) noexcept {
         /* !docs
         Get the default value of a phigros event type.
         It means the event value will be set to this value if the there is no event.
@@ -5538,8 +5538,8 @@ struct PhiAnimLayer {
         It will sort the events and calculate the cumulative value.
         */
 
-        for (auto& typed_events : events) {
-            std::sort(typed_events.begin(), typed_events.end(), [](const auto& a, const auto& b) {
+        for (auto& typedEvents : events) {
+            std::sort(typedEvents.begin(), typedEvents.end(), [](const auto& a, const auto& b) {
                 return a.timeZone.x < b.timeZone.x;
             });
         }
@@ -5552,18 +5552,18 @@ struct PhiAnimLayer {
         Update the event value of a event type at a time.
         */
 
-        auto& typed_events = getEvents((EnumPhiEventType)type);
-        if (typed_events.empty()) return;
+        auto& typedEvents = getEvents((EnumPhiEventType)type);
+        if (typedEvents.empty()) return;
 
         if (lastUpdatedTimes[type] == t) return;
         if (lastUpdatedTimes[type] > t) currentIndexs[type] = 0;
 
         while (
-            currentIndexs[type] < typed_events.size() - 1
-            && typed_events[currentIndexs[type] + 1].timeZone.x <= t
+            currentIndexs[type] < typedEvents.size() - 1
+            && typedEvents[currentIndexs[type] + 1].timeZone.x <= t
         ) currentIndexs[type]++;
 
-        auto& e = typed_events[currentIndexs[type]];
+        auto& e = typedEvents[currentIndexs[type]];
 
         if (type == (ep_u64)EnumPhiEventType::Speed) {
             currentValues[type] = e.cumulativeValueAtStart + e.getIntegralValue(t);
@@ -5594,7 +5594,7 @@ struct PhiAnimLayer {
         Get the event value of a event type.
         */
 
-        if (events[(ep_u64)type].empty()) return PhiEvent::GetDefaultValue(type);
+        if (events[(ep_u64)type].empty()) return PhiEvent::getDefaultValue(type);
         return currentValues[(ep_u64)type];
     }
 
@@ -5604,7 +5604,7 @@ struct PhiAnimLayer {
         */
 
         auto& typedEvents = getEvents(type);
-        if (typedEvents.empty()) return PhiEvent::GetDefaultValue(type);
+        if (typedEvents.empty()) return PhiEvent::getDefaultValue(type);
 
         if (type == EnumPhiEventType::Speed) {
             if (typedEvents.size() == 1 && typedEvents[0].valueZone.isZeroZone() && typedEvents[0].timeZone.x <= -INF_TIME / 2) {
@@ -5734,7 +5734,7 @@ struct PhiAnimGroup {
         Get the hash value of fixed event values if it is exists.
         */
 
-        ep_f64 result = PhiEvent::GetDefaultValue(type);
+        ep_f64 result = PhiEvent::getDefaultValue(type);
 
         for (auto& layer : layers) {
             auto v = layer.getAlwaysValue(type);
@@ -5810,7 +5810,7 @@ struct PhiAnimator {
         Get the event value of the type of a object at a time.
         */
 
-        return get_based(index, t, type, PhiEvent::GetDefaultValue(type));
+        return get_based(index, t, type, PhiEvent::getDefaultValue(type));
     }
 
     template <typename T>
@@ -5847,13 +5847,6 @@ struct PhiAnimator {
         HashBucket hash;
 
         auto group_it = groups.find(note.indexer.get());
-        if (group_it == groups.end()) {
-            hash.submitBool(true);
-            return hash.getHash();
-        }
-        hash.submitBool(false);
-
-        auto& group = group_it->second;
 
         for (const auto type : {
             EnumPhiEventType::PositionY,
@@ -5863,9 +5856,13 @@ struct PhiAnimator {
             EnumPhiEventType::Speed,
             EnumPhiEventType::SpeedCoefficient
         }) {
-            auto v = group.getAlwaysHashValue(type);
-            if (!v.has_value()) return std::nullopt;
-            hash.submitNumber(v.value());
+            if (group_it == groups.end()) {
+                hash.submitNumber(PhiEvent::getDefaultValue(type));
+            } else {
+                auto v = group_it->second.getAlwaysHashValue(type);
+                if (!v.has_value()) return std::nullopt;
+                hash.submitNumber(v.value());
+            }
         }
 
         return hash.getHash();
@@ -9451,34 +9448,34 @@ struct MilAnimGroup {
 
     void init() {
         for (ep_u64 i = 0; i < (ep_u64)EnumMilEventType::MAX; i++) {
-            auto& typed_events = events[i];
+            auto& typedEvents = events[i];
 
-            std::sort(typed_events.begin(), typed_events.end(), [](const auto& a, const auto& b) {
+            std::sort(typedEvents.begin(), typedEvents.end(), [](const auto& a, const auto& b) {
                 if (a.timeZone.x != b.timeZone.x) return a.timeZone.x < b.timeZone.x;
                 if (a.timeZone.y != b.timeZone.y) return a.timeZone.y < b.timeZone.y;
                 return a.index < b.index;
             });
 
-            if (typed_events.empty()) {
+            if (typedEvents.empty()) {
                 currentValues[i] = MilEvent::getDefaultValue(objType, (EnumMilEventType)i);
             }
         }
     }
 
     void updateType(ep_u64 type, ep_f64 t) {
-        auto& typed_events = events[type];
-        if (typed_events.empty()) return;
+        auto& typedEvents = events[type];
+        if (typedEvents.empty()) return;
 
         if (lastUpdatedTimes[type] == t) return;
         if (lastUpdatedTimes[type] > t) currentIndexs[type] = 0;
         
         while (
-            currentIndexs[type] < typed_events.size() - 1
-            && typed_events[currentIndexs[type]].timeZone.y <= t
-            && typed_events[currentIndexs[type] + 1].timeZone.x <= t
+            currentIndexs[type] < typedEvents.size() - 1
+            && typedEvents[currentIndexs[type]].timeZone.y <= t
+            && typedEvents[currentIndexs[type] + 1].timeZone.x <= t
         ) currentIndexs[type]++;
 
-        auto& e = typed_events[currentIndexs[type]];
+        auto& e = typedEvents[currentIndexs[type]];
 
         if (type == (ep_u64)EnumMilEventType::Speed) {
             // TODO: implement it
@@ -9491,6 +9488,36 @@ struct MilAnimGroup {
 
     ep_f64 get(EnumMilEventType type) {
         return currentValues[(ep_u64)type];
+    }
+
+    std::optional<ep_f64> getAlwaysValue(EnumMilEventType type) noexcept {
+        auto& typedEvents = getEvents(type);
+        if (typedEvents.empty()) return MilEvent::getDefaultValue(objType, type);
+
+        if (type == EnumMilEventType::Speed) {
+            if (typedEvents.size() == 1 && typedEvents[0].valueZone.isZeroZone()) {
+                return typedEvents[0].valueZone.x;
+            }
+
+            return std::nullopt;
+        }
+
+        ep_f64 fixedValue = typedEvents[0].valueZone.x;
+        for (auto& e : typedEvents) {
+            if (e.timeZone.isZeroZone()) {
+                if (e.valueZone.y != fixedValue) {
+                    return std::nullopt;
+                }
+
+                continue;
+            }
+
+            if (!e.valueZone.isZeroZone() || fixedValue != e.valueZone.x) {
+                return std::nullopt;
+            }
+        }
+
+        return fixedValue;
     }
 
     private:
@@ -9534,6 +9561,34 @@ struct MilAnimator {
         auto& group = group_it->second;
         group.updateType((ep_u64)type, t);
         return group.get(type);
+    }
+
+    template <typename T>
+    std::optional<ep_f64> getNoteAnimHash(T& obj) {
+        HashBucket hash;
+
+        auto group_it = groups.find(obj.indexer.get());
+
+        for (const auto type : {
+            EnumMilEventType::PositionX,
+            EnumMilEventType::PositionY,
+            EnumMilEventType::Size,
+            EnumMilEventType::Rotation,
+            EnumMilEventType::FlowSpeed,
+            EnumMilEventType::RelativeX,
+            EnumMilEventType::RelativeY,
+            EnumMilEventType::Speed
+        }) {
+            if (group_it == groups.end()) {
+                hash.submitNumber(MilEvent::getDefaultValue(T::ObjType, type));
+            } else {
+                auto v = group_it->second.getAlwaysValue(type);
+                if (!v.has_value()) return std::nullopt;
+                hash.submitNumber(v.value());
+            }
+        }
+
+        return hash.getHash();
     }
 };
 
@@ -10011,7 +10066,8 @@ struct MilCalculatedFrame {
     using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
 
     struct CalculatedLineHead {
-        Vec2 position, size;
+        Vec2 position, scale;
+        ep_f64 size;
         ep_f64 rotation;
         Color color;
     };
@@ -10076,7 +10132,8 @@ void calculateMilFrame(
         if (lineHeadAlpha > 0.0) {
             frame.objects.push_back(MilCalculatedFrame::CalculatedLineHead {
                 .position = linePosition,
-                .size = Vec2 { lineHeadBase, lineHeadBase } * lineSize * config.lineHeadScale,
+                .scale = { lineSize, lineSize },
+                .size = lineHeadBase * config.lineHeadScale,
                 .rotation = lineRotation,
                 .color = { 1.0, 1.0, 1.0, lineHeadAlpha }
             });
@@ -10265,9 +10322,10 @@ struct MilTakeOverer {
                 cvs.save();
                 cvs.translate(lineHead.position);
                 cvs.rotateDegrees(lineHead.rotation);
+                cvs.scale(lineHead.scale);
                 cvs.drawRect({
-                    .position = -lineHead.size / 2,
-                    .size = lineHead.size,
+                    .position = -Vec2 { lineHead.size, lineHead.size } / 2,
+                    .size = { lineHead.size, lineHead.size },
                     .color = lineHead.color,
                     .texture = lineHeadTex.get()
                 });
