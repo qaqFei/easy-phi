@@ -2,6 +2,7 @@
 #define EASY_PHI_IMAGE_DECODER
 #define EASY_PHI_MINIAUDIO_AUDIO_ENGINE
 #define EASY_PHI_PHI_RESOURCE
+#define EASY_PHI_MIL_RESOURCE
 #include <easy_phi.hpp>
 
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -614,11 +615,11 @@ struct PhiWindow {
         createGLfwWindow(base);
 
         renderer = PhiTakeOverer::Make();
-        renderer->noteTextureDataReader = PhiStaticResourceHelpers::noteTextureDataReader;
-        renderer->hitEffectDataReader = PhiStaticResourceHelpers::hitEffectDataReader;
-        renderer->hitsoundDataReader = PhiStaticResourceHelpers::hitsoundDataReader;
+        renderer->noteTextureDataLoader = PhiStaticResourceHelpers::noteTextureDataLoader;
+        renderer->hitEffectDataLoader = PhiStaticResourceHelpers::hitEffectDataLoader;
+        renderer->hitsoundDataLoader = PhiStaticResourceHelpers::hitsoundDataLoader;
 
-        renderer->storyboardDataReader = [this](const std::string& name) -> Data {
+        renderer->storyboardDataLoader = [this](const std::string& name) -> Data {
             auto path = PhiStoryboardHelpers::textureNameToPath(base.chartDir, name);
 
             Data data;
@@ -629,7 +630,7 @@ struct PhiWindow {
             return data;
         };
 
-        renderer->shaderDataReader = [this](const std::string& name) -> std::string {
+        renderer->shaderDataLoader = [this](const std::string& name) -> std::string {
             Data shaderText {};
 
             if (!PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
@@ -714,6 +715,7 @@ struct MilWindow {
         createGLfwWindow(base);
 
         renderer = MilTakeOverer::Make();
+        renderer->lineHeadTextureLoader = MilStaticResourceHelpers::lineHeadTextureLoader;
         
         renderer->glCtx = base.glCtx;
         renderer->sharedComp.textureDecoder = decodeImage;

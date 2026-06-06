@@ -19,7 +19,7 @@ def generate(name: str, struct_name: str, ignorer: typing.Callable[[str], bool] 
             continue
         
         data = open(f"./{name}{file}", "rb").read()
-        varname = f"f{hashlib.md5(file.encode()).hexdigest()}"
+        varname = f"f{hashlib.md5((file + name).encode()).hexdigest()}"
         arr = ",".join(map(str, data))
         cpp.write(f"static const unsigned char {varname}[] = {{{arr}}};\n")
         files[file] = (varname, len(data))

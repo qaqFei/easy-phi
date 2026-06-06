@@ -1473,6 +1473,11 @@ struct Transform2D {
         return *this;
     }
 
+    Transform2D& scale(ep_f64 s) noexcept {
+        scale(s, s);
+        return *this;
+    }
+
     Transform2D& translate(ep_f64 x, ep_f64 y) noexcept {
         transform(1.0, 0.0, 0.0, 1.0, x, y);
         return *this;
@@ -5237,6 +5242,53 @@ namespace TakeOvererComponents {
         ep_f64 calculatedTook;
         ep_f64 glOperationsTook;
     };
+
+    template <typename T>
+    bool renderSharedObject(
+        const T& obj,
+        const ep_sp<GL::GL33Context>& glCtx,
+        GL::GL33Canvas& cvs,
+        GL::TextManager& textManager
+    ) {
+        using namespace GL;
+
+        if (std::holds_alternative<SharedCalculatedObjects::CalculatedText>(obj)) {
+            auto& text = std::get<SharedCalculatedObjects::CalculatedText>(obj);
+
+            TextManager::DrawTextConfig config {
+                .text = text.text,
+                .fontSize = text.fontSize,
+                .pos = text.position,
+                .anchor = text.anchor,
+                .rotation = text.rotation,
+                .scale = text.scale,
+                .color = text.color
+            };
+
+            textManager.drawText(cvs, config);
+        } else if (std::holds_alternative<SharedCalculatedObjects::CalculatedRect>(obj)) {
+            auto& rect = std::get<SharedCalculatedObjects::CalculatedRect>(obj);
+
+            cvs.save();
+            cvs.translate(rect.position);
+            cvs.rotateDegrees(rect.rotation);
+            cvs.drawRect({
+                .position = -rect.size / 2,
+                .size = rect.size,
+                .color = rect.color
+            });
+            cvs.restore();
+        } else if (std::holds_alternative<SharedCalculatedObjects::CalculatedPoly>(obj)) {
+            auto& poly = std::get<SharedCalculatedObjects::CalculatedPoly>(obj);
+
+            auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
+            mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
+            mesh.color = poly.color;
+            cvs.drawMesh(mesh);
+        } else return false;
+
+        return true;
+    }
 };
 
 static const ep_f64 INF_TIME = 99999.0;
@@ -8741,11 +8793,11 @@ struct PhiTakeOverer {
 
     Following functions are necessary to be set:
 
-    - noteTextureDataReader
-    - hitEffectDataReader
-    - hitsoundDataReader
-    - storyboardDataReader
-    - shaderDataReader
+    - noteTextureDataLoader
+    - hitEffectDataLoader
+    - hitsoundDataLoader
+    - storyboardDataLoader
+    - shaderDataLoader
     - glCtx
     - sharedComp.textureDecoder
     - textManager.renderer
@@ -8764,32 +8816,32 @@ struct PhiTakeOverer {
         return ep_sp<PhiTakeOverer>(tor);
     }
 
-    struct NoteTextureDataReaderConfig {
+    struct NoteTextureDataLoaderConfig {
         EnumPhiNoteType type;
         bool isSimul;
     };
 
-    struct NoteTextureDataReaderResult {
+    struct NoteTextureDataLoaderResult {
         Data encoded;
         Vec2 cutPadding;
-        bool cutPaddingIsPixel;
+        bool cutPaddingIsPixel = true;
         bool ignoreCutPadding;
     };
 
-    using NoteTextureDataReader = std::function<NoteTextureDataReaderResult(const NoteTextureDataReaderConfig&)>;
-    NoteTextureDataReader noteTextureDataReader;
+    using NoteTextureDataLoader = std::function<NoteTextureDataLoaderResult(const NoteTextureDataLoaderConfig&)>;
+    NoteTextureDataLoader noteTextureDataLoader;
 
-    using HitEffectDataReader = std::function<std::vector<Data>()>;
-    HitEffectDataReader hitEffectDataReader;
+    using HitEffectDataLoader = std::function<std::vector<Data>()>;
+    HitEffectDataLoader hitEffectDataLoader;
 
-    using HitsoundDataReader = std::function<Data(EnumPhiNoteType)>;
-    HitsoundDataReader hitsoundDataReader;
+    using HitsoundDataLoader = std::function<Data(EnumPhiNoteType)>;
+    HitsoundDataLoader hitsoundDataLoader;
 
-    using StoryboardDataReader = std::function<Data(const std::string&)>;
-    StoryboardDataReader storyboardDataReader;
+    using StoryboardDataLoader = std::function<Data(const std::string&)>;
+    StoryboardDataLoader storyboardDataLoader;
 
-    using ShaderDataReader = std::function<std::string(const std::string&)>;
-    ShaderDataReader shaderDataReader;
+    using ShaderDataLoader = std::function<std::string(const std::string&)>;
+    ShaderDataLoader shaderDataLoader;
 
     ep_sp<GL::GL33Context> glCtx;
     TakeOvererComponents::SharedComp sharedComp;
@@ -8801,11 +8853,11 @@ struct PhiTakeOverer {
     PhiCalculatedFrame calculatedFrame;
 
     void init() {
-        checkBoolAndThrow(!!noteTextureDataReader, "noteTextureDataReader is not set");
-        checkBoolAndThrow(!!hitEffectDataReader, "hitEffectDataReader is not set");
-        checkBoolAndThrow(!!hitsoundDataReader, "hitsoundDataReader is not set");
-        checkBoolAndThrow(!!storyboardDataReader, "storyboardDataReader is not set");
-        checkBoolAndThrow(!!shaderDataReader, "shaderDataReader is not set");
+        checkBoolAndThrow(!!noteTextureDataLoader, "noteTextureDataLoader is not set");
+        checkBoolAndThrow(!!hitEffectDataLoader, "hitEffectDataLoader is not set");
+        checkBoolAndThrow(!!hitsoundDataLoader, "hitsoundDataLoader is not set");
+        checkBoolAndThrow(!!storyboardDataLoader, "storyboardDataLoader is not set");
+        checkBoolAndThrow(!!shaderDataLoader, "shaderDataLoader is not set");
         checkBoolAndThrow(!!glCtx, "glCtx is not set");
 
         textManager.glCtx = glCtx;
@@ -8881,7 +8933,7 @@ struct PhiTakeOverer {
         chart.storyboardAssets.clearTextures();
 
         chart.storyboardAssets.textureLoader = [&, this](const std::string& name) {
-            auto data = storyboardDataReader(name);
+            auto data = storyboardDataLoader(name);
             auto decoded = sharedComp.textureDecoder(data);
             auto tex = glCtx->createTextureFromDecoded(decoded);
             auto id = storyboardTextureId++;
@@ -8894,7 +8946,7 @@ struct PhiTakeOverer {
         };
 
         chart.storyboardAssets.shaderPreloader = [this](const std::string& name, ep_u64 id) {
-            auto shaderString = shaderDataReader(name);
+            auto shaderString = shaderDataLoader(name);
 
             if (shaderString.empty()) {
                 throw std::runtime_error("shader string is empty: " + name);
@@ -8982,6 +9034,10 @@ struct PhiTakeOverer {
         });
 
         for (auto& obj : calculatedFrame.objects) {
+            if (TakeOvererComponents::renderSharedObject(obj, glCtx, cvs, textManager)) {
+                continue;
+            }
+                
             if (std::holds_alternative<PhiCalculatedFrame::CalculatedNote>(obj)) {
                 auto& note = std::get<PhiCalculatedFrame::CalculatedNote>(obj);
                 auto& img = note.isSimul ? noteTextures[note.type].second : noteTextures[note.type].first;
@@ -9017,20 +9073,6 @@ struct PhiTakeOverer {
 
                 cvs.drawMesh(mesh);
                 cvs.restore();
-            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedText>(obj)) {
-                auto& text = std::get<PhiCalculatedFrame::CalculatedText>(obj);
-
-                TextManager::DrawTextConfig config {
-                    .text = text.text,
-                    .fontSize = text.fontSize,
-                    .pos = text.position,
-                    .anchor = text.anchor,
-                    .rotation = text.rotation,
-                    .scale = text.scale,
-                    .color = text.color
-                };
-
-                textManager.drawText(cvs, config);
             } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedStoryboardTexture>(obj)) {
                 auto& sbTexture = std::get<PhiCalculatedFrame::CalculatedStoryboardTexture>(obj);
                 auto& img = storyboardTextures[sbTexture.texture];
@@ -9060,25 +9102,6 @@ struct PhiTakeOverer {
                     .texture = img.get()
                 });
                 cvs.restore();
-            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedRect>(obj)) {
-                auto& effect = std::get<PhiCalculatedFrame::CalculatedRect>(obj);
-
-                cvs.save();
-                cvs.translate(effect.position);
-                cvs.rotateDegrees(effect.rotation);
-                cvs.drawRect({
-                    .position = -effect.size / 2,
-                    .size = effect.size,
-                    .color = effect.color
-                });
-                cvs.restore();
-            } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedPoly>(obj)) {
-                auto& poly = std::get<PhiCalculatedFrame::CalculatedPoly>(obj);
-
-                auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
-                mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
-                mesh.color = poly.color;
-                cvs.drawMesh(mesh);
             } else if (std::holds_alternative<PhiCalculatedFrame::CalculatedShader>(obj)) {
                 auto& shader = std::get<PhiCalculatedFrame::CalculatedShader>(obj);
                 auto& prog = shaders[shader.id];
@@ -9138,7 +9161,7 @@ struct PhiTakeOverer {
             calcConfig.noteTextureInfos[type] = {};
 
             for (const auto isSimul : { false, true }) {
-                auto loadResult = noteTextureDataReader(NoteTextureDataReaderConfig {
+                auto loadResult = noteTextureDataLoader(NoteTextureDataLoaderConfig {
                     .type = type,
                     .isSimul = isSimul
                 });
@@ -9165,7 +9188,7 @@ struct PhiTakeOverer {
             info.simul.scaling = { simulScale, simulScale };
         }
 
-        auto hitEffectDatas = hitEffectDataReader();
+        auto hitEffectDatas = hitEffectDataLoader();
         for (const auto& data : hitEffectDatas) {
             auto decoded = sharedComp.textureDecoder(data);
             auto tex = glCtx->createTextureFromDecoded(decoded);
@@ -9176,7 +9199,7 @@ struct PhiTakeOverer {
             EnumPhiNoteType::Tap, EnumPhiNoteType::Drag,
             EnumPhiNoteType::Flick, EnumPhiNoteType::Hold
         }) {
-            auto data = hitsoundDataReader(type);
+            auto data = hitsoundDataLoader(type);
             hitsoundAudios[type] = audioManager.decodeAndCheck(data);
         }
     }
@@ -9200,7 +9223,7 @@ enum class EnumMilEventType : ep_u64 {
     MAX = VisibleArea + 1
 };
 
-enum class EnumMilObjectType : ep_u64{
+enum class EnumMilObjectType : ep_u64 {
     Line, Note, Storyboard,
     MAX = Storyboard + 1
 };
@@ -9481,19 +9504,19 @@ struct MilAnimator {
     Like `@PhiAnimator`.
     */
 
-    ObjectIndexGenerator<std::pair<EnumMilObjectType, ep_u64>> indexGen;
+    using ObjDesc = std::pair<EnumMilObjectType, ep_u64>;
+
+    ObjectIndexGenerator<ObjDesc> indexGen;
     std::unordered_map<ep_u64, MilAnimGroup> groups;
 
-    MilAnimGroup& requestGroup(ep_u64 index) {
-        return groups.try_emplace(index, MilAnimGroup {}).first->second;
+    MilAnimGroup& requestGroup(const ObjDesc& obj) {
+        auto& ret = groups.try_emplace(indexGen.get(obj), MilAnimGroup { }).first->second;
+        ret.objType = obj.first;
+        return ret;
     }
 
-    void setGroupObjectType(ep_u64 index, EnumMilObjectType objType) {
-        requestGroup(index).objType = objType;
-    }
-
-    void addEvent(ep_u64 index, const MilEvent& e) {
-        requestGroup(index).addEvent(e);
+    void addEvent(const ObjDesc& obj, const MilEvent& e) {
+        requestGroup(obj).addEvent(e);
     }
 
     void init() {
@@ -9684,6 +9707,15 @@ struct MilChart {
     void init() {
         animator.init();
     }
+
+    Vec2 getLinePosition(ep_f64 t, MilLine& line, const Vec2& screenSize) {
+        Vec2 pos = {
+            animator.get(line, t, EnumMilEventType::PositionX) + animator.get(line, t, EnumMilEventType::RelativeX),
+            animator.get(line, t, EnumMilEventType::PositionY) + animator.get(line, t, EnumMilEventType::RelativeY)
+        };
+
+        return (pos - meta.worldOrigin) / meta.worldViewport * screenSize;
+    }
 };
 
 struct MilChartLoadResult {
@@ -9707,6 +9739,8 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
 
     MilChart chart {};
     chart.meta.noteFlowSpeedBehavior = MilMeta::NoteFlowSpeedBehavior::Override;
+    chart.meta.worldOrigin = { (ep_f64)-1920 / 2, (ep_f64)1080 / 2 };
+    chart.meta.worldViewport = { 1920, -1080 };
 
     if (!jsonRoot.isObject()) CHART_LOAD_FAILED("dev", "root is not an object");
 
@@ -9906,13 +9940,13 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
             if (!cvtAnimVal(animNode, "tv", &e.valueZone.y)) CHART_LOAD_FAILED("dev", "invalid tv");
         }
 
-        if (!animNode.hasKey("i1")) CHART_LOAD_FAILED("dev", "missing i1 field");
-        if (!animNode["i1"].isNumber()) CHART_LOAD_FAILED("dev", "i1 is not a number");
-        auto objType = MilObjectTypeHelper::FromInt(animNode["i1"].getNumber());
-
         if (!animNode.hasKey("data")) CHART_LOAD_FAILED("dev", "missing data field");
         if (!animNode["data"].isNumber()) CHART_LOAD_FAILED("dev", "data is not a number");
-        ep_u64 objIndex = animNode["data"].getNumber();
+        auto objType = MilObjectTypeHelper::FromInt(animNode["data"].getNumber());
+
+        if (!animNode.hasKey("i1")) CHART_LOAD_FAILED("dev", "missing i1 field");
+        if (!animNode["i1"].isNumber()) CHART_LOAD_FAILED("dev", "i1 is not a number");
+        ep_u64 objIndex = animNode["i1"].getNumber();
 
         if (!animNode.hasKey("ease")) CHART_LOAD_FAILED("dev", "missing ease field");
         if (!animNode["ease"].isNumber()) CHART_LOAD_FAILED("dev", "ease is not a number");
@@ -9933,9 +9967,7 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
             };
         }
 
-        auto objFinalIndex = chart.animator.indexGen.get({ objType, objIndex });
-        chart.animator.addEvent(objFinalIndex, e);
-        chart.animator.setGroupObjectType(objFinalIndex, objType);
+        chart.animator.addEvent({ objType, objIndex }, e);
     }
 
     chart.rawHash = data.getHash();
@@ -9968,6 +10000,8 @@ struct MilCalculateFrameConfig {
     Vec2 screenSize;
     Vec2 backgroundTextureSize;
     ep_f64 songLength;
+    ep_f64 lineHeadScale = 1.0;
+    ep_f64 lineHeadConnectPoint;
 };
 
 struct MilCalculatedFrame {
@@ -10008,6 +10042,7 @@ void calculateMilFrame(
     const MilCalculateFrameConfig& config,
     MilCalculatedFrame& frame
 ) {
+    frame.objects.clear();
     frame.cache.clear();
 
     frame.frameTimeRange = { frame.frameTimeRange.y, time };
@@ -10023,6 +10058,43 @@ void calculateMilFrame(
         time / config.songLength * config.screenSize.x,
         config.screenSize.x * 0.0046875
     };
+
+    ep_f64 lineHeadBase = config.screenSize.sum() * 0.0223;
+
+    for (auto& line : chart.lines) {
+        auto linePosition = chart.getLinePosition(time, line, config.screenSize);
+        auto lineRotation = chart.animator.get(line, time, EnumMilEventType::Rotation);
+        auto lineAlpha = chart.animator.get(line, time, EnumMilEventType::Transparency);
+        auto lineHeadAlpha = chart.animator.get(line, time, EnumMilEventType::LineHeadTransparency);
+        auto lineBodyAlpha = chart.animator.get(line, time, EnumMilEventType::LineBodyTransparency);
+        auto lineSize = chart.animator.get(line, time, EnumMilEventType::Size);
+
+        lineHeadAlpha *= lineAlpha;
+        lineBodyAlpha *= lineAlpha;
+
+        if (lineHeadAlpha > 0.0) {
+            frame.objects.push_back(MilCalculatedFrame::CalculatedLineHead {
+                .position = linePosition,
+                .size = Vec2 { lineHeadBase, lineHeadBase } * lineSize * config.lineHeadScale,
+                .rotation = lineRotation,
+                .color = { 1.0, 1.0, 1.0, lineHeadAlpha }
+            });
+        }
+
+        if (lineBodyAlpha > 0.0) {
+            auto connectRadius = config.lineHeadConnectPoint * lineHeadBase * config.lineHeadScale;
+            auto lineWidth = lineHeadBase * 0.096774;
+            frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
+                { connectRadius, -lineWidth / 2 },
+                { config.screenSize.y * 2.5, lineWidth },
+                { 1.0, 1.0, 1.0, lineBodyAlpha },
+                Transform2D()
+                    .translate(linePosition)
+                    .rotateDegrees(lineRotation + 180)
+                    .scale(lineSize)
+            ));
+        }
+    }
 }
 
 DecodedRGBATexture spwanMilBackgroundMask() {
@@ -10073,6 +10145,15 @@ struct MilTakeOverer {
     TakeOvererComponents::SharedComp sharedComp;
     GL::TextManager textManager;
     TakeOvererComponents::AudioManager audioManager;
+    
+    struct LineHeadTextureLoaderResult {
+        Data encoded;
+        ep_f64 scale = 1.0, connectPoint;
+        bool connectPointIsPixel = true;
+    };
+
+    using LineHeadTextureLoader = std::function<LineHeadTextureLoaderResult()>;
+    LineHeadTextureLoader lineHeadTextureLoader;
 
     MilCalculateFrameConfig calcConfig;
     MilChart chart;
@@ -10080,6 +10161,7 @@ struct MilTakeOverer {
 
     void init() {
         checkBoolAndThrow(!!glCtx, "glCtx is not set");
+        checkBoolAndThrow(!!lineHeadTextureLoader, "lineHeadTextureLoader is not set");
 
         textManager.glCtx = glCtx;
 
@@ -10171,6 +10253,27 @@ struct MilTakeOverer {
             .texture = backgroundMask.get()
         });
 
+        for (auto& obj : calculatedFrame.objects) {
+            if (TakeOvererComponents::renderSharedObject(obj, glCtx, cvs, textManager)) {
+                continue;
+            }
+
+            if (std::holds_alternative<MilCalculatedFrame::CalculatedLineHead>(obj)) {
+                auto& lineHead = std::get<MilCalculatedFrame::CalculatedLineHead>(obj);
+
+                cvs.save();
+                cvs.translate(lineHead.position);
+                cvs.rotateDegrees(lineHead.rotation);
+                cvs.drawRect({
+                    .position = -lineHead.size / 2,
+                    .size = lineHead.size,
+                    .color = lineHead.color,
+                    .texture = lineHeadTex.get()
+                });
+                cvs.restore();
+            }
+        }
+
         cvs.drawRect({
             .position = { calculatedFrame.progressbarRect.x, calculatedFrame.progressbarRect.y },
             .size = { calculatedFrame.progressbarRect.w, calculatedFrame.progressbarRect.h },
@@ -10190,10 +10293,21 @@ struct MilTakeOverer {
     RenderResultInfo renderResultInfoCache;
     ep_sp<GL::TextureInfo> backgroundMask;
     ep_sp<GL::TextureInfo> progressbarTex;
+    ep_sp<GL::TextureInfo> lineHeadTex;
 
     void loadResources() {
         backgroundMask = glCtx->createTextureFromDecoded(spwanMilBackgroundMask());
         progressbarTex = glCtx->createTextureFromDecoded(spwanMilProgressbar());
+
+        {
+            auto lineHead = lineHeadTextureLoader();
+            auto decoded = sharedComp.textureDecoder(lineHead.encoded);
+            lineHeadTex = glCtx->createTextureFromDecoded(decoded);
+
+            calcConfig.lineHeadScale = lineHead.scale;
+            if (lineHead.connectPointIsPixel) lineHead.connectPoint /= decoded.height;
+            calcConfig.lineHeadConnectPoint = lineHead.connectPoint;
+        }
     }
 };
 
@@ -10490,7 +10604,7 @@ namespace easy_phi {
     #include "helpers/resources/phigros.cpp"
 
     struct PhiStaticResourceHelpers {
-        static PhiTakeOverer::NoteTextureDataReaderResult noteTextureDataReader(const PhiTakeOverer::NoteTextureDataReaderConfig& config) {
+        static PhiTakeOverer::NoteTextureDataLoaderResult noteTextureDataLoader(const PhiTakeOverer::NoteTextureDataLoaderConfig& config) {
             std::unordered_map<EnumPhiNoteType, std::string> nameMap = {
                 { EnumPhiNoteType::Tap, "click" },
                 { EnumPhiNoteType::Drag, "drag" },
@@ -10512,7 +10626,7 @@ namespace easy_phi {
             };
         }
 
-        static std::vector<Data> hitEffectDataReader() {
+        static std::vector<Data> hitEffectDataLoader() {
             std::vector<Data> result;
 
             for (ep_u64 i = 0; i < 60; i++) {
@@ -10523,7 +10637,7 @@ namespace easy_phi {
             return result;
         }
 
-        static Data hitsoundDataReader(EnumPhiNoteType type) {
+        static Data hitsoundDataLoader(EnumPhiNoteType type) {
             std::unordered_map<EnumPhiNoteType, std::string> nameMap = {
                 { EnumPhiNoteType::Tap, "click" },
                 { EnumPhiNoteType::Drag, "drag" },
@@ -10568,5 +10682,20 @@ namespace easy_phi {
     };
 }
 #endif // EASY_PHI_PHI_RESOURCE
+
+#ifdef EASY_PHI_MIL_RESOURCE
+namespace easy_phi {
+    #include "helpers/resources/milthm.cpp"
+
+    struct MilStaticResourceHelpers {
+        static MilTakeOverer::LineHeadTextureLoaderResult lineHeadTextureLoader() {
+            return {
+                .encoded = MilStaticResource::get("/line_head.png"),
+                .connectPoint = 443.0
+            };
+        }
+    };
+}
+#endif // EASY_PHI_MIL_RESOURCE
 
 #endif // EASY_PHI_HPP
