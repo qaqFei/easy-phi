@@ -525,7 +525,7 @@ struct WindowBase {
         RenderResultInfo& resultInfo = renderer->render(renderConfigurer({
             .base = {
                 .time = config.time,
-                .disableHitsound = !config.isRenderingVideo
+                .disableHitsound = config.isRenderingVideo
             }
         }));
 
@@ -716,6 +716,8 @@ struct MilWindow {
 
         renderer = MilTakeOverer::Make();
         renderer->lineHeadTextureLoader = MilStaticResourceHelpers::lineHeadTextureLoader;
+        renderer->noteTextureDataLoader = MilStaticResourceHelpers::noteTextureDataLoader;
+        renderer->hitsoundDataLoader = MilStaticResourceHelpers::hitsoundDataLoader;
         
         renderer->glCtx = base.glCtx;
         renderer->sharedComp.textureDecoder = decodeImage;
