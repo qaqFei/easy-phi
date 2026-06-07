@@ -6600,11 +6600,14 @@ struct PhiChart {
 
         Vec2 headPosition, tailPosition;
         bool isArrived;
-        bool isVisible = true;
         ep_f64 lineRotation, textureRotation, speedVectorRotation;
         Color color;
         Vec2 scale;
         ep_f64 speedCoefficient;
+
+        void setHidden() noexcept {
+            color.a = 0.0;
+        }
     };
 
     NoteFrameInfo getNoteFrameInfo(
@@ -6648,14 +6651,16 @@ struct PhiChart {
         auto noteRelPositionHead = noteBasePosition + Vec2 { 0.0, info.isArrived ? 0.0 : noteFloorPosition.x },
              noteRelPositionTail = noteBasePosition + Vec2 { 0.0, noteFloorPosition.y };
         
+        info.color = noteColor.applyAlpha(noteAlpha);
+
         if (line.enableCover && !info.isArrived) {
-            if (meta.isHoldCoverAtHead && noteRelPositionHead.y * (note.isReversedCover ? -1.0 : 1.0) < -meta.coverEllipsis) info.isVisible = false;
-            if (!meta.isHoldCoverAtHead && noteRelPositionTail.y * (note.isReversedCover ? -1.0 : 1.0) < -meta.coverEllipsis) info.isVisible = false;
+            if (meta.isHoldCoverAtHead && noteRelPositionHead.y * (note.isReversedCover ? -1.0 : 1.0) < -meta.coverEllipsis) info.setHidden();
+            if (!meta.isHoldCoverAtHead && noteRelPositionTail.y * (note.isReversedCover ? -1.0 : 1.0) < -meta.coverEllipsis) info.setHidden();
         }
 
-        if (note.isHold() && meta.isZeroLengthHoldHidden && note.floorPosition.xyDiff() == 0) info.isVisible = false;
-        if (noteRelPositionHead.y > 2.0 && meta.isHighNoteHidden) info.isVisible = false;
-        if (meta.isRegLineAlphaNoteHidden && lineAlpha < 0.0) info.isVisible = false;
+        if (note.isHold() && meta.isZeroLengthHoldHidden && note.floorPosition.xyDiff() == 0) info.setHidden();
+        if (noteRelPositionHead.y > 2.0 && meta.isHighNoteHidden) info.setHidden();
+        if (meta.isRegLineAlphaNoteHidden && lineAlpha < 0.0) info.setHidden();
 
         info.headPosition = lineTransform.transformPoint(noteRelPositionHead);
         info.tailPosition = lineTransform.transformPoint(noteRelPositionTail);
@@ -6663,7 +6668,6 @@ struct PhiChart {
         info.textureRotation = lineRotation + noteRotation + noteAxisRotation;
         info.speedVectorRotation = lineRotation + noteAxisRotation;
         if (noteSpeedCoefficient < 0) info.speedVectorRotation += 180.0;
-        info.color = noteColor.applyAlpha(noteAlpha);
         info.scale = noteScaling;
         info.speedCoefficient = noteSpeedCoefficient;
 
@@ -8617,7 +8621,7 @@ void calculatePhiFrame(
                 bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, extendedSafeArea);
 
                 if (noteInsideScreen) {
-                    if (frameInfo.isVisible) {
+                    if (frameInfo.color.a > 0.0) {
                         frame.cache.noteObjects[note.type].push_back(PhiCalculatedFrame::CalculatedNote {
                             .position = noteScreenHeadPosition,
                             .rotation = frameInfo.textureRotation,
