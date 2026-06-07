@@ -5581,6 +5581,7 @@ struct PhiEvent {
 
         ep_f64 res = (timeZone.y - timeZone.x) * (valueZone.x * p + (valueZone.y - valueZone.x) * iv);
         if (t > timeZone.y) res += valueZone.y * (t - timeZone.y);
+        if (t < timeZone.x) res -= valueZone.x * (timeZone.x - t);
         return res;
     }
 
@@ -6603,7 +6604,6 @@ struct PhiChart {
         ep_f64 lineRotation, textureRotation, speedVectorRotation;
         Color color;
         Vec2 scale;
-        ep_f64 speedCoefficient;
 
         void setHidden() noexcept {
             color.a = 0.0;
@@ -6643,9 +6643,8 @@ struct PhiChart {
         lineTransform.scale(1.0, -1.0);
 
         info.isArrived = time >= note.time;
-        auto noteTotalFloorPosition = note.getFloorPositionAt(time, animator);
-        auto noteSpeedCoefficient = lineSpeedCoefficient * animator.get(note, time, EnumPhiEventType::SpeedCoefficient);
-        auto noteFloorPosition = (note.floorPosition - noteTotalFloorPosition) * noteSpeedCoefficient * meta.speedUnit;
+        auto finalSpeedCoefficient = lineSpeedCoefficient * animator.get(note, time, EnumPhiEventType::SpeedCoefficient);
+        auto noteFloorPosition = (note.floorPosition - note.getFloorPositionAt(time, animator)) * finalSpeedCoefficient * meta.speedUnit;
         Vec2 noteBasePosition = { animator.get(note, time, EnumPhiEventType::PositionX), animator.get(note, time, EnumPhiEventType::PositionY) };
 
         auto noteRelPositionHead = noteBasePosition + Vec2 { 0.0, info.isArrived ? 0.0 : noteFloorPosition.x },
@@ -6667,9 +6666,8 @@ struct PhiChart {
         info.lineRotation = lineRotation;
         info.textureRotation = lineRotation + noteRotation + noteAxisRotation;
         info.speedVectorRotation = lineRotation + noteAxisRotation;
-        if (noteSpeedCoefficient < 0) info.speedVectorRotation += 180.0;
+        if (finalSpeedCoefficient < 0) info.speedVectorRotation += 180.0;
         info.scale = noteScaling;
-        info.speedCoefficient = noteSpeedCoefficient;
 
         return info;
     }
@@ -9513,6 +9511,7 @@ struct MilEvent {
 
         ep_f64 res = (timeZone.y - timeZone.x) * (valueZone.x * p + (valueZone.y - valueZone.x) * iv);
         if (t > timeZone.y) res += valueZone.y * (t - timeZone.y);
+        if (t < timeZone.x) res -= valueZone.x * (timeZone.x - t);
         return res;
     }
 
@@ -9550,7 +9549,7 @@ struct MilAnimGroup {
         initSpeedCumul();
     }
 
-    void updateType(ep_u64 type, ep_f64 t) {
+    void updateType(ep_u64 type, ep_f64 t) noexcept {
         auto& typedEvents = events[type];
 
         if (typedEvents.empty()) {
@@ -9581,7 +9580,7 @@ struct MilAnimGroup {
         lastUpdatedTimes[type] = t;
     }
 
-    ep_f64 get(EnumMilEventType type) {
+    ep_f64 get(EnumMilEventType type) const noexcept {
         return currentValues[(ep_u64)type];
     }
 
@@ -9613,6 +9612,10 @@ struct MilAnimGroup {
         }
 
         return fixedValue;
+    }
+
+    bool has(EnumMilEventType type) const noexcept {
+        return !events[(ep_u64)type].empty();
     }
 
     private:
@@ -9664,9 +9667,14 @@ struct MilAnimator {
         }
     }
 
-    ep_f64 get(const ObjDesc& obj, ep_f64 t, EnumMilEventType type) {
+    ep_f64 get(const ObjDesc& obj, ep_f64 t, EnumMilEventType type) noexcept {
         auto group_it = groups.find(obj.second);
-        if (group_it == groups.end()) return MilEvent::getDefaultValue(obj.first, type);
+
+        if (group_it == groups.end()) {
+            auto value = MilEvent::getDefaultValue(obj.first, type);
+            if (type == EnumMilEventType::Speed) value *= t;
+            return value;
+        }
 
         auto& group = group_it->second;
         group.updateType((ep_u64)type, t);
@@ -9674,7 +9682,7 @@ struct MilAnimator {
     }
 
     template <typename T>
-    ep_f64 get(T& obj, ep_f64 t, EnumMilEventType type) {
+    ep_f64 get(T& obj, ep_f64 t, EnumMilEventType type) noexcept {
         return get({ T::ObjType, obj.indexer.get() }, t, type);
     }
 
@@ -9704,6 +9712,18 @@ struct MilAnimator {
         }
 
         return hash.getHash();
+    }
+
+    bool has(const ObjDesc& obj, EnumMilEventType type) const noexcept {
+        auto group_it = groups.find(obj.second);
+        if (group_it == groups.end()) return false;
+
+        return group_it->second.has(type);
+    }
+
+    template <typename T>
+    bool has(T& obj, EnumMilEventType type) const noexcept {
+        return has({ T::ObjType, obj.indexer.get() }, type);
     }
 };
 
@@ -9963,6 +9983,7 @@ struct MilChart {
         bool isArrived;
         ep_f64 textureRotation;
         Vec2 scale;
+        Color color;
     };
 
     NoteFrameInfo getNoteFrameInfo(
@@ -9975,29 +9996,52 @@ struct MilChart {
         auto lineRotation = animator.get(line, time, EnumMilEventType::Rotation);
         auto lineFlowSpeed = animator.get(line, time, EnumMilEventType::FlowSpeed);
         auto lineSize = animator.get(line, time, EnumMilEventType::Size);
+        auto lineWholeAlpha = animator.get(line, time, EnumMilEventType::WholeTransparency);
         auto noteSize = animator.get(note, time, EnumMilEventType::Size);
+        auto noteAlpha = animator.get(note, time, EnumMilEventType::Transparency);
+        auto noteRotation = animator.get(note, time, EnumMilEventType::Rotation);
+        auto noteColor = Color { 1.0, 1.0, 1.0, 1.0 };
         
         Transform2D lineTransform {};
         lineTransform.translate(linePosition);
         lineTransform.rotateDegrees(90 - lineRotation);
+        lineTransform.scale(screenSize / meta.worldViewport.abs());
         lineTransform.scale(lineSize);
-        lineTransform.scale(Vec2(1.0) / meta.worldViewport.abs());
-        lineTransform.scale(screenSize);
         lineTransform.scale(1.0, -1.0);
 
         info.isArrived = time >= note.timeZone.x;
-        auto noteTotalFloorPosition = note.getFloorPositionAt(time, animator);
-        auto noteFlowSpeed = lineFlowSpeed * options.flowSpeed;
-        auto noteFloorPosition = (note.floorPosition - noteTotalFloorPosition) * noteFlowSpeed * meta.speedUnit;
-        Vec2 noteBasePosition = { animator.get(note, time, EnumMilEventType::RelativeX), animator.get(note, time, EnumMilEventType::RelativeY) };
+
+        auto finalFlowSpeed = lineFlowSpeed;
+        if (meta.noteFlowSpeedBehavior == MilMeta::NoteFlowSpeedBehavior::Override) {
+            if (animator.has(note, EnumMilEventType::FlowSpeed)) {
+                finalFlowSpeed = animator.get(note, time, EnumMilEventType::FlowSpeed);
+            }
+        } else if (meta.noteFlowSpeedBehavior == MilMeta::NoteFlowSpeedBehavior::Multiply) {
+            finalFlowSpeed *= animator.get(note, time, EnumMilEventType::FlowSpeed);
+        } else if (meta.noteFlowSpeedBehavior == MilMeta::NoteFlowSpeedBehavior::Add) {
+            finalFlowSpeed += animator.get(note, time, EnumMilEventType::FlowSpeed);
+        }
+
+        auto noteFloorPosition = (note.floorPosition - note.getFloorPositionAt(time, animator)) * finalFlowSpeed * meta.speedUnit * options.flowSpeed;
+
+        if (animator.has(note, EnumMilEventType::PositionY)) {
+            noteFloorPosition -= noteFloorPosition.x;
+            noteFloorPosition += animator.get(note, time, EnumMilEventType::PositionY);
+        }
+
+        Vec2 noteBasePosition = {
+            animator.get(note, time, EnumMilEventType::RelativeX) + animator.get(note, time, EnumMilEventType::PositionX),
+            animator.get(note, time, EnumMilEventType::RelativeY)
+        };
 
         auto noteRelPositionHead = noteBasePosition + Vec2 { 0.0, info.isArrived ? 0.0 : noteFloorPosition.x },
              noteRelPositionTail = noteBasePosition + Vec2 { 0.0, noteFloorPosition.y };
         
         info.headPosition = lineTransform.transformPoint(noteRelPositionHead);
         info.tailPosition = lineTransform.transformPoint(noteRelPositionTail);
-        info.textureRotation = -lineRotation;
+        info.textureRotation = -lineRotation + noteRotation;
         info.scale = Vec2(lineSize * noteSize);
+        info.color = noteColor.applyAlpha(lineWholeAlpha * noteAlpha);
 
         return info;
     }
@@ -10448,6 +10492,7 @@ void calculateMilFrame(
         auto lineHeadAlpha = chart.animator.get(line, time, EnumMilEventType::LineHeadTransparency);
         auto lineBodyAlpha = chart.animator.get(line, time, EnumMilEventType::LineBodyTransparency);
         auto lineSize = chart.animator.get(line, time, EnumMilEventType::Size);
+        auto lineColor = Color { 1.0, 1.0, 1.0, 1.0 };
 
         lineHeadAlpha *= lineAlpha;
         lineBodyAlpha *= lineAlpha;
@@ -10458,7 +10503,7 @@ void calculateMilFrame(
                 .scale = { lineSize, lineSize },
                 .size = lineHeadBase * config.lineHeadScale,
                 .rotation = 180 - lineRotation,
-                .color = { 1.0, 1.0, 1.0, lineHeadAlpha }
+                .color = lineColor.applyAlpha(lineHeadAlpha)
             });
         }
 
@@ -10468,7 +10513,7 @@ void calculateMilFrame(
             frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
                 { connectRadius, -lineWidth / 2 },
                 { config.screenSize.y * 2.5, lineWidth },
-                { 1.0, 1.0, 1.0, lineBodyAlpha },
+                lineColor.applyAlpha(lineBodyAlpha),
                 Transform2D()
                     .translate(linePosition)
                     .rotateDegrees(-lineRotation)
@@ -10517,7 +10562,7 @@ void calculateMilFrame(
                 bool noteInsideScreen = quadStrictlyIntersectRect(noteQuad, extendedSafeArea);
 
                 if (noteInsideScreen) {
-                    if (sizeInfo.isValid) {
+                    if (sizeInfo.isValid && frameInfo.color.a > 0.0) {
                         frame.objects.push_back(MilCalculatedFrame::CalculatedNote {
                             .position = frameInfo.headPosition,
                             .rotation = frameInfo.textureRotation,
@@ -10526,7 +10571,7 @@ void calculateMilFrame(
                             .body = sizeInfo.body,
                             .tail = sizeInfo.tail,
                             .textureDesc = sizeInfo.desc,
-                            .color = { 1.0, 1.0, 1.0, 1.0 }
+                            .color = frameInfo.color
                         });
                     }
                 }
