@@ -1935,7 +1935,7 @@ bool pointIsLeavingPoint(const Vec2& point, ep_f64 deg, const Vec2& targetPoint)
 
     ep_f64 eps = 1.0;
     return (
-        (point.rotateDegrees(deg + 90, -eps) - targetPoint).lengthSquared() -
+        (point.rotateDegrees(deg, -eps) - targetPoint).lengthSquared() -
         (point - targetPoint).lengthSquared()
     ) > 0;
 }
@@ -1945,7 +1945,7 @@ bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& scre
     Checks if a line is leaving the screen based on `@pointIsLeavingPoint`.
     */
 
-    return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg, screenArea.center());
+    return !lineIsIntersectRect(linePoint, lineDeg, screenArea) && pointIsLeavingPoint(linePoint, lineDeg + 90, screenArea.center());
 }
 
 Rect getCoveredOrContainRect(const Rect& dst, const Vec2& size, bool isCovered) {
@@ -6755,8 +6755,6 @@ struct PhiChart {
         ep_f64 hitEffectTextureScaling = 1.54;
         ep_f64 hitEffectParticleSize = 1.0;
         ep_f64 hitEffectParticleDistance = 1.0;
-
-        bool enableNoteOffScreenBreakOptimization = true;
     };
 
     PhiMeta meta;
@@ -6936,7 +6934,7 @@ struct PhiChart {
         info.tailPosition = lineTransform.transformPoint(noteRelPositionTail);
         info.lineRotation = lineRotation;
         info.textureRotation = lineRotation + noteRotation + noteAxisRotation;
-        info.speedVectorRotation = lineRotation + noteAxisRotation;
+        info.speedVectorRotation = lineRotation + noteAxisRotation - 90.0;
         if (finalSpeedCoefficient < 0) info.speedVectorRotation += 180.0;
         info.scale = noteScaling;
 
@@ -8904,10 +8902,10 @@ void calculatePhiFrame(
                         });
                     }
                 } else {
-                    if (chart.options.enableNoteOffScreenBreakOptimization && noteGroup.breakable) {
+                    if (noteGroup.breakable) {
                         if (lineIsLeavingScreen(
                             noteScreenHeadPosition,
-                            frameInfo.speedVectorRotation,
+                            frameInfo.speedVectorRotation + 90.0,
                             extendedSafeArea
                         ) && lineIsLeavingScreen(
                             noteScreenHeadPosition,
@@ -10290,7 +10288,7 @@ struct MilChart {
     struct NoteFrameInfo {
         Vec2 headPosition, tailPosition;
         bool isArrived;
-        ep_f64 textureRotation;
+        ep_f64 textureRotation, speedVectorRotation;
         Vec2 scale;
         Color color;
 
@@ -10364,6 +10362,8 @@ struct MilChart {
         info.headPosition = lineTransform.transformPoint(noteRelPositionHead);
         info.tailPosition = lineTransform.transformPoint(noteRelPositionTail);
         info.textureRotation = -lineRotation - noteRotation;
+        info.speedVectorRotation = -lineRotation;
+        if (finalFlowSpeed < 0) info.speedVectorRotation += 180.0;
         info.scale = Vec2(lineSize * noteSize);
         info.color = noteColor.applyAlpha(lineWholeAlpha * noteAlpha);
 
@@ -10922,6 +10922,18 @@ void calculateMilFrame(
                             .textureDesc = sizeInfo.desc,
                             .color = frameInfo.color
                         });
+                    }
+                } else {
+                    if (noteGroup.breakable) {
+                        if (lineIsLeavingScreen(
+                            frameInfo.headPosition,
+                            frameInfo.speedVectorRotation + 90.0,
+                            extendedSafeArea
+                        ) && lineIsLeavingScreen(
+                            frameInfo.headPosition,
+                            frameInfo.textureRotation + 90.0,
+                            extendedSafeArea
+                        )) break;
                     }
                 }
             }
