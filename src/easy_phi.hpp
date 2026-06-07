@@ -9679,11 +9679,9 @@ struct MilMeta {
 
     NoteFlowSpeedBehavior noteFlowSpeedBehavior;
 
-    Vec2 worldOrigin, worldViewport; /* !inline-docs|
-    The world origin and viewport of the chart, used to normalize the positions.
-    */
-
+    Vec2 worldOrigin, worldViewport;
     ep_f64 speedUnit;
+    ep_f64 holdDisappearTime = 0.2;
 };
 
 struct MilBPMEvent {
@@ -10253,7 +10251,6 @@ struct MilChart {
     struct UserOptions {
         ep_f64 noteScaling = 1.0;
         ep_f64 flowSpeed = 1.66;
-
         ep_f64 backgroundDim = 0.8;
     };
 
@@ -10336,7 +10333,7 @@ struct MilChart {
             finalFlowSpeed += animator.get(note, time, EnumMilEventType::FlowSpeed);
         }
 
-        auto noteFloorPosition = (note.floorPosition - note.getFloorPositionAt(time, animator)) * finalFlowSpeed * meta.speedUnit * options.flowSpeed;
+        auto noteFloorPosition = (note.floorPosition - note.getFloorPositionAt(std::min(time, note.timeZone.y), animator)) * finalFlowSpeed * meta.speedUnit * options.flowSpeed;
 
         if (animator.has(note, EnumMilEventType::PositionY)) {
             noteFloorPosition -= noteFloorPosition.x;
@@ -10871,8 +10868,14 @@ void calculateMilFrame(
                 }
 
                 if (note.timeZone.y < time) {
-                    noteGroup.state.passedNoteIndex(note_ii);
-                    continue;
+                    if (!note.isHold() || note.timeZone.y + chart.meta.holdDisappearTime <= time) {
+                        noteGroup.state.passedNoteIndex(note_ii);
+                        continue;
+                    }
+                }
+
+                if (note.isHold()) {
+                    frameInfo.color.a *= 1.0 - std::clamp((time - note.timeZone.y) / chart.meta.holdDisappearTime, 0.0, 1.0);
                 }
 
                 auto sizeInfo = getNoteTextureSizeInfo(note.textureDesc);
