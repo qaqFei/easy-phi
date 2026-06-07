@@ -10293,6 +10293,10 @@ struct MilChart {
         ep_f64 textureRotation;
         Vec2 scale;
         Color color;
+
+        void setHidden() noexcept {
+            color.a = 0.0;
+        }
     };
 
     NoteFrameInfo getNoteFrameInfo(
@@ -10306,6 +10310,7 @@ struct MilChart {
         auto lineFlowSpeed = animator.get(line, time, EnumMilEventType::FlowSpeed);
         auto lineSize = animator.get(line, time, EnumMilEventType::Size);
         auto lineWholeAlpha = animator.get(line, time, EnumMilEventType::WholeTransparency);
+        auto lineVisibleArea = animator.get(line, time, EnumMilEventType::VisibleArea);
         auto noteSize = animator.get(note, time, EnumMilEventType::Size);
         auto noteAlpha = animator.get(note, time, EnumMilEventType::Transparency);
         auto noteRotation = animator.get(note, time, EnumMilEventType::Rotation);
@@ -10334,6 +10339,10 @@ struct MilChart {
         }
 
         auto noteFloorPosition = (note.floorPosition - note.getFloorPositionAt(std::min(time, note.timeZone.y), animator)) * finalFlowSpeed * meta.speedUnit * options.flowSpeed;
+        
+        if (noteFloorPosition.x > lineVisibleArea) {
+            info.setHidden();
+        }
 
         if (animator.has(note, EnumMilEventType::PositionY)) {
             noteFloorPosition -= noteFloorPosition.x;
