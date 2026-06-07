@@ -5476,6 +5476,10 @@ struct PhiMeta {
     Vec2 worldOrigin, worldViewport; /* !inline-docs|
     The world origin and viewport of the chart, used to normalize the positions.
     */
+
+    ep_f64 speedUnit = 1.0; /* !inline-docs|
+    The unit for speed events.
+    */
 };
 
 struct PhiBPMEvent {
@@ -6632,13 +6636,13 @@ struct PhiChart {
         lineTransform.translate(linePosition);
         lineTransform.rotateDegrees(lineRotation);
         lineTransform.rotateDegrees(noteAxisRotation);
-        lineTransform.scale(screenSize);
+        lineTransform.scale(screenSize / meta.worldViewport.abs());
         lineTransform.scale(1.0, -1.0);
 
         info.isArrived = time >= note.time;
         auto noteTotalFloorPosition = note.getFloorPositionAt(time, animator);
         auto noteSpeedCoefficient = lineSpeedCoefficient * animator.get(note, time, EnumPhiEventType::SpeedCoefficient);
-        auto noteFloorPosition = (note.floorPosition - noteTotalFloorPosition) * noteSpeedCoefficient;
+        auto noteFloorPosition = (note.floorPosition - noteTotalFloorPosition) * noteSpeedCoefficient * meta.speedUnit;
         Vec2 noteBasePosition = { animator.get(note, time, EnumPhiEventType::PositionX), animator.get(note, time, EnumPhiEventType::PositionY) };
 
         auto noteRelPositionHead = noteBasePosition + Vec2 { 0.0, info.isArrived ? 0.0 : noteFloorPosition.x },
@@ -7008,6 +7012,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
     chart.meta.lineHeightUnit = { 0.0, (ep_f64)1 / 180 };
     chart.meta.worldOrigin = { (ep_f64)-1350 / 2, (ep_f64)900 / 2 };
     chart.meta.worldViewport = { 1350, -900 };
+    chart.meta.speedUnit = 120.0;
 
     if (!jsonRoot.isObject()) CHART_LOAD_FAILED("rpe", "root is not an object");
 
@@ -7240,7 +7245,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
             if (eventLayerNode.hasKey("moveXEvents")) groups.push_back({ &eventLayerNode["moveXEvents"], EnumPhiEventType::PositionX, [](ep_f64 v) { return v; } });
             if (eventLayerNode.hasKey("moveYEvents")) groups.push_back({ &eventLayerNode["moveYEvents"], EnumPhiEventType::PositionY, [](ep_f64 v) { return v; } });
             if (eventLayerNode.hasKey("rotateEvents")) groups.push_back({ &eventLayerNode["rotateEvents"], EnumPhiEventType::SelfRotation, [](ep_f64 v) { return v; } });
-            if (eventLayerNode.hasKey("speedEvents")) groups.push_back({ &eventLayerNode["speedEvents"], EnumPhiEventType::Speed, [](ep_f64 v) { return v * 120 / 900; } });
+            if (eventLayerNode.hasKey("speedEvents")) groups.push_back({ &eventLayerNode["speedEvents"], EnumPhiEventType::Speed, [](ep_f64 v) { return v; } });
 
             for (auto& group : groups) {
                 auto [success, msg] = progressEventGroup(group);
@@ -7311,11 +7316,11 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
                 if (!noteNode.hasKey("positionX")) CHART_LOAD_FAILED("rpe", "missing positionX field");
                 if (!noteNode["positionX"].isNumber()) CHART_LOAD_FAILED("rpe", "positionX is not a number");
-                ep_f64 positionX = noteNode["positionX"].getNumber() / 1350;
+                ep_f64 positionX = noteNode["positionX"].getNumber();
                 
                 if (noteNode.hasKey("yOffset")) {
                     if (!noteNode["yOffset"].isNumber()) CHART_LOAD_FAILED("rpe", "yOffset is not a number");
-                    auto yOffset = noteNode["yOffset"].getNumber() / 900 * speed;
+                    auto yOffset = noteNode["yOffset"].getNumber() * speed;
                     if (!isAbove) yOffset *= -1;
                     
                     if (yOffset != 0.0) {
@@ -7561,8 +7566,9 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
     chart.meta.isRegLineAlphaNoteHidden = true;
     chart.meta.lineWidthUnit = { (ep_f64)4000 / 1350, 0.0 };
     chart.meta.lineHeightUnit = { 0.0, (ep_f64)1 / 180 };
-    chart.meta.worldOrigin = { (ep_f64)-1350 / 2, (ep_f64)900 / 2 };
-    chart.meta.worldViewport = { 1350, -900 };
+    chart.meta.worldOrigin = { 0.0, 1400 };
+    chart.meta.worldViewport = { 2048, -1400 };
+    chart.meta.speedUnit = 120.0;
 
     ep_f64 offset;
     if (!readNumber(&offset)) CHART_LOAD_FAILED("pec", "failed to read offset");
@@ -7809,11 +7815,9 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
         }
 
         if (cmd.positionX != 0.0) {
-            auto value = cmd.positionX / 2048.0;
-
             chart.animator.addEvent(note, PhiEvent {
                 .timeZone = INF_TZ,
-                .valueZone = { value, value },
+                .valueZone = { cmd.positionX, cmd.positionX },
                 .type = EnumPhiEventType::PositionX,
                 .layerIndex = PhiEventLayerIndexs::NOTE_ATTRS
             });
@@ -7850,10 +7854,7 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
                 cmd.timeZone.x = toSeconds(lineIndex, cmd.timeZone.x);
                 cmd.timeZone.y = toSeconds(lineIndex, cmd.timeZone.y);
 
-                if (type == EnumPhiEventType::PositionX) cmd.value = (cmd.value / 2048.0 - 0.5) * 1350.0;
-                else if (type == EnumPhiEventType::PositionY) cmd.value = (cmd.value / 1400.0 - 0.5) * 900.0;
-                else if (type == EnumPhiEventType::Speed) cmd.value = cmd.value / 1400.0 * 900.0 * 120.0 / 900.0;
-                else if (type == EnumPhiEventType::AdditiveAlpha) cmd.value /= 255.0;
+                if (type == EnumPhiEventType::AdditiveAlpha) cmd.value /= 255.0;
             }
 
             for (ep_u64 i = 0; i < typedEvents.size(); i++) {

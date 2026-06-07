@@ -15,6 +15,7 @@ int main(int argc, char** argv) {
     std::cout << "6. rpe_3" << std::endl;
     std::cout << "7. rpe_4" << std::endl;
     std::cout << "8. rpe_5" << std::endl;
+    std::cout << "9. pec" << std::endl;
 
     int choice;
     std::cout << ">> ";
@@ -79,6 +80,14 @@ int main(int argc, char** argv) {
             break;
         }
 
+        case 9: {
+            chartPath = "./test_files/pec/chart.pec";
+            imagePath = "./test_files/pec/image.png";
+            audioPath = "./test_files/pec/audio.mp3";
+            storyboardAssetsPath = "./test_files/pec";
+            break;
+        }
+
         default: {
             std::cout << "Invalid choice" << std::endl;
             return 1;
@@ -106,8 +115,8 @@ int main(int argc, char** argv) {
 
         ep_f64 t = 0.0;
         while (t < window.renderer->audioManager.getBgmLength()) {
-            auto& frameInfo = window.renderer->render({ .time = t });
-            info["data"].getArray().push_back(JsonNode::MakeNumber(frameInfo.calculatedTook * 1000));
+            auto& frameInfo = window.renderer->render({ .base = { .time = t } });
+            info["data"].getArray().push_back(JsonNode::MakeNumber(frameInfo.base.calculatedTook * 1000));
             t += 1.0 / 120.0;
         }
 
