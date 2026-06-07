@@ -10339,6 +10339,10 @@ struct MilChart {
         }
 
         auto noteFloorPosition = (note.floorPosition - note.getFloorPositionAt(std::min(time, note.timeZone.y), animator)) * finalFlowSpeed * meta.speedUnit * options.flowSpeed;
+
+        if (time >= note.timeZone.x) {
+            noteFloorPosition.x = 0.0;
+        }
         
         if (noteFloorPosition.x > lineVisibleArea) {
             info.setHidden();
@@ -10354,7 +10358,7 @@ struct MilChart {
             animator.get(note, time, EnumMilEventType::RelativeY)
         };
 
-        auto noteRelPositionHead = noteBasePosition + Vec2 { 0.0, info.isArrived ? 0.0 : noteFloorPosition.x },
+        auto noteRelPositionHead = noteBasePosition + Vec2 { 0.0, noteFloorPosition.x },
              noteRelPositionTail = noteBasePosition + Vec2 { 0.0, noteFloorPosition.y };
         
         info.headPosition = lineTransform.transformPoint(noteRelPositionHead);
