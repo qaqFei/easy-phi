@@ -1271,6 +1271,73 @@ struct YUV420Frame {
     }
 };
 
+void stripString(std::string& str) {
+    /* !docs
+    Strip a string like python's `str.strip()`.
+    */
+
+    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+    auto tail = std::ranges::find_if(str | std::views::reverse, not_space);
+    str.erase(tail.base(), str.end());
+    auto head = std::ranges::find_if(str, not_space);
+    str.erase(str.begin(), head);
+}
+
+void splitString(const std::string& str, std::vector<std::string>& lines, char delimiter = '\n') {
+    /* !docs
+    Split a string to lines like python's `str.split(delimiter)`.
+    */
+
+    for (auto&& subrange : str | std::views::split(delimiter)) {
+        lines.emplace_back(subrange.begin(), subrange.end());
+    }
+}
+
+bool stringIsStartsWith(const std::string& str, const std::string& prefix) {
+    return str.size() >= prefix.size() && str.substr(0, prefix.size()) == prefix;
+}
+
+bool stringIsEndsWith(const std::string& str, const std::string& suffix) {
+    return str.size() >= suffix.size() && str.substr(str.size() - suffix.size()) == suffix;
+}
+
+std::string replaceStringWith(const std::string& str, const std::string& target, const std::string& replacement) {
+    if (target.empty()) return str;
+
+    std::string result;
+    size_t start = 0;
+    size_t pos;
+    while ((pos = str.find(target, start)) != std::string::npos) {
+        result.append(str, start, pos - start);
+        result.append(replacement);
+        start = pos + target.size();
+    }
+    result.append(str, start, std::string::npos);
+    return result;
+}
+
+std::string stringSlice(const std::string& str, ep_i64 start, ep_i64 end) {
+    ep_i64 len = str.size();
+    if (start < 0) start = std::max<ep_i64>(0, len + start);
+    else start = std::min(start, len);
+    if (end < 0) end = std::max<ep_i64>(0, len + end);
+    else end = std::min(end, len);
+    if (start >= end) return "";
+    return str.substr(start, end - start);
+}
+
+std::string stringSliceProgress(const std::string& str, ep_f64 p) {
+    p = std::clamp(p, 0.0, 1.0);
+    return str.substr(0, (ep_u64)(str.size() * p));
+}
+
+std::string doubleChars(const std::string& color) {
+    std::string result;
+    result.reserve(color.size() * 2);
+    for (auto c : color) result.append(2, c);
+    return result;
+}
+
 struct Vec2 {
     ep_f64 x, y;
 
@@ -1354,6 +1421,182 @@ struct Color {
     static Color Blue() noexcept { return Color { 0.0, 0.0, 1.0, 1.0 }; }
     static Color Transparent() noexcept { return Color { 0.0, 0.0, 0.0, 0.0 }; }
 
+    static Color FromCss(std::string css) {
+        static std::unordered_map<std::string, std::string> colorPresets = {
+            { "aliceblue", "#f0f8ff" }, { "antiquewhite", "#faebd7" }, { "aqua", "#00ffff" },
+            { "aquamarine", "#7fffd4" }, { "azure", "#f0ffff" }, { "beige", "#f5f5dc" },
+            { "bisque", "#ffe4c4" }, { "black", "#000000" }, { "blanchedalmond", "#ffebcd" },
+            { "blue", "#0000ff" }, { "blueviolet", "#8a2be2" }, { "brown", "#a52a2a" },
+            { "burlywood", "#deb887" }, { "cadetblue", "#5f9ea0" }, { "chartreuse", "#7fff00" },
+            { "chocolate", "#d2691e" }, { "coral", "#ff7f50" }, { "cornflowerblue", "#6495ed" },
+            { "cornsilk", "#fff8dc" }, { "crimson", "#dc143c" }, { "cyan", "#00ffff" },
+            { "darkblue", "#00008b" }, { "darkcyan", "#008b8b" }, { "darkgoldenrod", "#b8860b" },
+            { "darkgray", "#a9a9a9" }, { "darkgreen", "#006400" }, { "darkgrey", "#a9a9a9" },
+            { "darkkhaki", "#bdb76b" }, { "darkmagenta", "#8b008b" }, { "darkolivegreen", "#556b2f" },
+            { "darkorange", "#ff8c00" }, { "darkorchid", "#9932cc" }, { "darkred", "#8b0000" },
+            { "darksalmon", "#e9967a" }, { "darkseagreen", "#8fbc8f" }, { "darkslateblue", "#483d8b" },
+            { "darkslategray", "#2f4f4f" }, { "darkslategrey", "#2f4f4f" }, { "darkturquoise", "#00ced1" },
+            { "darkviolet", "#9400d3" }, { "deeppink", "#ff1493" }, { "deepskyblue", "#00bfff" },
+            { "dimgray", "#696969" }, { "dimgrey", "#696969" }, { "dodgerblue", "#1e90ff" },
+            { "firebrick", "#b22222" }, { "floralwhite", "#fffaf0" }, { "forestgreen", "#228b22" },
+            { "fuchsia", "#ff00ff" }, { "gainsboro", "#dcdcdc" }, { "ghostwhite", "#f8f8ff" },
+            { "gold", "#ffd700" }, { "goldenrod", "#daa520" }, { "gray", "#808080" },
+            { "green", "#008000" }, { "greenyellow", "#adff2f" }, { "grey", "#808080" },
+            { "honeydew", "#f0fff0" }, { "hotpink", "#ff69b4" }, { "indianred", "#cd5c5c" },
+            { "indigo", "#4b0082" }, { "ivory", "#fffff0" }, { "khaki", "#f0e68c" },
+            { "lavender", "#e6e6fa" }, { "lavenderblush", "#fff0f5" }, { "lawngreen", "#7cfc00" },
+            { "lemonchiffon", "#fffacd" }, { "lightblue", "#add8e6" }, { "lightcoral", "#f08080" },
+            { "lightcyan", "#e0ffff" }, { "lightgoldenrodyellow", "#fafad2" }, { "lightgray", "#d3d3d3" },
+            { "lightgreen", "#90ee90" }, { "lightgrey", "#d3d3d3" }, { "lightpink", "#ffb6c1" },
+            { "lightsalmon", "#ffa07a" }, { "lightseagreen", "#20b2aa" }, { "lightskyblue", "#87cefa" },
+            { "lightslategray", "#778899" }, { "lightslategrey", "#778899" }, { "lightsteelblue", "#b0c4de" },
+            { "lightyellow", "#ffffe0" }, { "lime", "#00ff00" }, { "limegreen", "#32cd32" },
+            { "linen", "#faf0e6" }, { "magenta", "#ff00ff" }, { "maroon", "#800000" },
+            { "mediumaquamarine", "#66cdaa" }, { "mediumblue", "#0000cd" }, { "mediumorchid", "#ba55d3" },
+            { "mediumpurple", "#9370db" }, { "mediumseagreen", "#3cb371" }, { "mediumslateblue", "#7b68ee" },
+            { "mediumspringgreen", "#00fa9a" }, { "mediumturquoise", "#48d1cc" }, { "mediumvioletred", "#c71585" },
+            { "midnightblue", "#191970" }, { "mintcream", "#f5fffa" }, { "mistyrose", "#ffe4e1" },
+            { "moccasin", "#ffe4b5" }, { "navajowhite", "#ffdead" }, { "navy", "#000080" },
+            { "oldlace", "#fdf5e6" }, { "olive", "#808000" }, { "olivedrab", "#6b8e23" },
+            { "orange", "#ffa500" }, { "orangered", "#ff4500" }, { "orchid", "#da70d6" },
+            { "palegoldenrod", "#eee8aa" }, { "palegreen", "#98fb98" }, { "paleturquoise", "#afeeee" },
+            { "palevioletred", "#db7093" }, { "papayawhip", "#ffefd5" }, { "peachpuff", "#ffdab9" },
+            { "peru", "#cd853f" }, { "pink", "#ffc0cb" }, { "plum", "#dda0dd" },
+            { "powderblue", "#b0e0e6" }, { "purple", "#800080" }, { "red", "#ff0000" },
+            { "rosybrown", "#bc8f8f" }, { "royalblue", "#4169e1" }, { "saddlebrown", "#8b4513" },
+            { "salmon", "#fa8072" }, { "sandybrown", "#f4a460" }, { "seagreen", "#2e8b57" },
+            { "seashell", "#fff5ee" }, { "sienna", "#a0522d" }, { "silver", "#c0c0c0" },
+            { "skyblue", "#87ceeb" }, { "slateblue", "#6a5acd" }, { "slategray", "#708090" },
+            { "slategrey", "#708090" }, { "snow", "#fffafa" }, { "springgreen", "#00ff7f" },
+            { "steelblue", "#4682b4" }, { "tan", "#d2b48c" }, { "teal", "#008080" },
+            { "thistle", "#d8bfd8" }, { "tomato", "#ff6347" }, { "turquoise", "#40e0d0" },
+            { "violet", "#ee82ee" }, { "wheat", "#f5deb3" }, { "white", "#ffffff" },
+            { "whitesmoke", "#f5f5f5" }, { "yellow", "#ffff00" }, { "yellowgreen", "#9acd32" },
+            { "transparent", "#00000000" },
+        };
+
+        std::transform(css.begin(), css.end(), css.begin(), [](unsigned char c){ return std::tolower(c); });
+        stripString(css);
+
+        if (colorPresets.find(css) != colorPresets.end()) {
+            css = colorPresets.at(css);
+        }
+
+        if (stringIsStartsWith(css, "#")) {
+            css = stringSlice(css, 1, css.size());
+            if (css.size() == 3 || css.size() == 4) css = doubleChars(css);
+            if (css.size() == 6) css += "ff";
+
+            ep_f64 ret[4];
+
+            for (ep_u64 i = 0; i < 4; i++) {
+                try {
+                    auto hex = stringSlice(css, i * 2, i * 2 + 2);
+                    ret[i] = std::stoi(hex, nullptr, 16);
+                } catch (...) { }
+            }
+
+            return Color { ret[0], ret[1], ret[2], ret[3] } / 255;
+        }
+
+        auto tryParse = [&](
+            std::string css,
+            const std::string name,
+            ep_u64 arglen,
+            std::optional<std::vector<ep_f64>> maxs = std::nullopt,
+            bool funcAllowAlpha = false
+        ) -> std::optional<Color> {
+            if (!stringIsStartsWith(css, name)) return std::nullopt;
+            css = stringSlice(css, name.size(), css.size());
+
+            if (!stringIsStartsWith(css, "(")) return std::nullopt;
+            if (!stringIsEndsWith(css, ")")) return std::nullopt;
+            css = stringSlice(css, 1, -1);
+
+            css = replaceStringWith(css, " ", ",");
+            while (css.find(",,") != std::string::npos) css = replaceStringWith(css, ",,", ",");
+
+            if (css.empty()) return std::nullopt;
+
+            std::vector<std::string> args;
+            splitString(css, args, ',');
+            std::vector<std::optional<ep_f64>> vals;
+            vals.resize(args.size());
+            bool hasAlphaArg = false;
+
+            for (ep_u64 i = 0; i < args.size(); i++) {
+                auto& arg = args[i];
+                if (arg == "/") {
+                    hasAlphaArg = true;
+                    continue;
+                }
+
+                if (stringIsEndsWith(arg, "%")) {
+                    try {
+                        vals[i] = std::stod(stringSlice(arg, 0, -1)) / 100;
+                    } catch (...) { return std::nullopt; }
+
+                    if (maxs.has_value() && i < maxs.value().size()) {
+                        vals[i].value() *= maxs.value()[i];
+                    }
+                } else if (stringIsEndsWith(arg, "deg")) {
+                    try {
+                        vals[i] = std::stod(stringSlice(arg, 0, -3));
+                    } catch (...) { return std::nullopt; }
+                } else {
+                    try {
+                        vals[i] = std::stod(arg);
+                    } catch (...) { return std::nullopt; }
+                }
+            }
+
+            bool allowAlpha = funcAllowAlpha && hasAlphaArg;
+            std::vector<ep_f64> collected;
+
+            for (ep_u64 i = 0; i < vals.size(); i++) {
+                if (!vals[i].has_value()) continue;
+                collected.push_back(vals[i].value());
+            }
+
+            if (collected.size() != arglen && !allowAlpha) return std::nullopt;
+            if (collected.size() != arglen + 1 && allowAlpha) return std::nullopt;
+
+            collected.resize(4);
+
+            if (!allowAlpha && funcAllowAlpha && arglen < 4) {
+                collected[arglen] = 1.0;
+            }
+
+            return Color { collected[0], collected[1], collected[2], collected[3] };
+        };
+
+        std::optional<Color> ret;
+
+        if ((ret = tryParse(css, "rgb", 3, std::vector<ep_f64> { 255, 255, 255 })).has_value()) {
+            auto c = ret.value() / 255.0;
+            c.a = 1.0;
+            return c.clamp();
+        } else if ((ret = tryParse(css, "rgba", 4, std::vector<ep_f64> { 255, 255, 255, 1.0 })).has_value()) {
+            return (ret.value() / Color { 255.0, 255.0, 255.0, 1.0 }).clamp();
+        } else if ((ret = tryParse(css, "hsl", 3)).has_value()) {
+            auto c = ret.value().hsl2rgb();
+            c.a = 1.0;
+            return c.clamp();
+        } else if ((ret = tryParse(css, "hsla", 4)).has_value()) {
+            return ret.value().hsl2rgb().clamp();
+        } else if ((ret = tryParse(css, "hsv", 3)).has_value()) {
+            auto c = ret.value().hsv2rgb();
+            c.a = 1.0;
+            return c.clamp();
+        } else if ((ret = tryParse(css, "hsva", 4)).has_value()) {
+            return ret.value().hsv2rgb().clamp();
+        } else if ((ret = tryParse(css, "oklch", 3, std::nullopt, true)).has_value()) {
+            return ret.value().oklch2rgb().clamp();
+        }
+
+        return {};
+    }
+
     Color applyAlpha(ep_f64 alpha) const noexcept {
         /* !docs
         Returns a new color with the alpha multiplied by `alpha`.
@@ -1382,6 +1625,80 @@ struct Color {
 
     bool operator==(const Color& c) const noexcept { return r == c.r && g == c.g && b == c.b && a == c.a; }
     bool operator!=(const Color& c) const noexcept { return !(*this == c); }
+
+    Color clamp() const noexcept { return Color { std::clamp(r, 0.0, 1.0), std::clamp(g, 0.0, 1.0), std::clamp(b, 0.0, 1.0), std::clamp(a, 0.0, 1.0) }; }
+
+    Color hsl2rgb() const noexcept {
+        auto c = (1.0 - std::abs(2.0 * b - 1.0)) * g;
+        auto x = c * (1.0 - std::abs(std::fmod(r / 60.0, 2.0) - 1.0));
+        auto m = b - c / 2.0;
+
+        if (0 <= r && r < 60) {
+            return Color { c, x, 0.0, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (60 <= r && r < 120) {
+            return Color { x, c, 0.0, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (120 <= r && r < 180) {
+            return Color { 0.0, c, x, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (180 <= r && r < 240) {
+            return Color { 0.0, x, c, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (240 <= r && r < 300) {
+            return Color { x, 0.0, c, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else {
+            return Color { c, 0.0, x, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        }
+    }
+
+    Color hsv2rgb() const noexcept {
+        auto c = b * g;
+        auto x = c * (1.0 - std::abs(std::fmod(r / 60.0, 2.0) - 1.0));
+        auto m = b - c;
+
+        if (0 <= r && r < 60) {
+            return Color { c, x, 0.0, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (60 <= r && r < 120) {
+            return Color { x, c, 0.0, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (120 <= r && r < 180) {
+            return Color { 0.0, c, x, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (180 <= r && r < 240) {
+            return Color { 0.0, x, c, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else if (240 <= r && r < 300) {
+            return Color { x, 0.0, c, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        } else {
+            return Color { c, 0.0, x, 0.0 } + m + Color { 0.0, 0.0, 0.0, a };
+        }
+    }
+
+    Color oklch2rgb() const noexcept {
+        auto a_ = g * std::cos(std::numbers::pi / 180.0 * b);
+        auto b_ = g * std::sin(std::numbers::pi / 180.0 * b);
+
+        auto l_ = r + 0.3963377774 * a_ + 0.2158037573 * b_;
+        auto m_ = r - 0.1055613458 * a_ - 0.0638541728 * b_;
+        auto s_ = r - 0.0894841775 * a_ - 1.2914855480 * b_;
+
+        auto l_cube = l_ * l_ * l_;
+        auto m_cube = m_ * m_ * m_;
+        auto s_cube = s_ * s_ * s_;
+    
+        auto r_linear = 4.0767416621 * l_cube - 3.3077115913 * m_cube + 0.2309699292 * s_cube;
+        auto g_linear = -1.2684380046 * l_cube + 2.6097574011 * m_cube - 0.3413193965 * s_cube;
+        auto b_linear = -0.0041960863 * l_cube - 0.7034186147 * m_cube + 1.7076147010 * s_cube;
+
+        auto to_srgb = [](ep_f64 x) {
+            if (x <= 0.0031308) {
+                return 12.92 * x;
+            } else {
+                return 1.055 * std::pow(x, 1.0 / 2.4) - 0.055;
+            }
+        };
+
+        return {
+            to_srgb(std::clamp(r_linear, 0.0, 1.0)),
+            to_srgb(std::clamp(g_linear, 0.0, 1.0)),
+            to_srgb(std::clamp(b_linear, 0.0, 1.0)),
+            a
+        };
+    }
 };
 
 struct ObjectIndexer {
@@ -1645,52 +1962,6 @@ Rect getCoveredOrContainRect(const Rect& dst, const Vec2& size, bool isCovered) 
     }
 
     return Rect::MakeCenter(dst.x + dst.w / 2, dst.y + dst.h / 2, w, h);
-}
-
-void stripString(std::string& str) {
-    /* !docs
-    Strip a string like python's `str.strip()`.
-    */
-
-    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
-    auto tail = std::ranges::find_if(str | std::views::reverse, not_space);
-    str.erase(tail.base(), str.end());
-    auto head = std::ranges::find_if(str, not_space);
-    str.erase(str.begin(), head);
-}
-
-void splitString(const std::string& str, std::vector<std::string>& lines, char delimiter = '\n') {
-    /* !docs
-    Split a string to lines like python's `str.split(delimiter)`.
-    */
-
-    for (auto&& subrange : str | std::views::split(delimiter)) {
-        lines.emplace_back(subrange.begin(), subrange.end());
-    }
-}
-
-bool stringIsStartsWith(const std::string& str, const std::string& prefix) {
-    return str.size() >= prefix.size() && str.substr(0, prefix.size()) == prefix;
-}
-
-std::string replaceStringWith(const std::string& str, const std::string& target, const std::string& replacement) {
-    if (target.empty()) return str;
-
-    std::string result;
-    size_t start = 0;
-    size_t pos;
-    while ((pos = str.find(target, start)) != std::string::npos) {
-        result.append(str, start, pos - start);
-        result.append(replacement);
-        start = pos + target.size();
-    }
-    result.append(str, start, std::string::npos);
-    return result;
-}
-
-std::string stringSliceProgress(const std::string& str, ep_f64 p) {
-    p = std::clamp(p, 0.0, 1.0);
-    return str.substr(0, (ep_u64)(str.size() * p));
 }
 
 struct EaseSet {
@@ -9458,14 +9729,12 @@ struct MilEvent {
                 { EnumMilEventType::LineHeadTransparency, 1 },
                 { EnumMilEventType::Speed, 1 },
                 { EnumMilEventType::WholeTransparency, 1 },
-                { EnumMilEventType::Color, 0xffffffff },
                 { EnumMilEventType::VisibleArea, (ep_f64)2500 / 1080 }
             } },
             { EnumMilObjectType::Note, {
                 { EnumMilEventType::Transparency, 1 },
                 { EnumMilEventType::Size, 1 },
                 { EnumMilEventType::FlowSpeed, 1 },
-                { EnumMilEventType::Color, 0xffffffff }
             } },
             { EnumMilObjectType::Storyboard, {
                 { EnumMilEventType::Size, 1 },
@@ -9479,7 +9748,6 @@ struct MilEvent {
                 { EnumMilEventType::StoryBoardLeftTopY, 0.5 },
                 { EnumMilEventType::StoryBoardRightTopX, 0.5 },
                 { EnumMilEventType::StoryBoardRightTopY, 0.5 },
-                { EnumMilEventType::Color, 0xffffffff }
             } }
         };
 
@@ -9542,7 +9810,9 @@ struct MilAnimGroup {
             });
 
             if (typedEvents.empty()) {
-                currentValues[i] = MilEvent::getDefaultValue(objType, (EnumMilEventType)i);
+                auto value = MilEvent::getDefaultValue(objType, (EnumMilEventType)i);
+                currentValues[i] = value;
+                currentValueZones[i] = Vec2(value);
             }
         }
 
@@ -9576,7 +9846,8 @@ struct MilAnimGroup {
         } else {
             currentValues[type] = e.valueAtTime(t);
         }
-        
+
+        currentValueZones[type] = e.valueZone;
         lastUpdatedTimes[type] = t;
     }
 
@@ -9618,10 +9889,15 @@ struct MilAnimGroup {
         return !events[(ep_u64)type].empty();
     }
 
+    Vec2 get_zone(EnumMilEventType type) const noexcept {
+        return currentValueZones[(ep_u64)type];
+    }
+
     private:
     ep_f64 lastUpdatedTimes[(ep_u64)EnumMilEventType::MAX];
     ep_u64 currentIndexs[(ep_u64)EnumMilEventType::MAX];
     ep_f64 currentValues[(ep_u64)EnumMilEventType::MAX];
+    Vec2 currentValueZones[(ep_u64)EnumMilEventType::MAX];
 
     void initSpeedCumul() {
         auto& speedEvents = getEvents(EnumMilEventType::Speed);
@@ -9724,6 +10000,20 @@ struct MilAnimator {
     template <typename T>
     bool has(T& obj, EnumMilEventType type) const noexcept {
         return has({ T::ObjType, obj.indexer.get() }, type);
+    }
+
+    Vec2 get_zone(const ObjDesc& obj, ep_f64 t, EnumMilEventType type) noexcept {
+        auto group_it = groups.find(obj.second);
+        if (group_it == groups.end()) return Vec2(MilEvent::getDefaultValue(obj.first, type));
+
+        auto& group = group_it->second;
+        group.updateType((ep_u64)type, t);
+        return group.get_zone(type);
+    }
+
+    template <typename T>
+    Vec2 get_zone(T& obj, ep_f64 t, EnumMilEventType type) noexcept {
+        return get_zone({ T::ObjType, obj.indexer.get() }, t, type);
     }
 };
 
@@ -9894,6 +10184,28 @@ struct MilStoryboardAssets {
     /* !docs
     The assets of the storyboard of a milthm chart.
     */
+
+    static constexpr ep_u64 kColorIndexOffset = 1;
+
+    std::vector<Color> colors;
+
+    Vec2 requestColorPair(const Color& start, const Color& end) {
+        Vec2 valueZone;
+        if (colors.empty() || colors[colors.size() - 1] != start) colors.push_back(start);
+        valueZone.x = colors.size() - 1;
+        if (colors.empty() || colors[colors.size() - 1] != end) colors.push_back(end);
+        valueZone.y = colors.size() - 1;
+        return valueZone + kColorIndexOffset;
+    }
+
+    Color getColor(ep_f64 index, const Vec2& valueZone) noexcept {
+        if (valueZone.x < kColorIndexOffset) return Color::White();
+
+        auto start = colors[(ep_u64)valueZone.x - kColorIndexOffset];
+        auto end = colors[(ep_u64)valueZone.y - kColorIndexOffset];
+        auto p = index - valueZone.x;
+        return start * (1.0 - p) + end * p;
+    }
 };
 
 struct MilHitEffectItem {
@@ -10000,7 +10312,9 @@ struct MilChart {
         auto noteSize = animator.get(note, time, EnumMilEventType::Size);
         auto noteAlpha = animator.get(note, time, EnumMilEventType::Transparency);
         auto noteRotation = animator.get(note, time, EnumMilEventType::Rotation);
-        auto noteColor = Color { 1.0, 1.0, 1.0, 1.0 };
+        auto noteColorIndex = animator.get(note, time, EnumMilEventType::Color);
+        auto noteColorIndexZone = animator.get_zone(note, time, EnumMilEventType::Color);
+        auto noteColor = storyboardAssets.getColor(noteColorIndex, noteColorIndexZone);
         
         Transform2D lineTransform {};
         lineTransform.translate(linePosition);
@@ -10259,6 +10573,20 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
         return false;
     };
 
+    auto cvtColorAnimVal = [](JsonNode& node, const std::string& key, Color* dst) {
+        if (!node.hasKey(key)) return false;
+
+        auto& valNode = node[key];
+
+        if (valNode.isString()) {
+            try { *dst = Color::FromCss(valNode.getString()); }
+            catch (...) { return false; }
+            return true;
+        }
+
+        return false;
+    };
+
     if (!jsonRoot.hasKey("animations")) CHART_LOAD_FAILED("dev", "missing animations field");
     if (!jsonRoot["animations"].isArray()) CHART_LOAD_FAILED("dev", "animations is not an array");
 
@@ -10281,7 +10609,10 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
         e.type = MilEventTypeHelper::FromInt(animNode["key"].getNumber());
 
         if (e.type == EnumMilEventType::Color) {
-            continue; // TODO: implement it
+            Color fv, tv;
+            if (!cvtColorAnimVal(animNode, "fv", &fv)) CHART_LOAD_FAILED("dev", "invalid fv");
+            if (!cvtColorAnimVal(animNode, "tv", &tv)) CHART_LOAD_FAILED("dev", "invalid tv");
+            e.valueZone = chart.storyboardAssets.requestColorPair(fv, tv);
         } else {
             if (!cvtAnimVal(animNode, "fv", &e.valueZone.x)) CHART_LOAD_FAILED("dev", "invalid fv");
             if (!cvtAnimVal(animNode, "tv", &e.valueZone.y)) CHART_LOAD_FAILED("dev", "invalid tv");
@@ -10492,7 +10823,9 @@ void calculateMilFrame(
         auto lineHeadAlpha = chart.animator.get(line, time, EnumMilEventType::LineHeadTransparency);
         auto lineBodyAlpha = chart.animator.get(line, time, EnumMilEventType::LineBodyTransparency);
         auto lineSize = chart.animator.get(line, time, EnumMilEventType::Size);
-        auto lineColor = Color { 1.0, 1.0, 1.0, 1.0 };
+        auto lineColorIndex = chart.animator.get(line, time, EnumMilEventType::Color);
+        auto lineColorIndexZone = chart.animator.get_zone(line, time, EnumMilEventType::Color);
+        auto lineColor = chart.storyboardAssets.getColor(lineColorIndex, lineColorIndexZone);
 
         lineHeadAlpha *= lineAlpha;
         lineBodyAlpha *= lineAlpha;
