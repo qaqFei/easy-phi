@@ -10359,7 +10359,7 @@ struct MilChart {
         
         info.headPosition = lineTransform.transformPoint(noteRelPositionHead);
         info.tailPosition = lineTransform.transformPoint(noteRelPositionTail);
-        info.textureRotation = -lineRotation + noteRotation;
+        info.textureRotation = -lineRotation - noteRotation;
         info.scale = Vec2(lineSize * noteSize);
         info.color = noteColor.applyAlpha(lineWholeAlpha * noteAlpha);
 
@@ -10897,10 +10897,10 @@ void calculateMilFrame(
                 noteTransform.scale(1.0, -1.0);
 
                 Vec2 noteQuad[4] = {
-                    noteTransform.transformPoint({ -sizeInfo.width / 2, -sizeInfo.head }),
-                    noteTransform.transformPoint({ sizeInfo.width / 2, -sizeInfo.head }),
-                    noteTransform.transformPoint({ sizeInfo.width / 2, sizeInfo.body + sizeInfo.tail }),
-                    noteTransform.transformPoint({ -sizeInfo.width / 2, sizeInfo.body + sizeInfo.tail })
+                    noteTransform.transformPoint({ -sizeInfo.head, -sizeInfo.width / 2 }),
+                    noteTransform.transformPoint({ -sizeInfo.head, sizeInfo.width / 2 }),
+                    noteTransform.transformPoint({ sizeInfo.body + sizeInfo.tail, sizeInfo.width / 2 }),
+                    noteTransform.transformPoint({ sizeInfo.body + sizeInfo.tail, -sizeInfo.width / 2 })
                 };
 
                 auto extendedSafeArea = screenArea.extend(maxHalfNoteHeadDiagonal * frameInfo.scale.max());
