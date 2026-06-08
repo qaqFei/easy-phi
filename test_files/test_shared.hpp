@@ -721,7 +721,7 @@ struct MilWindow {
         
         renderer->glCtx = base.glCtx;
         renderer->sharedComp.textureDecoder = decodeImage;
-        renderer->textManager.renderer = PhiStaticResourceHelpers::createTextRenderer();
+        renderer->textManager.renderer = MilStaticResourceHelpers::createTextRenderer();
         renderer->audioManager.decoder = decodeAudioMiniaudio;
         renderer->audioManager.engine = makeAudioEngineMiniaudio();
         renderer->init();

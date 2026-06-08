@@ -1876,21 +1876,6 @@ bool pointStrictlyInRect(const Vec2& p, const Rect& r) noexcept {
            r.y < p.y && p.y < r.y + r.h;
 }
 
-bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) noexcept {
-    /* !docs
-    Checks if a convex quad is strictly intersecting a rectangle.
-    */
-
-    return pointStrictlyInRect(quad[0], r) ||
-           pointStrictlyInRect(quad[1], r) ||
-           pointStrictlyInRect(quad[2], r) ||
-           pointStrictlyInRect(quad[3], r) ||
-           pointStrictlyInConvexQuad(Vec2 {r.x, r.y}, quad) ||
-           pointStrictlyInConvexQuad(Vec2 {r.x + r.w, r.y}, quad) ||
-           pointStrictlyInConvexQuad(Vec2 {r.x + r.w, r.y + r.h}, quad) ||
-           pointStrictlyInConvexQuad(Vec2 {r.x, r.y + r.h}, quad);
-}
-
 bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 seg[2]) noexcept {
     /* !docs
     Checks if a **line** is intersecting a **line segment**.
@@ -1914,6 +1899,94 @@ bool lineIsIntersectLineSeg(const Vec2& linePoint, ep_f64 lineDeg, const Vec2 se
     
     ep_f64 u = (q.x * dir.y - q.y * dir.x) / rxs;
     return u >= -eps && u <= 1.0 + eps;
+}
+
+bool lineSegIsIntersectLineSeg(const Vec2 seg1[2], const Vec2 seg2[2]) noexcept {
+    /* !docs
+    Checks if two **line segments** are intersecting.
+    */
+
+    constexpr ep_f64 eps = 1e-9;
+
+    Vec2 p1 = seg1[0], p2 = seg1[1];
+    Vec2 q1 = seg2[0], q2 = seg2[1];
+
+    Vec2 r = p2 - p1;
+    Vec2 s = q2 - q1;
+    Vec2 qp = q1 - p1;
+
+    ep_f64 rxs = r.x * s.y - r.y * s.x;
+    ep_f64 qpxr = qp.x * r.y - qp.y * r.x;
+
+    if (std::abs(rxs) < eps) {
+        if (std::abs(qpxr) >= eps) return false;
+
+        ep_f64 t1 = 0.0, t2 = 1.0;
+        ep_f64 u1 = 0.0, u2 = 1.0;
+
+        auto project = [](const Vec2& a, const Vec2& b, const Vec2& dir) -> std::pair<ep_f64, ep_f64> {
+            ep_f64 dot_a = a.x * dir.x + a.y * dir.y;
+            ep_f64 dot_b = b.x * dir.x + b.y * dir.y;
+            return {std::min(dot_a, dot_b), std::max(dot_a, dot_b)};
+        };
+
+        Vec2 axis = (std::abs(r.x) > std::abs(r.y)) ? Vec2{1, 0} : Vec2{0, 1};
+        auto [proj1_min, proj1_max] = project(p1, p2, axis);
+        auto [proj2_min, proj2_max] = project(q1, q2, axis);
+
+        return proj1_max + eps >= proj2_min && proj2_max + eps >= proj1_min;
+    }
+
+    ep_f64 u = (qp.x * s.y - qp.y * s.x) / rxs;
+    ep_f64 v = (qp.x * r.y - qp.y * r.x) / rxs;
+
+    return u >= -eps && u <= 1.0 + eps && v >= -eps && v <= 1.0 + eps;
+}
+
+bool quadStrictlyIntersectRect(const Vec2 quad[4], const Rect& r) noexcept {
+    /* !docs
+    Checks if a convex quad is strictly intersecting a rectangle.
+    */
+
+    const Vec2 ql1[2] = { quad[0], quad[1] };
+    const Vec2 ql2[2] = { quad[1], quad[2] };
+    const Vec2 ql3[2] = { quad[2], quad[3] };
+    const Vec2 ql4[2] = { quad[3], quad[0] };
+
+    const Vec2 rl1[2] = { Vec2 { r.x, r.y }, Vec2 { r.x + r.w, r.y } };
+    const Vec2 rl2[2] = { Vec2 { r.x + r.w, r.y }, Vec2 { r.x + r.w, r.y + r.h } };
+    const Vec2 rl3[2] = { Vec2 { r.x + r.w, r.y + r.h }, Vec2 { r.x, r.y + r.h } };
+    const Vec2 rl4[2] = { Vec2 { r.x, r.y + r.h }, Vec2 { r.x, r.y } };
+
+    return pointStrictlyInRect(quad[0], r) ||
+           pointStrictlyInRect(quad[1], r) ||
+           pointStrictlyInRect(quad[2], r) ||
+           pointStrictlyInRect(quad[3], r) ||
+
+           pointStrictlyInConvexQuad(Vec2 {r.x, r.y}, quad) ||
+           pointStrictlyInConvexQuad(Vec2 {r.x + r.w, r.y}, quad) ||
+           pointStrictlyInConvexQuad(Vec2 {r.x + r.w, r.y + r.h}, quad) ||
+           pointStrictlyInConvexQuad(Vec2 {r.x, r.y + r.h}, quad) ||
+
+           lineSegIsIntersectLineSeg(ql1, rl1) ||
+           lineSegIsIntersectLineSeg(ql1, rl2) ||
+           lineSegIsIntersectLineSeg(ql1, rl3) ||
+           lineSegIsIntersectLineSeg(ql1, rl4) ||
+
+           lineSegIsIntersectLineSeg(ql2, rl1) ||
+           lineSegIsIntersectLineSeg(ql2, rl2) ||
+           lineSegIsIntersectLineSeg(ql2, rl3) ||
+           lineSegIsIntersectLineSeg(ql2, rl4) ||
+
+           lineSegIsIntersectLineSeg(ql3, rl1) ||
+           lineSegIsIntersectLineSeg(ql3, rl2) ||
+           lineSegIsIntersectLineSeg(ql3, rl3) ||
+           lineSegIsIntersectLineSeg(ql3, rl4) ||
+
+           lineSegIsIntersectLineSeg(ql4, rl1) ||
+           lineSegIsIntersectLineSeg(ql4, rl2) ||
+           lineSegIsIntersectLineSeg(ql4, rl3) ||
+           lineSegIsIntersectLineSeg(ql4, rl4);
 }
 
 bool lineIsIntersectRect(const Vec2& linePoint, ep_f64 lineDeg, const Rect& r) noexcept {
@@ -11384,6 +11457,14 @@ namespace easy_phi {
             return tex;
         }
 
+        static GL::TextManager::Renderer CreateRendererFunc(const Data& data) {
+            auto tr = TextRenderer::Make();
+            tr->loadFont(data);
+            return [tr](const std::string& text, ep_u64 fontSize) -> DecodedRGBATexture {
+                return tr->render(text, fontSize);
+            };
+        }
+
         private:
         Data fontData;
         stbtt_fontinfo font;
@@ -11615,11 +11696,7 @@ namespace easy_phi {
 
         #ifdef EASY_PHI_TEXT_RENDERER
         static GL::TextManager::Renderer createTextRenderer() {
-            auto tr = TextRenderer::Make();
-            tr->loadFont(getFontData());
-            return [tr](const std::string& text, ep_u64 fontSize) -> DecodedRGBATexture {
-                return tr->render(text, fontSize);
-            };
+            return TextRenderer::CreateRendererFunc(getFontData());
         }
         #endif
     };
@@ -11672,6 +11749,16 @@ namespace easy_phi {
             auto key = std::string("/hitsounds/") + name + ".ogg";
             return MilStaticResource::get(key);
         }
+
+        static Data getFontData() {
+            return MilStaticResource::get("/font.ttf");
+        }
+
+        #ifdef EASY_PHI_TEXT_RENDERER
+        static GL::TextManager::Renderer createTextRenderer() {
+            return TextRenderer::CreateRendererFunc(getFontData());
+        }
+        #endif
     };
 }
 #endif // EASY_PHI_MIL_RESOURCE
