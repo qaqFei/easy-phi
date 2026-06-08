@@ -6307,9 +6307,9 @@ struct PhiNote {
         ep_f64 lastUpdateTime;
         bool playedHitsound;
 
-        void timeUpdated(ep_f64 t) noexcept {
+        void timeUpdated(const PhiNote& note, ep_f64 t) noexcept {
             if (lastUpdateTime > t) {
-                playedHitsound = false;
+                playedHitsound = note.time < t;
             }
 
             lastUpdateTime = t;
@@ -8922,7 +8922,7 @@ void calculatePhiFrame(
             for (ep_u64 note_ii = noteGroup.state.firstNoteIndex; note_ii < noteGroup.indexs.size(); note_ii++) {
                 auto note_i = noteGroup.indexs[note_ii];
                 auto& note = line.notes[note_i];
-                note.state.timeUpdated(time);
+                note.state.timeUpdated(note, time);
 
                 auto frameInfo = chart.getNoteFrameInfo(line, note, time, safeAreaSize);
 
@@ -10124,9 +10124,9 @@ struct MilNote {
         ep_f64 lastUpdateTime;
         bool playedHitsound;
 
-        void timeUpdated(ep_f64 t) noexcept {
+        void timeUpdated(const MilNote& note, ep_f64 t) noexcept {
             if (lastUpdateTime > t) {
-                playedHitsound = false;
+                playedHitsound = note.timeZone.x < t;
             }
 
             lastUpdateTime = t;
@@ -10943,7 +10943,7 @@ void calculateMilFrame(
             for (ep_u64 note_ii = noteGroup.state.firstNoteIndex; note_ii < noteGroup.indexs.size(); note_ii++) {
                 auto note_i = noteGroup.indexs[note_ii];
                 auto& note = line.notes[note_i];
-                note.state.timeUpdated(time);
+                note.state.timeUpdated(note, time);
 
                 auto frameInfo = chart.getNoteFrameInfo(line, note, time, config.screenSize);
 
