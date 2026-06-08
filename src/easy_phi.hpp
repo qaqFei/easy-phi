@@ -3679,7 +3679,7 @@ namespace GL {
             }
 
             // only GL_RGBA and GL_UNSIGNED_BYTE ;)
-            void image2D(GLsizei width, GLsizei height, const void* pixels) {
+            void image2D(GLsizei width, GLsizei height, const void* pixels, bool enableMipmap = false) {
                 if (width <= 0 || height <= 0) return;
 
                 ref->glRef->glTexImage2D(ref->target, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
@@ -3688,16 +3688,17 @@ namespace GL {
                 ref->glRef->glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
                 if (maxAniso > 0.0) ref->glRef->glTexParameterf(ref->target, GL_TEXTURE_MAX_ANISOTROPY_EXT, maxAniso);
 
-                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MIN_FILTER, enableMipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
                 ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 ref->glRef->glTexParameteri(ref->target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                if (enableMipmap) ref->glRef->glGenerateMipmap(ref->target);
 
                 ref->width = width; ref->height = height;
             }
 
-            void image2D(const DecodedRGBATexture& decoded) {
-                image2D(decoded.width, decoded.height, (void*)decoded.data.data());
+            void image2D(const DecodedRGBATexture& decoded, bool enableMipmap = false) {
+                image2D(decoded.width, decoded.height, (void*)decoded.data.data(), enableMipmap);
             }
 
             void storage2D(GLint levels, GLenum internalformat, GLsizei width, GLsizei height) {
@@ -4810,11 +4811,11 @@ void main() {
             renderToDrawFbo(width, height, mesh);
         }
 
-        ep_sp<TextureInfo> createTextureFromDecoded(const DecodedRGBATexture& decoded) {
+        ep_sp<TextureInfo> createTextureFromDecoded(const DecodedRGBATexture& decoded, bool enableMipmap = false) {
             if (!decoded.valid()) throw std::runtime_error("invalid decoded texture");
 
             auto tex = createTexture();
-            tex->use().image2D(decoded);
+            tex->use().image2D(decoded, enableMipmap);
             return tex;
         }
 
@@ -9278,7 +9279,7 @@ struct PhiTakeOverer {
 
     void loadIllustion(const Data& data) {
         auto decoded = sharedComp.textureDecoder(data);
-        sharedComp.illustionTexture = glCtx->createTextureFromDecoded(decoded);
+        sharedComp.illustionTexture = glCtx->createTextureFromDecoded(decoded, true);
         bluredIllustionCache.key = -1.0;
     }
 
@@ -9342,7 +9343,7 @@ struct PhiTakeOverer {
         chart.storyboardAssets.textureLoader = [&, this](const std::string& name) {
             auto data = storyboardDataLoader(name);
             auto decoded = sharedComp.textureDecoder(data);
-            auto tex = glCtx->createTextureFromDecoded(decoded);
+            auto tex = glCtx->createTextureFromDecoded(decoded, true);
             auto id = storyboardTextureId++;
             storyboardTextures[id] = tex;
             return std::make_pair(id, Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.height });
@@ -9574,7 +9575,7 @@ struct PhiTakeOverer {
                 });
 
                 auto decoded = sharedComp.textureDecoder(loadResult.encoded);
-                auto tex = glCtx->createTextureFromDecoded(decoded);
+                auto tex = glCtx->createTextureFromDecoded(decoded, true);
                 if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding *= decoded.height;
                 if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.height, (ep_f64)decoded.height } / 2;
 
@@ -9599,7 +9600,7 @@ struct PhiTakeOverer {
         auto hitEffectDatas = hitEffectDataLoader();
         for (const auto& data : hitEffectDatas) {
             auto decoded = sharedComp.textureDecoder(data);
-            auto tex = glCtx->createTextureFromDecoded(decoded);
+            auto tex = glCtx->createTextureFromDecoded(decoded, true);
             hitEffectTextures.push_back(tex);
         }
 
@@ -11283,7 +11284,7 @@ struct MilTakeOverer {
         {
             auto lineHead = lineHeadTextureLoader();
             auto decoded = sharedComp.textureDecoder(lineHead.encoded);
-            lineHeadTex = glCtx->createTextureFromDecoded(decoded);
+            lineHeadTex = glCtx->createTextureFromDecoded(decoded, true);
 
             calcConfig.lineHeadScale = lineHead.scale;
             if (lineHead.connectPointIsPixel) lineHead.connectPoint /= decoded.height;
@@ -11302,7 +11303,7 @@ struct MilTakeOverer {
                         if (loadResult.encoded.empty()) continue;
 
                         auto decoded = sharedComp.textureDecoder(loadResult.encoded);
-                        auto tex = glCtx->createTextureFromDecoded(decoded);
+                        auto tex = glCtx->createTextureFromDecoded(decoded, true);
                         if (!loadResult.cutPaddingIsPixel) loadResult.cutPadding *= decoded.width;
                         if (loadResult.ignoreCutPadding) loadResult.cutPadding = Vec2 { (ep_f64)decoded.width, (ep_f64)decoded.width } / 2;
 
