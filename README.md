@@ -81,6 +81,6 @@ python ./build_test.py --run --debug
 
 ## Other
 
-The charts in `test_files` are **not owned** by this project, please contact for removal if there is any copyright infringement.
+The files in `test_files` and `src/helpers/resources` are **maybe not owned** by this project, please contact for removal if there is any copyright infringement.
 
 **We do not guarantee that the api is stable between versions.**
