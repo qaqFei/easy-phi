@@ -11119,6 +11119,28 @@ struct MilTakeOverer {
 
     void loadIllustion(const std::string& path) { loadIllustion(Data::MakeFromFile(path)); }
 
+    struct MixBgmConfig {
+        ep_f64 musicVol = 1.0, sfxVol = 1.0;
+    };
+
+    ep_sp<DecodedAudio> mixFinalBgm(const MilChart& chart, const MixBgmConfig& config) {
+        if (!audioManager.bgmAudio) throw std::runtime_error("bgm is not loaded");
+
+        auto result = audioManager.bgmAudio->copy();
+        result->applyVolume(config.musicVol);
+        
+        for (const auto& line : chart.lines) {
+            for (const auto& note : line.notes) {
+                if (note.isFake) continue;
+
+                auto sfx = hitsoundAudios.at(note.type);
+                result->overlapSecond(sfx, note.timeZone.x, config.sfxVol);
+            }
+        }
+
+        return result;
+    }
+
     using ChartIniter = std::function<void(MilChart&)>;
 
     TakeOvererComponents::LoadChartResultInfo loadChart(
