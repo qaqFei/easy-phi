@@ -5952,6 +5952,8 @@ struct PhiAnimLayer {
         It will sort the events and calculate the cumulative value.
         */
 
+        std::ranges::fill(lastUpdatedTimes, -std::numeric_limits<ep_f64>::infinity());
+
         for (auto& typedEvents : events) {
             std::sort(typedEvents.begin(), typedEvents.end(), [](const auto& a, const auto& b) {
                 return a.timeZone.x < b.timeZone.x;
@@ -9870,6 +9872,8 @@ struct MilAnimGroup {
     std::vector<MilEvent>& getEvents(EnumMilEventType type) { return events[(ep_u64)type]; }
 
     void init() {
+        std::ranges::fill(lastUpdatedTimes, -std::numeric_limits<ep_f64>::infinity());
+
         for (ep_u64 i = 0; i < (ep_u64)EnumMilEventType::MAX; i++) {
             auto& typedEvents = events[i];
 
