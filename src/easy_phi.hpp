@@ -5486,9 +5486,9 @@ struct AudioEngine {
 namespace SharedCalculatedObjects {
     struct CalculatedText {
         std::string text;
-        Vec2 position, scale, anchor;
+        Vec2 position, scale = { 1.0, 1.0 }, anchor;
         ep_f64 fontSize, rotation;
-        Color color;
+        Color color = Color::White();
     };
 
     struct CalculatedRect {
@@ -9144,21 +9144,15 @@ void calculatePhiFrame(
         frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
             .text = std::to_string(combo),
             .position = toScreen({ safeAreaSize.x / 2, safeAreaSize.x * 0.027083 }),
-            .scale = { 1.0, 1.0 },
             .anchor = { 0.5, 0.5 },
-            .fontSize = safeAreaSize.x * 0.0393081,
-            .rotation = 0.0,
-            .color = Color::White()
+            .fontSize = safeAreaSize.x * 0.0393081
         }, EnumPhiLineAttachUI::ComboNumber));
 
         frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
             .text = "AUTOPLAY",
             .position = toScreen({ safeAreaSize.x / 2, safeAreaSize.x * 0.0478125 }),
-            .scale = { 1.0, 1.0 },
             .anchor = { 0.5, 0.0 },
-            .fontSize = safeAreaSize.x * 0.0130208,
-            .rotation = 0.0,
-            .color = Color::White()
+            .fontSize = safeAreaSize.x * 0.0130208
         }, EnumPhiLineAttachUI::Combo));
     }
 
@@ -9166,31 +9160,22 @@ void calculatePhiFrame(
     frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
         .text = formatToStdString("%07llu", score),
         .position = toScreen({ safeAreaSize.x * (1 - ((ep_f64)40 / 1920)), safeAreaSize.x * 0.01614583 }),
-        .scale = { 1.0, 1.0 },
         .anchor = { 1.0, 0.0 },
-        .fontSize = safeAreaSize.x * 0.0277778,
-        .rotation = 0.0,
-        .color = Color::White()
+        .fontSize = safeAreaSize.x * 0.0277778
     }, EnumPhiLineAttachUI::Score));
     
     frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
         .text = chart.meta.title,
         .position = toScreen({ safeAreaSize.x * 0.0225, safeAreaSize.y - safeAreaSize.x * 0.0196875 }),
-        .scale = { 1.0, 1.0 },
         .anchor = { 0.0, 1.0 },
-        .fontSize = safeAreaSize.x * 0.018115942,
-        .rotation = 0.0,
-        .color = Color::White()
+        .fontSize = safeAreaSize.x * 0.018115942
     }, EnumPhiLineAttachUI::Name));
     
     frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
         .text = chart.meta.difficulty,
         .position = toScreen({ safeAreaSize.x * 0.9775, safeAreaSize.y - safeAreaSize.x * 0.0196875 }),
-        .scale = { 1.0, 1.0 },
         .anchor = { 1.0, 1.0 },
-        .fontSize = safeAreaSize.x * 0.018115942,
-        .rotation = 0.0,
-        .color = Color::White()
+        .fontSize = safeAreaSize.x * 0.018115942
     }, EnumPhiLineAttachUI::Level));
 
     calculateExtra(true);
@@ -9756,6 +9741,13 @@ struct MilMeta {
     Vec2 worldOrigin, worldViewport;
     ep_f64 speedUnit;
     ep_f64 holdDisappearTime = 0.2;
+
+    std::string getFinalDifficultyString() {
+        auto ret = difficultyName + " ";
+        ret += std::to_string((ep_i64)difficultyValue);
+        if (std::fmod(difficultyValue, 1.0) != 0.0) ret += "+";
+        return ret;
+    }
 };
 
 struct MilBPMEvent {
@@ -10352,6 +10344,8 @@ struct MilChart {
         for (auto& line : lines) {
             line.init(animator);
         }
+
+        initPlayemntInfo();
     }
 
     Vec2 getLinePosition(ep_f64 t, MilLine& line, const Vec2& screenSize) {
@@ -10448,6 +10442,25 @@ struct MilChart {
         return info;
     }
 
+    ep_u64 getCombo(ep_f64 t) const noexcept {
+        if (comboTimes.empty() || comboTimes[0] > t) return 0;
+
+        ep_u64 left = 0, right = comboTimes.size() - 1;
+        ep_u64 ans = 1;
+
+        while (left <= right) {
+            ep_u64 mid = left + (right - left) / 2;
+            if (comboTimes[mid] <= t) {
+                ans = mid + 1;
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+
+        return ans;
+    }
+
     private:
     void initSimulNote() {
         std::unordered_map<ep_f64, ep_u64> noteTimes;
@@ -10463,6 +10476,18 @@ struct MilChart {
                 note.isSimul = noteTimes[note.timeZone.x] > 1;
             }
         }
+    }
+
+    void initPlayemntInfo() {
+        for (auto& line : lines) {
+            for (auto& note : line.notes) {
+                if (note.isFake) continue;
+                comboTimes.push_back(note.timeZone.x);
+                if (note.isHold()) comboTimes.push_back(note.timeZone.y);
+            }
+        }
+
+        std::sort(comboTimes.begin(), comboTimes.end());
     }
 };
 
@@ -10801,12 +10826,20 @@ struct MilCalculatedFrame {
         Color color;
     };
 
+    struct CalculatedPauseButton {
+        Vec2 position, scale = { 1.0, 1.0 };
+        ep_f64 size;
+        ep_f64 rotation;
+        Color color;
+    };
+
     using CalculatedObject = std::variant<
         CalculatedText,
         CalculatedRect,
         CalculatedPoly,
         CalculatedLineHead,
-        CalculatedNote
+        CalculatedNote,
+        CalculatedPauseButton
     >;
 
     Rect backgroundRect;
@@ -11018,11 +11051,64 @@ void calculateMilFrame(
         }
     }
 
+    auto combo = chart.getCombo(time);
+
     frame.progressbarRect = {
         0.0, 0.0,
         time / config.songLength * config.screenSize.x,
         config.screenSize.x * 0.0046875
     };
+
+    frame.objects.push_back(MilCalculatedFrame::CalculatedPauseButton {
+        .position = Vec2(config.screenSize.x) * Vec2 { 0.0494792, 0.0489583 },
+        .size = config.screenSize.x * 0.040625,
+        .color = Color::White().applyAlpha(0.67)
+    });
+
+    frame.objects.push_back(MilCalculatedFrame::CalculatedText {
+        .text = chart.meta.title,
+        .position = Vec2(config.screenSize.x) * Vec2 { 0.0994791, 0.0397208 },
+        .anchor = { 0.0, 0.5 },
+        .fontSize = config.screenSize.x * 0.0201352
+    });
+
+    frame.objects.push_back(MilCalculatedFrame::CalculatedText {
+        .text = chart.meta.getFinalDifficultyString(),
+        .position = Vec2(config.screenSize.x) * Vec2 { 0.0994791, 0.0604583 },
+        .anchor = { 0.0, 0.5 },
+        .fontSize = config.screenSize.x * 0.0151472,
+        .color = Color::White().applyAlpha(0.75)
+    });
+
+    ep_u64 score = chart.comboTimes.size() ? std::clamp<ep_f64>(std::ceil((ep_f64)1010000 / chart.comboTimes.size() * combo), 0, 1010000) : 1010000;
+    frame.objects.push_back(MilCalculatedFrame::CalculatedText {
+        .text = formatToStdString("%07llu", score),
+        .position = Vec2(config.screenSize.x) * Vec2 { 0.9752375, 0.0395833 },
+        .anchor = { 1.0, 0.5 },
+        .fontSize = config.screenSize.x * 0.0268352,
+    });
+
+    frame.objects.push_back(MilCalculatedFrame::CalculatedText {
+        .text = "100.00%",
+        .position = Vec2(config.screenSize.x) * Vec2 { 0.9752375, 0.06684375 },
+        .anchor = { 1.0, 0.5 },
+        .fontSize = config.screenSize.x * 0.0201352,
+        .color = Color::White().applyAlpha(0.75)
+    });
+    
+    frame.objects.push_back(MilCalculatedFrame::CalculatedText {
+        .text = "ALL PERFECT",
+        .position = Vec2(config.screenSize.x) * Vec2 { 0.5, 0.0359375 },
+        .anchor = { 0.5, 0.5 },
+        .fontSize = config.screenSize.x * 0.0201352,
+    });
+    
+    frame.objects.push_back(MilCalculatedFrame::CalculatedText {
+        .text = std::to_string(combo),
+        .position = Vec2(config.screenSize.x) * Vec2 { 0.5, 0.0677083 },
+        .anchor = { 0.5, 0.5 },
+        .fontSize = config.screenSize.x * 0.0263352,
+    });
 }
 
 DecodedRGBATexture spwanMilBackgroundMask() {
@@ -11096,6 +11182,9 @@ struct MilTakeOverer {
 
     using HitsoundDataLoader = std::function<Data(EnumMilNoteType)>;
     HitsoundDataLoader hitsoundDataLoader;
+    
+    using PauseButtonTextureDataLoader = std::function<Data()>;
+    PauseButtonTextureDataLoader pauseButtonTextureDataLoader;
 
     MilCalculateFrameConfig calcConfig;
     MilChart chart;
@@ -11105,6 +11194,7 @@ struct MilTakeOverer {
         checkBoolAndThrow(!!lineHeadTextureLoader, "lineHeadTextureLoader is not set");
         checkBoolAndThrow(!!noteTextureDataLoader, "noteTextureDataLoader is not set");
         checkBoolAndThrow(!!hitsoundDataLoader, "hitsoundDataLoader is not set");
+        checkBoolAndThrow(!!pauseButtonTextureDataLoader, "pauseButtonTextureDataLoader is not set");
         checkBoolAndThrow(!!glCtx, "glCtx is not set");
 
         textManager.glCtx = glCtx;
@@ -11271,6 +11361,20 @@ struct MilTakeOverer {
 
                 cvs.drawMesh(mesh);
                 cvs.restore();
+            } else if (std::holds_alternative<MilCalculatedFrame::CalculatedPauseButton>(obj)) {
+                auto& btn = std::get<MilCalculatedFrame::CalculatedPauseButton>(obj);
+
+                cvs.save();
+                cvs.translate(btn.position);
+                cvs.rotateDegrees(btn.rotation);
+                cvs.scale(btn.scale);
+                cvs.drawRect({
+                    .position = -Vec2 { btn.size, btn.size } / 2,
+                    .size = { btn.size, btn.size },
+                    .color = btn.color,
+                    .texture = pauseButtonTex.get()
+                });
+                cvs.restore();
             }
         }
 
@@ -11302,6 +11406,7 @@ struct MilTakeOverer {
     ep_sp<GL::TextureInfo> lineHeadTex;
     std::unordered_map<EnumMilNoteType, ep_sp<DecodedAudio>> hitsoundAudios;
     std::map<MilNoteTextureDesc, ep_sp<GL::TextureInfo>> noteTextures;
+    ep_sp<GL::TextureInfo> pauseButtonTex;
 
     void loadResources() {
         backgroundMask = glCtx->createTextureFromDecoded(spwanMilBackgroundMask());
@@ -11351,6 +11456,12 @@ struct MilTakeOverer {
         }) {
             auto data = hitsoundDataLoader(type);
             hitsoundAudios[type] = audioManager.decodeAndCheck(data);
+        }
+
+        {
+            auto btn = pauseButtonTextureDataLoader();
+            auto decoded = sharedComp.textureDecoder(btn);
+            pauseButtonTex = glCtx->createTextureFromDecoded(decoded, true);
         }
     }
 };
@@ -11786,6 +11897,10 @@ namespace easy_phi {
             return TextRenderer::CreateRendererFunc(getFontData());
         }
         #endif
+
+        static Data pauseButtonTextureDataLoader() {
+            return MilStaticResource::get("/pause.png");
+        }
     };
 }
 #endif // EASY_PHI_MIL_RESOURCE

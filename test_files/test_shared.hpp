@@ -718,6 +718,7 @@ struct MilWindow {
         renderer->lineHeadTextureLoader = MilStaticResourceHelpers::lineHeadTextureLoader;
         renderer->noteTextureDataLoader = MilStaticResourceHelpers::noteTextureDataLoader;
         renderer->hitsoundDataLoader = MilStaticResourceHelpers::hitsoundDataLoader;
+        renderer->pauseButtonTextureDataLoader = MilStaticResourceHelpers::pauseButtonTextureDataLoader;
         
         renderer->glCtx = base.glCtx;
         renderer->sharedComp.textureDecoder = decodeImage;
