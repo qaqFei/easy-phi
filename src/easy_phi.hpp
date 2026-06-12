@@ -2277,6 +2277,34 @@ struct EaseSet {
     };
 };
 
+struct TimeBasedAnim {
+    ep_f64 duration;
+    ep_f64 lastTime;
+    Vec2 value;
+    std::function<ep_f64(const Vec2&, ep_f64)> easing = [](const Vec2& v, ep_f64 p) { return v.x + (v.y - v.x) * p; };
+
+    ep_f64 get(ep_f64 t) {
+        auto p = std::clamp((t - lastTime) / duration, 0.0, 1.0);
+        return easing(value, p);
+    }
+
+    TimeBasedAnim& set(ep_f64 t, ep_f64 nv = 0.0) {
+        value = { get(t), nv };
+        lastTime = t;
+        return *this;
+    }
+
+    TimeBasedAnim& weakSet(ep_f64 t, ep_f64 nv = 0.0) {
+        if (value.y != nv) set(t, nv);
+        return *this;
+    }
+
+    TimeBasedAnim& reset(ep_f64 nv = 0.0) {
+        value = Vec2(nv);
+        return *this;
+    }
+};
+
 namespace GL {
     /* !docs
     The OpenGL namespace.
@@ -10301,9 +10329,19 @@ struct MilChart {
         ep_f64 lastUpdateTime;
         ep_u64 firstHitEffectIndex;
 
+        TimeBasedAnim scoreAnim = { 
+            .duration = 0.15
+        };
+
+        TimeBasedAnim comboScaleAnim = {
+            .duration = 0.15,
+            .easing = [](auto, ep_f64 t) { return 1.0 + 0.07 * std::sin(t * std::numbers::pi); }
+        };
+
         void timeUpdated(ep_f64 t) noexcept {
             if (lastUpdateTime > t) {
                 firstHitEffectIndex = 0;
+                scoreAnim.reset();
             }
 
             lastUpdateTime = t;
@@ -11080,9 +11118,9 @@ void calculateMilFrame(
         .color = Color::White().applyAlpha(0.75)
     });
 
-    ep_u64 score = chart.comboTimes.size() ? std::clamp<ep_f64>(std::ceil((ep_f64)1010000 / chart.comboTimes.size() * combo), 0, 1010000) : 1010000;
+    ep_f64 targetScore = chart.comboTimes.size() ? std::clamp<ep_f64>(std::ceil((ep_f64)1010000 / chart.comboTimes.size() * combo), 0, 1010000) : 1010000;
     frame.objects.push_back(MilCalculatedFrame::CalculatedText {
-        .text = formatToStdString("%07llu", score),
+        .text = formatToStdString("%07llu", (ep_u64)chart.state.scoreAnim.weakSet(time, targetScore).get(time)),
         .position = Vec2(config.screenSize.x) * Vec2 { 0.9752375, 0.0395833 },
         .anchor = { 1.0, 0.5 },
         .fontSize = config.screenSize.x * 0.0268352,
@@ -11107,7 +11145,7 @@ void calculateMilFrame(
         .text = std::to_string(combo),
         .position = Vec2(config.screenSize.x) * Vec2 { 0.5, 0.0677083 },
         .anchor = { 0.5, 0.5 },
-        .fontSize = config.screenSize.x * 0.0263352,
+        .fontSize = config.screenSize.x * 0.0263352 * chart.state.comboScaleAnim.weakSet(time, combo).get(time)
     });
 }
 
