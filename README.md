@@ -13,6 +13,7 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 ## Games Supported
 
 - Phigros
+- Milthm
 
 ## Features
 
@@ -29,7 +30,7 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 
 - **Making it Easier**: We're making it easier to use easy-phi by clear and convient API design.
 
-- **Supporting More Games**: We're working on supporting more rhythm games, such as [Milthm](https://milthm.com/) and [Rizline](https://store.steampowered.com/app/2272590/Rizline/).
+- **Supporting More Games**: We're working on supporting more rhythm games, such as [Rizline](https://store.steampowered.com/app/2272590/Rizline/).
 
 ## Benchmark
 
