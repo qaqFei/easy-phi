@@ -21,6 +21,7 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 - **Simple API**: Easy to use and understand.
 - **Cross Platform**: Works on any platform that supports C++.
 - **Zero Dependencies**: No external libraries are required.
+- **Game Utilities**: Support for handling game-related data or resources.
 
 ## Working On
 
