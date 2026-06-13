@@ -8849,7 +8849,7 @@ struct PhiCalculatedFrame {
 
         void clear() {
             attachUIDatas.clear();
-            for (auto& [_, objects] : noteObjects) objects.clear();
+            for (auto& [_, v] : noteObjects) v.clear();
         }
     };
 
@@ -9758,6 +9758,10 @@ enum class EnumMilNoteType {
     Hit, Drag
 };
 
+enum class EnumMilFinalNoteType {
+    Tap, Hold, Drag
+};
+
 enum class EnumMilStoryboardType {
     Picture, Text
 };
@@ -10277,12 +10281,19 @@ struct MilNote {
     Vec2 floorPosition;
     bool isSimul;
     MilNoteTextureDesc textureDesc;
+    EnumMilFinalNoteType finalType;
 
     State state;
 
     void init(MilAnimator& animator) {
         floorPosition = { getFloorPositionAt(timeZone.x, animator), getFloorPositionAt(timeZone.y, animator) };
         textureDesc = MilNoteTextureDesc(type, isHold(), isSimul, isAlwaysPerfect);
+
+        if (type == EnumMilNoteType::Hit) {
+            finalType = isHold() ? EnumMilFinalNoteType::Hold : EnumMilFinalNoteType::Tap;
+        } else {
+            finalType = EnumMilFinalNoteType::Drag;
+        }
     }
 
     ep_f64 getFloorPositionAt(ep_f64 t, MilAnimator& animator) noexcept {
@@ -11089,8 +11100,15 @@ struct MilCalculatedFrame {
     std::vector<EnumMilNoteType> hitsounds;
 
     struct Cache {
-        void clear() {
+        std::vector<CalculatedObject> trackObjects, hitEffectCircs;
+        std::unordered_map<EnumMilFinalNoteType, std::vector<CalculatedObject>> noteObjects;
+        std::vector<CalculatedObject> hitEffectParticles;
 
+        void clear() {
+            trackObjects.clear();
+            hitEffectCircs.clear();
+            for (auto& [_, v] : noteObjects) v.clear();
+            hitEffectParticles.clear();
         }
     };
 
@@ -11194,7 +11212,7 @@ void calculateMilFrame(
         lineBodyAlpha *= lineAlpha;
 
         if (lineHeadAlpha > 0.0) {
-            frame.objects.push_back(MilCalculatedFrame::CalculatedLineHead {
+            frame.cache.trackObjects.push_back(MilCalculatedFrame::CalculatedLineHead {
                 .position = linePosition,
                 .scale = { lineSize, lineSize },
                 .size = lineHeadBase * config.lineHeadScale,
@@ -11206,7 +11224,7 @@ void calculateMilFrame(
         if (lineBodyAlpha > 0.0) {
             auto connectRadius = config.lineHeadConnectPoint * lineHeadBase * config.lineHeadScale;
             auto lineWidth = lineHeadBase * 0.096774;
-            frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
+            frame.cache.trackObjects.push_back(MilCalculatedFrame::CalculatedPoly::Make(
                 { connectRadius, -lineWidth / 2 },
                 { config.screenSize.y * 2.5, lineWidth },
                 lineColor.applyAlpha(lineBodyAlpha),
@@ -11265,7 +11283,7 @@ void calculateMilFrame(
 
                 if (noteInsideScreen) {
                     if (sizeInfo.isValid && frameInfo.color.a > 0.0) {
-                        frame.objects.push_back(MilCalculatedFrame::CalculatedNote {
+                        frame.cache.noteObjects[note.finalType].push_back(MilCalculatedFrame::CalculatedNote {
                             .position = frameInfo.headPosition,
                             .rotation = frameInfo.textureRotation,
                             .width = sizeInfo.width,
@@ -11310,7 +11328,7 @@ void calculateMilFrame(
         auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
 
         if (progress <= 1.0) {
-            frame.objects.push_back(MilCalculatedFrame::CalculatedHitEffectTexture {
+            frame.cache.hitEffectCircs.push_back(MilCalculatedFrame::CalculatedHitEffectTexture {
                 .position = info.headPosition,
                 .size = Vec2(lineHeadBase * 4.632 * (1.0 - std::pow(1.0 - progress, 3.0))) * info.scale.max(),
                 .progress = progress,
@@ -11336,7 +11354,7 @@ void calculateMilFrame(
 
             rotate += (rotate - (particlePos - info.headPosition).atanDegrees()) * 2;
 
-            frame.objects.push_back(MilCalculatedFrame::CalculatedCircle {
+            frame.cache.hitEffectParticles.push_back(MilCalculatedFrame::CalculatedCircle {
                 .position = particlePos,
                 .radius = particle.getScale(progress) * size * info.scale.max(),
                 .rotation = rotate,
@@ -11344,6 +11362,20 @@ void calculateMilFrame(
             });
         }
     }
+
+    frame.objects.insert(frame.objects.end(), frame.cache.trackObjects.begin(), frame.cache.trackObjects.end());
+    frame.objects.insert(frame.objects.end(), frame.cache.hitEffectCircs.begin(), frame.cache.hitEffectCircs.end());
+
+    for (const auto type : {
+        EnumMilFinalNoteType::Hold,
+        EnumMilFinalNoteType::Tap,
+        EnumMilFinalNoteType::Drag
+    }) {
+        auto& objs = frame.cache.noteObjects[type];
+        frame.objects.insert(frame.objects.end(), objs.begin(), objs.end());
+    }
+
+    frame.objects.insert(frame.objects.end(), frame.cache.hitEffectParticles.begin(), frame.cache.hitEffectParticles.end());
 
     auto combo = chart.getCombo(time);
 
