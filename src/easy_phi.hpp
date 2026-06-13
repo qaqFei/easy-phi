@@ -1352,6 +1352,7 @@ struct Vec2 {
     ep_f64 max() const noexcept { return std::max(x, y); }
     ep_f64 min() const noexcept { return std::min(x, y); }
     Vec2 abs() const noexcept { return { std::abs(x), std::abs(y) }; }
+    ep_f64 atanDegrees() const noexcept { return std::atan2(y, x) / std::numbers::pi * 180.0; }
 
     Vec2 operator+(const Vec2& v) const noexcept { return { x + v.x, y + v.y }; }
     Vec2 operator-(const Vec2& v) const noexcept { return { x - v.x, y - v.y }; }
@@ -1698,6 +1699,29 @@ struct Color {
             to_srgb(std::clamp(b_linear, 0.0, 1.0)),
             a
         };
+    }
+};
+
+struct ColorLink {
+    std::vector<std::pair<ep_f64, Color>> steps;
+
+    Color get(ep_f64 p) const {
+        if (steps.empty()) return {};
+        if (p <= steps.front().first) return steps.front().second;
+        if (p >= steps.back().first) return steps.back().second;
+
+        for (ep_u64 i = 0; i < steps.size() - 1; i++) {
+            auto& t = steps[i];
+            auto& n = steps[i + 1];
+            
+            if (t.first <= p && p <= n.first) {
+                auto sp = (p - t.first) / (n.first - t.first);
+                return t.second + (n.second - t.second) * sp;
+            }
+        }
+
+        ep_assert(false, "??????");
+        return {};
     }
 };
 
@@ -2877,6 +2901,7 @@ namespace GL {
         GLvec2() : x(0), y(0) {}
         GLvec2(const Vec2& o) : x(o.x), y(o.y) {}
         template <typename A, typename B> constexpr GLvec2(A a, B b) : x((GLfloat)a), y((GLfloat)b) {}
+        template <typename T> constexpr GLvec2(const T& o) : x((GLfloat)o), y((GLfloat)o) {}
 
         GLvec2 operator+(const GLvec2& o) const noexcept { return {x + o.x, y + o.y}; }
         GLvec2 operator-(const GLvec2& o) const noexcept { return {x - o.x, y - o.y}; }
@@ -2906,6 +2931,7 @@ namespace GL {
         
         GLvec3() : x(0), y(0), z(0) {}
         template <typename A, typename B, typename C> constexpr GLvec3(A a, B b, C c) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c) {}
+        template <typename T> constexpr GLvec3(const T& o) : x((GLfloat)o), y((GLfloat)o), z((GLfloat)o) {}
 
         GLvec3 operator+(const GLvec3& o) const noexcept { return {x + o.x, y + o.y, z + o.z}; }
         GLvec3 operator-(const GLvec3& o) const noexcept { return {x - o.x, y - o.y, z - o.z}; }
@@ -2937,6 +2963,7 @@ namespace GL {
         GLvec4() : x(0), y(0), z(0), w(0) {}
         GLvec4(const Color& o) : x(o.r), y(o.g), z(o.b), w(o.a) {}
         template <typename A, typename B, typename C, typename D> constexpr GLvec4(A a, B b, C c, D d) : x((GLfloat)a), y((GLfloat)b), z((GLfloat)c), w((GLfloat)d) {}
+        template <typename T> constexpr GLvec4(const T& o) : x((GLfloat)o), y((GLfloat)o), z((GLfloat)o), w((GLfloat)o) {}
 
         GLvec4 operator+(const GLvec4& o) const noexcept { return {x + o.x, y + o.y, z + o.z, w + o.w}; }
         GLvec4 operator-(const GLvec4& o) const noexcept { return {x - o.x, y - o.y, z - o.z, w - o.w}; }
@@ -3119,6 +3146,14 @@ namespace GL {
             */
 
             addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
+        }
+
+        void addRectCentered(const GLvec2& center, const GLvec2& radius, const GLvec2& uvCenter, const GLvec2& uvRadius) noexcept {
+            /* !docs
+            Adds a rectangle to the mesh, centered at the given position.
+            */
+            
+            addRect(center - radius, radius * 2, uvCenter - uvRadius, uvRadius * 2);
         }
 
         static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) noexcept {
@@ -3530,7 +3565,7 @@ namespace GL {
         BufferFillerFunc bufferFiller;
 
         struct {
-            std::string textureUniformName = "uTexture";
+            std::optional<std::string> textureUniformName = "uTexture";
             std::optional<std::string> colorUniformName = "uColor";
         } fragConfig;
 
@@ -3727,6 +3762,10 @@ namespace GL {
 
             void image2D(const DecodedRGBATexture& decoded, bool enableMipmap = false) {
                 image2D(decoded.width, decoded.height, (void*)decoded.data.data(), enableMipmap);
+            }
+
+            void generateMipmap() {
+                ref->glRef->glGenerateMipmap(ref->target);
             }
 
             void storage2D(GLint levels, GLenum internalformat, GLsizei width, GLsizei height) {
@@ -4392,6 +4431,28 @@ void main() {
                 prog->fragConfig.colorUniformName = std::nullopt;
                 return prog;
             }
+
+            static ep_sp<ProgramInfo> circle(GL33Context* glCtx) {
+                return glCtx->createConfiguredProgram(R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+
+uniform vec4 uColor;
+uniform sampler2D uTexture;
+
+out vec4 outColor;
+
+void main() {
+    outColor = uColor * texture(uTexture, fragTexCoord);
+
+    float dist = length(fragTexCoord - vec2(0.5));
+    float edgeWidth = fwidth(dist);
+    float alpha = 1.0 - smoothstep(0.5 - edgeWidth, 0.5, dist);
+    outColor.a *= alpha;
+}
+)");
+            }
         };
 
         void drawMesh(Mesh& mesh) noexcept {
@@ -4418,7 +4479,9 @@ void main() {
                 prog->getUniformLocation(prog->fragConfig.colorUniformName.value()).setv4(mesh.color);
             }
 
-            prog->getUniformLocation(prog->fragConfig.textureUniformName).seti(texGuard.index);
+            if (prog->fragConfig.textureUniformName.has_value()) {
+                prog->getUniformLocation(prog->fragConfig.textureUniformName.value()).seti(texGuard.index);
+            }
 
             gl.glDrawArrays(GL_TRIANGLES, 0, mesh.vertices.count);
             drawCallsCount++;
@@ -4566,6 +4629,7 @@ void main() {
         struct {
             ep_sp<ProgramInfo> gaussianBlur;
             ep_sp<ProgramInfo> yuvConverter;
+            ep_sp<ProgramInfo> circle;
         } preloadedPrograms; // !inline-docs| Preloaded programs.
 
         void frameEnded() noexcept {
@@ -4869,6 +4933,7 @@ void main() {
             defaultProgram = createConfiguredProgram(defaultFragmentShaderSource);
             preloadedPrograms.gaussianBlur = ProgramPresets::gaussianBlur(this);
             preloadedPrograms.yuvConverter = ProgramPresets::yuvConverter(this);
+            preloadedPrograms.circle = ProgramPresets::circle(this);
 
             unsigned char whiteTextureData[16] = {
                 255, 255, 255, 255,
@@ -4992,6 +5057,24 @@ void main() {
             mesh.color = config.color;
             mesh.texture = config.texture;
             mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
+            drawMesh(mesh);
+        }
+
+        struct DrawCircleConfig {
+            GLvec2 center;
+            GLvec2 radius = { 0.5, 0.5 };
+            GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
+            GLvec2 uvCenter = { 0.5, 0.5 };
+            GLvec2 uvRadius = { 0.5, 0.5 };
+            TextureInfo* texture;
+        };
+
+        void drawCircle(const DrawCircleConfig& config) noexcept {
+            auto mesh = glCtx->requestMesh(6);
+            mesh.program = glCtx->preloadedPrograms.circle.get();
+            mesh.color = config.color;
+            mesh.texture = config.texture;
+            mesh.addRectCentered(config.center, config.radius, config.uvCenter, config.uvRadius);
             drawMesh(mesh);
         }
 
@@ -5544,6 +5627,12 @@ namespace SharedCalculatedObjects {
             };
         }
     };
+
+    struct CalculatedCircle {
+        Vec2 position, radius;
+        ep_f64 rotation;
+        Color color;
+    };
 };
 
 namespace TakeOvererComponents {
@@ -5722,6 +5811,17 @@ namespace TakeOvererComponents {
             mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
             mesh.color = poly.color;
             cvs.drawMesh(mesh);
+        } else if (std::holds_alternative<SharedCalculatedObjects::CalculatedCircle>(obj)) {
+            auto& cir = std::get<SharedCalculatedObjects::CalculatedCircle>(obj);
+
+            cvs.save();
+            cvs.translate(cir.position);
+            cvs.rotateDegrees(cir.rotation);
+            cvs.drawCircle({
+                .radius = cir.radius,
+                .color = cir.color
+            });
+            cvs.restore();
         } else return false;
 
         return true;
@@ -8685,6 +8785,7 @@ struct PhiCalculatedFrame {
     using CalculatedText = SharedCalculatedObjects::CalculatedText;
     using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
     using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
+    using CalculatedCircle = SharedCalculatedObjects::CalculatedCircle;
 
     struct CalculatedNote {
         Vec2 position;
@@ -8704,8 +8805,7 @@ struct PhiCalculatedFrame {
 
     struct CalculatedHitEffectTexture {
         Vec2 position, size;
-        ep_f64 progress;
-        ep_f64 rotation;
+        ep_f64 progress, rotation;
         Color color;
     };
 
@@ -8718,6 +8818,8 @@ struct PhiCalculatedFrame {
         CalculatedText,
         CalculatedRect,
         CalculatedPoly,
+        CalculatedCircle,
+
         CalculatedNote,
         CalculatedStoryboardTexture,
         CalculatedHitEffectTexture,
@@ -10308,16 +10410,37 @@ struct MilHitEffectItem {
     */
 
     struct Particle {
+        ep_f64 dt;
         ep_f64 rotate;
         ep_f64 initialSpeed;
         ep_f64 initialSize;
         Vec2 scale;
         ep_f64 gravCoeff; // !inline-docs| gravity coefficient.
+
+        ep_f64 getRadius(ep_f64 p) const noexcept {
+            return p * initialSpeed * initialSpeed * (p * p / 3.0 - p + 1);
+        }
+
+        ep_f64 getDeltaY(ep_f64 p) const noexcept {
+            return p * p * gravCoeff * 0.025;
+        }
+
+        Vec2 getScale(ep_f64 p) const noexcept {
+            return Vec2 {
+                std::pow(p + 1, -scale.x) * 1.34,
+                std::pow(p + 1, -scale.y) * 0.25
+            } / (p + 1);
+        }
     };
 
     ep_f64 time;
+    ep_f64 texRotation;
     ep_u64 lineIndex, noteIndex;
     std::vector<Particle> particles;
+
+    ep_f64 getEndTime(ep_f64 duration) const noexcept {
+        return (particles.empty() ? time : time + particles.back().dt) + duration;
+    }
 };
 
 struct MilChart {
@@ -10357,7 +10480,26 @@ struct MilChart {
     struct UserOptions {
         ep_f64 noteScaling = 1.0;
         ep_f64 flowSpeed = 1.66;
+
         ep_f64 backgroundDim = 0.8;
+
+        ep_f64 hitEffectDuration = 0.5;
+
+        ColorLink particleRGBColor = {
+            .steps = {
+                { 0.0,  Color { 142, 197, 252 } / 255 },
+                { 0.75, Color { 162, 66,  255 } / 255 }
+            }
+        };
+
+        ColorLink particleAlphaColor = {
+            .steps = {
+                { 0.0,   Color { 0, 0, 0, 0 } },
+                { 0.128, Color { 0, 0, 0, 1 } },
+                { 0.805, Color { 0, 0, 0, 1 } },
+                { 1.0,   Color { 0, 0, 0, 0 } }
+            }
+        };
     };
 
     MilMeta meta;
@@ -10383,6 +10525,7 @@ struct MilChart {
             line.init(animator);
         }
 
+        initHitEffects();
         initPlayemntInfo();
     }
 
@@ -10514,6 +10657,55 @@ struct MilChart {
                 note.isSimul = noteTimes[note.timeZone.x] > 1;
             }
         }
+    }
+
+    void initHitEffects() {
+        std::mt19937 rng { std::random_device {} () };
+        std::uniform_real_distribution<ep_f64> rng_dist { 0.0, 1.0 };
+        auto uniform = [&](ep_f64 a, ep_f64 b) { return a + (b - a) * rng_dist(rng); };
+
+        auto makeParticle = [&](MilHitEffectItem& item, ep_f64 dt = 0.0) {
+            auto& particle = item.particles.emplace_back();
+            particle.dt = dt;
+            particle.rotate = uniform(0.0, 360.0);
+            particle.initialSpeed = uniform(0.3, 0.72);
+            particle.initialSize = std::pow(particle.initialSpeed, 0.22) * uniform(0.6, 0.7) / 42;
+            particle.scale = { uniform(1.5, 2.1), uniform(-0.5, 0.5) };
+            particle.gravCoeff = uniform(0.9, 1.3);
+        };
+
+        hitEffects.clear();
+
+        for (ep_u64 i = 0; i < lines.size(); i++) {
+            auto& line = lines[i];
+            for (ep_u64 j = 0; j < line.notes.size(); j++) {
+                auto& note = line.notes[j];
+                if (note.isFake) continue;
+
+                auto& item = hitEffects.emplace_back();
+                item.time = note.timeZone.x;
+                item.texRotation = uniform(0.0, 360.0);
+                item.lineIndex = i;
+                item.noteIndex = j;
+
+                if (!note.isHold()) {
+                    for (ep_u64 i = 0; i < 10; i++) {
+                        makeParticle(item);
+                    }
+                } else {
+                    ep_f64 dt = 0;
+                    while (true) {
+                        if (note.timeZone.x + dt >= note.timeZone.y) break;
+                        makeParticle(item, dt);
+                        dt += 0.01;
+                    }
+                }
+            }
+        }
+
+        std::stable_sort(hitEffects.begin(), hitEffects.end(), [](const auto& a, const auto& b) {
+            return a.time < b.time;
+        });
     }
 
     void initPlayemntInfo() {
@@ -10848,6 +11040,7 @@ struct MilCalculatedFrame {
     using CalculatedText = SharedCalculatedObjects::CalculatedText;
     using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
     using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
+    using CalculatedCircle = SharedCalculatedObjects::CalculatedCircle;
 
     struct CalculatedLineHead {
         Vec2 position, scale;
@@ -10871,13 +11064,22 @@ struct MilCalculatedFrame {
         Color color;
     };
 
+    struct CalculatedHitEffectTexture {
+        Vec2 position, size;
+        ep_f64 progress, rotation;
+        Color color;
+    };
+
     using CalculatedObject = std::variant<
         CalculatedText,
         CalculatedRect,
         CalculatedPoly,
+        CalculatedCircle,
+
         CalculatedLineHead,
         CalculatedNote,
-        CalculatedPauseButton
+        CalculatedPauseButton,
+        CalculatedHitEffectTexture
     >;
 
     Rect backgroundRect;
@@ -10974,6 +11176,8 @@ void calculateMilFrame(
             getNoteTextureSizeInfo(desc).getHeadHalfDiagonal()
         );
     }
+
+    chart.state.timeUpdated(time);
 
     for (auto& line : chart.lines) {
         auto linePosition = chart.getLinePosition(time, line, config.screenSize);
@@ -11086,6 +11290,58 @@ void calculateMilFrame(
                     }
                 }
             }
+        }
+    }
+
+    for (ep_u64 i = chart.state.firstHitEffectIndex; i < chart.hitEffects.size(); i++) {
+        auto& hitEffect = chart.hitEffects[i];
+        if (hitEffect.time > time) break;
+        
+        auto& line = chart.lines[hitEffect.lineIndex];
+        auto& note = line.notes[hitEffect.noteIndex];
+
+        auto info = chart.getNoteFrameInfo(line, note, time, config.screenSize);
+
+        if (hitEffect.getEndTime(chart.options.hitEffectDuration) < time) {
+            chart.state.passedHitEffectIndex(i);
+            continue;
+        }
+
+        auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
+
+        if (progress <= 1.0) {
+            frame.objects.push_back(MilCalculatedFrame::CalculatedHitEffectTexture {
+                .position = info.headPosition,
+                .size = Vec2(lineHeadBase * 4.632 * (1.0 - std::pow(1.0 - progress, 3.0))) * info.scale.max(),
+                .progress = progress,
+                .rotation = hitEffect.texRotation,
+                .color = Color { 150, 144, 253, 255 } / 255
+            });
+        }
+
+        for (auto& particle : hitEffect.particles) {
+            auto particleTime = hitEffect.time + particle.dt;
+            if (particleTime > time) break;
+            if (particleTime + chart.options.hitEffectDuration < time) continue;
+
+            auto progress = std::clamp((time - particleTime) / chart.options.hitEffectDuration, 0.0, 1.0);
+            auto size = particle.initialSize * config.screenSize.sum();
+            auto r = particle.getRadius(progress) * config.screenSize.sum();
+            auto rotate = particle.rotate;
+            auto color = chart.options.particleRGBColor.get(progress);
+            color.a = chart.options.particleAlphaColor.get(progress).a;
+
+            auto particlePos = info.headPosition.rotateDegrees(rotate, r * info.scale.max());
+            particlePos.y += particle.getDeltaY(progress) * config.screenSize.sum() * info.scale.max();
+
+            rotate += (rotate - (particlePos - info.headPosition).atanDegrees()) * 2;
+
+            frame.objects.push_back(MilCalculatedFrame::CalculatedCircle {
+                .position = particlePos,
+                .radius = particle.getScale(progress) * size * info.scale.max(),
+                .rotation = rotate,
+                .color = color
+            });
         }
     }
 
@@ -11227,6 +11483,9 @@ struct MilTakeOverer {
     MilCalculateFrameConfig calcConfig;
     MilChart chart;
     MilCalculatedFrame calculatedFrame;
+
+    ep_u64 circHitEffectTexSize = 512;
+    ep_u64 circHitEffectTexsCount = 60;
 
     void init() {
         checkBoolAndThrow(!!lineHeadTextureLoader, "lineHeadTextureLoader is not set");
@@ -11413,6 +11672,20 @@ struct MilTakeOverer {
                     .texture = pauseButtonTex.get()
                 });
                 cvs.restore();
+            } else if (std::holds_alternative<MilCalculatedFrame::CalculatedHitEffectTexture>(obj)) {
+                auto& effect = std::get<MilCalculatedFrame::CalculatedHitEffectTexture>(obj);
+                auto& img = circHitEffectTexs[std::clamp<ep_u64>(effect.progress * circHitEffectTexs.size(), 0, circHitEffectTexs.size() - 1)];
+                
+                cvs.save();
+                cvs.translate(effect.position);
+                cvs.rotateDegrees(effect.rotation);
+                cvs.drawRect({
+                    .position = -effect.size / 2,
+                    .size = effect.size,
+                    .color = effect.color,
+                    .texture = img.get()
+                });
+                cvs.restore();
             }
         }
 
@@ -11445,8 +11718,12 @@ struct MilTakeOverer {
     std::unordered_map<EnumMilNoteType, ep_sp<DecodedAudio>> hitsoundAudios;
     std::map<MilNoteTextureDesc, ep_sp<GL::TextureInfo>> noteTextures;
     ep_sp<GL::TextureInfo> pauseButtonTex;
+    ep_sp<GL::ProgramInfo> circHitEffectProg;
+    std::vector<ep_sp<GL::TextureInfo>> circHitEffectTexs;
 
     void loadResources() {
+        using namespace GL;
+
         backgroundMask = glCtx->createTextureFromDecoded(spwanMilBackgroundMask());
         progressbarTex = glCtx->createTextureFromDecoded(spwanMilProgressbar());
 
@@ -11500,6 +11777,98 @@ struct MilTakeOverer {
             auto btn = pauseButtonTextureDataLoader();
             auto decoded = sharedComp.textureDecoder(btn);
             pauseButtonTex = glCtx->createTextureFromDecoded(decoded, true);
+        }
+
+        circHitEffectProg = glCtx->createConfiguredProgram(R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+
+uniform float uProgress;
+uniform float uSeed;
+
+out vec4 outColor;
+
+float rand(vec2 n) { 
+    return fract(sin(dot(n, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+float noise(vec2 p) {
+    vec2 ip = floor(p);
+    vec2 fp = fract(p);
+    
+    float a = rand(ip);
+    float b = rand(ip + vec2(1.0, 0.0));
+    float c = rand(ip + vec2(0.0, 1.0));
+    float d = rand(ip + vec2(1.0, 1.0));
+    
+    vec2 u = fp * fp * (3.0 - 2.0 * fp);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float circularNoise(vec2 uv, float density, float seed) {
+    vec2 center = uv - 0.5;
+    float radius = length(center) * density;
+    float angle = abs(atan(center.y, center.x));
+
+    if (uv.y > 0.5) {
+        angle += sin(angle) * 2.;
+    }
+
+    vec2 seedOffset = vec2(seed * 100.0, seed * 100.0);
+    vec2 polarCoord = vec2(radius, angle) + seedOffset;
+    
+    float n = 0.0;
+    n += noise(polarCoord) * 0.7;
+    n += noise(polarCoord * 2.0) * 0.3;
+    n += noise(polarCoord * 4.0) * 0.1;
+    
+    return n;
+}
+
+void main() {
+    outColor = vec4(1.0);
+    float l = length(fragTexCoord - 0.5);
+
+    if (0.43 <= l && l <= 0.5) {
+        float n = circularNoise(fragTexCoord, 50.0, uSeed);
+        outColor.a *= (n < uProgress) ? 0.0 : 1.0;
+    } else {
+        outColor.a = 0.0;
+    }
+}
+)");
+        circHitEffectProg->fragConfig.textureUniformName = std::nullopt;
+        circHitEffectProg->fragConfig.colorUniformName = std::nullopt;
+
+        {
+            static std::mt19937 rng { std::random_device {} () };
+            std::uniform_real_distribution<ep_f64> rng_dist { 0.0, 1.0 };
+
+            auto mesh = glCtx->requestMesh(6);
+            mesh.program = circHitEffectProg.get();
+            mesh.color = GLvec4::White();
+
+            {
+                auto progGuard = mesh.program->use();
+                mesh.program->getUniformLocation("uSeed").setf(rng_dist(rng));
+            }
+
+            for (ep_u64 i = 0; i < circHitEffectTexsCount; i++) {
+                auto p = (ep_f64)i / (circHitEffectTexsCount - 1);
+                auto tex = glCtx->createTexture();
+                tex->use().image2D(circHitEffectTexSize, circHitEffectTexSize, nullptr);
+
+                {
+                    auto progGuard = mesh.program->use();
+                    mesh.program->getUniformLocation("uProgress").setf(p);
+                }
+
+                glCtx->renderIntoTexture(tex.get(), mesh);
+
+                tex->use().generateMipmap();
+                circHitEffectTexs.push_back(tex);
+            }
         }
     }
 };
