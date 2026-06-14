@@ -3025,6 +3025,7 @@ namespace GL {
 
         GLvec2 position;
         GLvec2 texCoord;
+        GLvec4 color;
     };
 
     struct BufferInfo;
@@ -3087,7 +3088,18 @@ namespace GL {
 
             Vertex* next() noexcept {
                 ep_assert(offset < count, "VertexPool::AllocResult::next() called after end of allocation");
-                return vertices + (offset++);
+                return &vertices[offset++];
+            }
+
+            void transformBack(const Transform2D& tf, ep_u64 count) noexcept {
+                count = std::min<ep_u64>(count, offset);
+
+                for (ep_u64 i = 0; i < count; i++) {
+                    auto index = offset - 1 - i;
+                    auto& vert = vertices[index];
+                    auto newPosition = tf.transformPoint(vert.position.x, vert.position.y);
+                    vert.position = { newPosition.x, newPosition.y };
+                }
             }
 
             void reset() noexcept {
@@ -3148,32 +3160,32 @@ namespace GL {
         TextureInfo* texture;
         ProgramInfo* program;
 
-        void addRect(const GLvec2& position, const GLvec2& size, const GLvec2& uvPosition, const GLvec2& uvSize) noexcept {
+        void addRect(const GLvec2& position, const GLvec2& size, const GLvec2& uvPosition, const GLvec2& uvSize, const GLvec4& color = GLvec4::White()) noexcept {
             if (size.x <= 0 || size.y <= 0) return;
 
-            *vertices.next() = { position, uvPosition };
-            *vertices.next() = { position + GLvec2 { size.x, 0 }, uvPosition + GLvec2 { uvSize.x, 0 } };
-            *vertices.next() = { position + size, uvPosition + uvSize };
+            *vertices.next() = { position, uvPosition, color };
+            *vertices.next() = { position + GLvec2 { size.x, 0 }, uvPosition + GLvec2 { uvSize.x, 0 }, color };
+            *vertices.next() = { position + size, uvPosition + uvSize, color };
 
-            *vertices.next() = { position, uvPosition };
-            *vertices.next() = { position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y } };
-            *vertices.next() = { position + size, uvPosition + uvSize };
+            *vertices.next() = { position, uvPosition, color };
+            *vertices.next() = { position + GLvec2 { 0, size.y }, uvPosition + GLvec2 { 0, uvSize.y }, color };
+            *vertices.next() = { position + size, uvPosition + uvSize, color };
         }
 
-        void addFullRect() noexcept {
+        void addFullRect(const GLvec4& color = GLvec4::White()) noexcept {
             /* !docs
             Adds a full-screen rectangle to the mesh.
             */
 
-            addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 });
+            addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 }, color);
         }
 
-        void addRectCentered(const GLvec2& center, const GLvec2& radius, const GLvec2& uvCenter, const GLvec2& uvRadius) noexcept {
+        void addRectCentered(const GLvec2& center, const GLvec2& radius, const GLvec2& uvCenter, const GLvec2& uvRadius, const GLvec4& color = GLvec4::White()) noexcept {
             /* !docs
             Adds a rectangle to the mesh, centered at the given position.
             */
             
-            addRect(center - radius, radius * 2, uvCenter - uvRadius, uvRadius * 2);
+            addRect(center - radius, radius * 2, uvCenter - uvRadius, uvRadius * 2, color);
         }
 
         static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) noexcept {
@@ -3192,9 +3204,9 @@ namespace GL {
             ep_assert(uvs.size() >= points.size(), "Not enough UVs for polygon");
 
             for (ep_i64 i = 0; i < (ep_i64)points.size() - 2; i++) {
-                *vertices.next() = { points[0], uvs[0] };
-                *vertices.next() = { points[i + 1], uvs[i + 1] };
-                *vertices.next() = { points[i + 2], uvs[i + 2] };
+                *vertices.next() = { points[0], uvs[0], GLvec4::White() };
+                *vertices.next() = { points[i + 1], uvs[i + 1], GLvec4::White() };
+                *vertices.next() = { points[i + 2], uvs[i + 2], GLvec4::White() };
             }
         }
     };
@@ -4092,12 +4104,15 @@ namespace GL {
 
 in vec2 inPosition;
 in vec2 inTexCoord;
+in vec4 inColor;
 
 out vec2 fragTexCoord;
+out vec4 vColor;
 
 void main() {
     gl_Position = vec4(inPosition, 0.0, 1.0);
     fragTexCoord = inTexCoord;
+    vColor = inColor;
 }
 )";
 
@@ -4106,6 +4121,7 @@ void main() {
 
 attribute vec2 inPosition;
 attribute vec2 inTexCoord;
+attribute vec4 inColor;
 
 varying vec2 uv;
 
@@ -4119,6 +4135,7 @@ void main() {
 #version 330 core
 
 in vec2 fragTexCoord;
+in vec4 vColor;
 
 uniform vec4 uColor;
 uniform sampler2D uTexture;
@@ -4126,7 +4143,7 @@ uniform sampler2D uTexture;
 out vec4 outColor;
 
 void main() {
-    outColor = uColor * texture(uTexture, fragTexCoord);
+    outColor = vColor * uColor * texture(uTexture, fragTexCoord);
 }
 )";
 
@@ -4297,10 +4314,13 @@ void main() {
                 auto vboGuard = vbo->use();
                 auto inPosition = prog->getAttribLocationPosition("inPosition");
                 auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
+                auto inColor = prog->getAttribLocationPosition("inColor");
                 vaoGuard.enable(inPosition);
                 vaoGuard.enable(inTexCoord);
+                vaoGuard.enable(inColor);
                 vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
                 vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
+                vaoGuard.pointer(inColor, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, color));
             });
 
             prog->bufferFiller = [](ProgramInfo* prog, const VertexLayout& vertexLayout, VertexPool::AllocResult& vertices) {
@@ -4322,18 +4342,16 @@ void main() {
             */
 
             static ep_sp<ProgramInfo> gaussianBlur(GL33Context* glCtx) {
-                return glCtx->createConfiguredProgram(R"(
+                auto prog = glCtx->createConfiguredProgram(R"(
 #version 330 core
 
 in vec2 fragTexCoord;
 
-uniform vec4 uColor;
 uniform sampler2D uTexture;
 
 uniform vec2 uDelta; // (0, 1) or (1, 0)
 uniform float uRadius; // 0.0 - 1.0
 uniform int uIterations;
-uniform bool uUseColor;
 
 out vec4 outColor;
 
@@ -4358,12 +4376,10 @@ void main() {
 
     outColor = sum / wsum;
     outColor.a = 1.0;
-
-    if (uUseColor) {
-        outColor *= uColor;
-    }
 }
 )");
+                prog->fragConfig.colorUniformName = std::nullopt;
+                return prog;
             }
 
             static ep_sp<ProgramInfo> yuvConverter(GL33Context* glCtx) {
@@ -4457,6 +4473,7 @@ void main() {
 #version 330 core
 
 in vec2 fragTexCoord;
+in vec4 vColor;
 
 uniform vec4 uColor;
 uniform sampler2D uTexture;
@@ -4464,7 +4481,7 @@ uniform sampler2D uTexture;
 out vec4 outColor;
 
 void main() {
-    outColor = uColor * texture(uTexture, fragTexCoord);
+    outColor = vColor * uColor * texture(uTexture, fragTexCoord);
 
     float dist = length(fragTexCoord - vec2(0.5));
     float edgeWidth = fwidth(dist);
@@ -4601,19 +4618,16 @@ void main() {
 
             auto mesh = requestMesh(6);
             mesh.program = preloadedPrograms.gaussianBlur.get();
-            mesh.color = GLvec4::White();
 
             auto progGuard = mesh.program->use();
             mesh.program->getUniformLocation("uIterations").seti(std::ceil(radius / (1.0 + 0.15 * std::log2(radius + 1))));
 
             mesh.program->getUniformLocation("uDelta").setv2({ 0.0, 1.0 });
             mesh.program->getUniformLocation("uRadius").setf(radius / texture->height);
-            mesh.program->getUniformLocation("uUseColor").seti(false);
             renderIntoTexture(texture, mesh);
 
             mesh.program->getUniformLocation("uDelta").setv2({ 1.0, 0.0 });
             mesh.program->getUniformLocation("uRadius").setf(radius / texture->width);
-            mesh.program->getUniformLocation("uUseColor").seti(true);
             renderIntoTexture(texture, mesh);
         }
 
@@ -5077,24 +5091,6 @@ void main() {
             mesh.color = config.color;
             mesh.texture = config.texture;
             mesh.addRect(config.position, config.size, config.uvPosition, config.uvSize);
-            drawMesh(mesh);
-        }
-
-        struct DrawCircleConfig {
-            GLvec2 center;
-            GLvec2 radius = { 0.5, 0.5 };
-            GLvec4 color = { 1.0, 1.0, 1.0, 1.0 };
-            GLvec2 uvCenter = { 0.5, 0.5 };
-            GLvec2 uvRadius = { 0.5, 0.5 };
-            TextureInfo* texture;
-        };
-
-        void drawCircle(const DrawCircleConfig& config) noexcept {
-            auto mesh = glCtx->requestMesh(6);
-            mesh.program = glCtx->preloadedPrograms.circle.get();
-            mesh.color = config.color;
-            mesh.texture = config.texture;
-            mesh.addRectCentered(config.center, config.radius, config.uvCenter, config.uvRadius);
             drawMesh(mesh);
         }
 
@@ -5648,12 +5644,6 @@ namespace SharedCalculatedObjects {
         }
     };
 
-    struct CalculatedCircle {
-        Vec2 position, radius;
-        ep_f64 rotation;
-        Color color;
-    };
-
     template <typename T>
     bool sharedCulling(std::vector<T>& objects, const Rect& screenRect) noexcept {
         auto& obj = objects.back();
@@ -5671,13 +5661,6 @@ namespace SharedCalculatedObjects {
             if (!quadStrictlyIntersectRect((Vec2[4]) {
                 poly.p1, poly.p2, poly.p3, poly.p4
             }, screenRect)) objects.pop_back();
-        } else if (std::holds_alternative<CalculatedCircle>(obj)) {
-            auto& circle = std::get<CalculatedCircle>(obj);
-            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
-                .position = circle.position,
-                .size = circle.radius * 2,
-                .rotation = circle.rotation
-            }).data(), screenRect)) objects.pop_back();
         } else return false;
 
         return true;
@@ -5861,17 +5844,6 @@ namespace TakeOvererComponents {
             mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
             mesh.color = poly.color;
             cvs.drawMesh(mesh);
-        } else if (std::holds_alternative<CalculatedCircle>(obj)) {
-            auto& cir = std::get<CalculatedCircle>(obj);
-
-            cvs.save();
-            cvs.translate(cir.position);
-            cvs.rotateDegrees(cir.rotation);
-            cvs.drawCircle({
-                .radius = cir.radius,
-                .color = cir.color
-            });
-            cvs.restore();
         } else return false;
 
         return true;
@@ -8835,7 +8807,6 @@ struct PhiCalculatedFrame {
     using CalculatedText = SharedCalculatedObjects::CalculatedText;
     using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
     using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
-    using CalculatedCircle = SharedCalculatedObjects::CalculatedCircle;
 
     struct CalculatedNote {
         Vec2 position;
@@ -8868,7 +8839,6 @@ struct PhiCalculatedFrame {
         CalculatedText,
         CalculatedRect,
         CalculatedPoly,
-        CalculatedCircle,
 
         CalculatedNote,
         CalculatedStoryboardTexture,
@@ -11130,7 +11100,6 @@ struct MilCalculatedFrame {
     using CalculatedText = SharedCalculatedObjects::CalculatedText;
     using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
     using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
-    using CalculatedCircle = SharedCalculatedObjects::CalculatedCircle;
 
     struct CalculatedLineHead {
         Vec2 position, scale;
@@ -11154,6 +11123,16 @@ struct MilCalculatedFrame {
         Color color;
     };
 
+    struct CalculatedParticles {
+        struct Item {
+            Vec2 position, radius;
+            ep_f64 rotation;
+            Color color;
+        };
+
+        std::vector<Item> items;
+    };
+
     struct CalculatedHitEffectTexture {
         Vec2 position, size;
         ep_f64 progress, rotation;
@@ -11164,11 +11143,11 @@ struct MilCalculatedFrame {
         CalculatedText,
         CalculatedRect,
         CalculatedPoly,
-        CalculatedCircle,
 
         CalculatedLineHead,
         CalculatedNote,
         CalculatedPauseButton,
+        CalculatedParticles,
         CalculatedHitEffectTexture
     >;
 
@@ -11207,7 +11186,7 @@ struct MilCalculatedFrame {
     struct Cache {
         std::vector<CalculatedObject> trackObjects, hitEffectCircs;
         std::unordered_map<EnumMilFinalNoteType, std::vector<CalculatedObject>> noteObjects;
-        std::vector<CalculatedObject> hitEffectParticles;
+        std::vector<CalculatedParticles::Item> hitEffectParticles;
 
         void clear() {
             trackObjects.clear();
@@ -11498,12 +11477,17 @@ void calculateMilFrame(
 
             rotate += (rotate - (particlePos - info.headPosition).atanDegrees()) * 2;
 
-            frame.addObject(frame.cache.hitEffectParticles, MilCalculatedFrame::CalculatedCircle {
-                .position = particlePos,
-                .radius = particle.getScale(progress) * size * info.scale.max(),
-                .rotation = rotate,
-                .color = color
-            }, screenArea);
+            auto& item = frame.cache.hitEffectParticles.emplace_back();
+            item.position = particlePos;
+            item.radius = particle.getScale(progress) * size * info.scale.max();
+            item.rotation = rotate;
+            item.color = color;
+
+            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                .position = item.position,
+                .size = item.radius * 2.0,
+                .rotation = item.rotation
+            }).data(), screenArea)) frame.cache.hitEffectParticles.pop_back();
         }
     }
 
@@ -11520,7 +11504,10 @@ void calculateMilFrame(
         frame.objects.insert(frame.objects.end(), objs.begin(), objs.end());
     }
 
-    frame.objects.insert(frame.objects.end(), frame.cache.hitEffectParticles.begin(), frame.cache.hitEffectParticles.end());
+    frame.objects.push_back(MilCalculatedFrame::CalculatedParticles {
+        .items = frame.cache.hitEffectParticles
+    });
+
     calculateStoryboards(EnumMilStoryboardLayer::Foreground);
 
     auto combo = chart.getCombo(time);
@@ -11849,6 +11836,22 @@ struct MilTakeOverer {
                     .texture = pauseButtonTex.get()
                 });
                 cvs.restore();
+            } else if (std::holds_alternative<MilCalculatedFrame::CalculatedParticles>(obj)) {
+                auto& particles = std::get<MilCalculatedFrame::CalculatedParticles>(obj);
+
+                auto mesh = glCtx->requestMesh(6 * particles.items.size());
+                mesh.program = glCtx->preloadedPrograms.circle.get();
+                mesh.color = GLvec4::White();
+
+                for (auto& it : particles.items) {
+                    Transform2D transform;
+                    transform.translate(it.position);
+                    transform.rotateDegrees(it.rotation);
+                    mesh.addRectCentered({}, it.radius, { 0.5, 0.5 }, { 0.5, 0.5 }, it.color);
+                    mesh.vertices.transformBack(transform, 6);
+                }
+
+                cvs.drawMesh(mesh);
             } else if (std::holds_alternative<MilCalculatedFrame::CalculatedHitEffectTexture>(obj)) {
                 auto& effect = std::get<MilCalculatedFrame::CalculatedHitEffectTexture>(obj);
                 auto& img = circHitEffectTexs[std::clamp<ep_u64>(effect.progress * circHitEffectTexs.size(), 0, circHitEffectTexs.size() - 1)];
