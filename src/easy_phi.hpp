@@ -10618,10 +10618,11 @@ struct MilChart {
         initPlayemntInfo();
     }
 
-    Vec2 getLinePosition(ep_f64 t, MilLine& line, const Vec2& screenSize) {
+    template <typename T>
+    Vec2 getObjectPosition(ep_f64 t, T& obj, const Vec2& screenSize) {
         Vec2 pos = {
-            animator.get(line, t, EnumMilEventType::PositionX) + animator.get(line, t, EnumMilEventType::RelativeX),
-            animator.get(line, t, EnumMilEventType::PositionY) + animator.get(line, t, EnumMilEventType::RelativeY)
+            animator.get(obj, t, EnumMilEventType::PositionX) + animator.get(obj, t, EnumMilEventType::RelativeX),
+            animator.get(obj, t, EnumMilEventType::PositionY) + animator.get(obj, t, EnumMilEventType::RelativeY)
         };
 
         return (pos - meta.worldOrigin) / meta.worldViewport * screenSize;
@@ -10645,7 +10646,7 @@ struct MilChart {
     ) noexcept {
         NoteFrameInfo info {};
 
-        auto linePosition = getLinePosition(time, line, screenSize);
+        auto linePosition = getObjectPosition(time, line, screenSize);
         auto lineRotation = animator.get(line, time, EnumMilEventType::Rotation);
         auto lineFlowSpeed = animator.get(line, time, EnumMilEventType::FlowSpeed);
         auto lineSize = animator.get(line, time, EnumMilEventType::Size);
@@ -11172,7 +11173,6 @@ struct MilCalculatedFrame {
     >;
 
     Rect backgroundRect;
-    ep_f64 backgroundDim;
     Rect progressbarRect;
     std::vector<CalculatedObject> objects;
     std::vector<EnumMilNoteType> hitsounds;
@@ -11236,7 +11236,6 @@ void calculateMilFrame(
         { 0.0, 0.0, config.screenSize.x, config.screenSize.y },
         config.backgroundTextureSize, true
     );
-    frame.backgroundDim = chart.options.backgroundDim;
 
     Rect screenArea = { 0.0, 0.0, config.screenSize.x, config.screenSize.y };
 
@@ -11302,8 +11301,48 @@ void calculateMilFrame(
 
     chart.state.timeUpdated(time);
 
+    auto calculateStoryboards = [&](EnumMilStoryboardLayer targetLayer) {
+        for (auto& sb : chart.storyboardObjects) {
+            if (sb.layer != targetLayer) continue;
+
+            if (sb.type == EnumMilStoryboardType::Picture) {
+
+            } else if (sb.type == EnumMilStoryboardType::Text) {
+                auto sbPosition = chart.getObjectPosition(time, sb, config.screenSize);
+                auto sbAlpha = chart.animator.get(sb, time, EnumMilEventType::Transparency);
+                auto sbSize = chart.animator.get(sb, time, EnumMilEventType::Size);
+                auto sbRotation = chart.animator.get(sb, time, EnumMilEventType::Rotation);
+                auto sbWidth = chart.animator.get(sb, time, EnumMilEventType::StoryBoardWidth);
+                auto sbHeight = chart.animator.get(sb, time, EnumMilEventType::StoryBoardHeight);
+                auto sbColorIndex = chart.animator.get(sb, time, EnumMilEventType::Color);
+                auto sbColorIndexZone = chart.animator.get_zone(sb, time, EnumMilEventType::Color);
+                auto sbColor = chart.storyboardAssets.getColor(sbColorIndex, sbColorIndexZone);
+
+                if (sbColor.a * sbAlpha > 0.0) {
+                    frame.objects.push_back(MilCalculatedFrame::CalculatedText {
+                        .text = sb.data,
+                        .position = sbPosition,
+                        .scale = { sbWidth, sbHeight },
+                        .anchor = { 0.5, 0.5 },
+                        .fontSize = config.screenSize.sum() * 0.025 * sbSize,
+                        .rotation = -sbRotation,
+                        .color = sbColor.applyAlpha(sbAlpha),
+                    });
+                }
+            }
+        }
+    };
+
+    calculateStoryboards(EnumMilStoryboardLayer::Background);
+
+    frame.objects.push_back(MilCalculatedFrame::CalculatedRect {
+        .position = config.screenSize / 2.0,
+        .size = config.screenSize,
+        .color = Color::Black().applyAlpha(chart.options.backgroundDim)
+    });
+
     for (auto& line : chart.lines) {
-        auto linePosition = chart.getLinePosition(time, line, config.screenSize);
+        auto linePosition = chart.getObjectPosition(time, line, config.screenSize);
         auto lineRotation = chart.animator.get(line, time, EnumMilEventType::Rotation);
         auto lineAlpha = chart.animator.get(line, time, EnumMilEventType::Transparency);
         auto lineHeadAlpha = chart.animator.get(line, time, EnumMilEventType::LineHeadTransparency);
@@ -11468,6 +11507,7 @@ void calculateMilFrame(
         }
     }
 
+    calculateStoryboards(EnumMilStoryboardLayer::Normal);
     frame.objects.insert(frame.objects.end(), frame.cache.trackObjects.begin(), frame.cache.trackObjects.end());
     frame.objects.insert(frame.objects.end(), frame.cache.hitEffectCircs.begin(), frame.cache.hitEffectCircs.end());
 
@@ -11481,6 +11521,7 @@ void calculateMilFrame(
     }
 
     frame.objects.insert(frame.objects.end(), frame.cache.hitEffectParticles.begin(), frame.cache.hitEffectParticles.end());
+    calculateStoryboards(EnumMilStoryboardLayer::Foreground);
 
     auto combo = chart.getCombo(time);
 
@@ -11733,7 +11774,6 @@ struct MilTakeOverer {
         cvs.drawRect({
             .position = { calculatedFrame.backgroundRect.x, calculatedFrame.backgroundRect.y },
             .size = { calculatedFrame.backgroundRect.w, calculatedFrame.backgroundRect.h },
-            .color = GLvec4::Gray(1.0 - calculatedFrame.backgroundDim),
             .texture = sharedComp.illustionTexture.get()
         });
 
