@@ -4673,6 +4673,7 @@ void main() {
 
             drawCallsCount = 0;
             frameSig++;
+            vertexPool->reset();
         }
 
         Mesh requestMesh(ep_u64 verticesCount) noexcept {
