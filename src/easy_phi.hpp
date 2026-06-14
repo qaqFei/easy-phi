@@ -2061,6 +2061,26 @@ Rect getCoveredOrContainRect(const Rect& dst, const Vec2& size, bool isCovered) 
     return Rect::MakeCenter(dst.x + dst.w / 2, dst.y + dst.h / 2, w, h);
 }
 
+struct RectInfo {
+    Vec2 position, size;
+    ep_f64 rotation;
+    Vec2 anchor = { 0.5, 0.5 };
+};
+
+std::array<Vec2, 4> makeQuadFromRectInfo(const RectInfo& info) {
+    auto r = info.rotation / 180.0 * std::numbers::pi;
+    auto s = std::sin(r), c = std::cos(r);
+    auto h = info.size / 2.0;
+    auto b = info.position - info.size * (info.anchor - 0.5);
+
+    return std::array<Vec2, 4> {
+        b + Vec2 { h.x * c - h.y * s, h.x * s + h.y * c },
+        b + Vec2 { h.x * c - -h.y * s, h.x * s - h.y * c },
+        b + Vec2 { -h.x * c + h.y * s, -h.x * s - h.y * c },
+        b + Vec2 { -h.x * c - h.y * s, -h.x * s + h.y * c }
+    };
+}
+
 struct EaseSet {
     /* !docs
     A set of easing functions.
@@ -5633,6 +5653,35 @@ namespace SharedCalculatedObjects {
         ep_f64 rotation;
         Color color;
     };
+
+    template <typename T>
+    bool sharedCulling(std::vector<T>& objects, const Rect& screenRect) noexcept {
+        auto& obj = objects.back();
+
+        if (std::holds_alternative<CalculatedText>(obj)) { }
+        else if (std::holds_alternative<CalculatedRect>(obj)) {
+            auto& rect = std::get<CalculatedRect>(obj);
+            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                .position = rect.position,
+                .size = rect.size,
+                .rotation = rect.rotation
+            }).data(), screenRect)) objects.pop_back();
+        } else if (std::holds_alternative<CalculatedPoly>(obj)) {
+            auto& poly = std::get<CalculatedPoly>(obj);
+            if (!quadStrictlyIntersectRect((Vec2[4]) {
+                poly.p1, poly.p2, poly.p3, poly.p4
+            }, screenRect)) objects.pop_back();
+        } else if (std::holds_alternative<CalculatedCircle>(obj)) {
+            auto& circle = std::get<CalculatedCircle>(obj);
+            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                .position = circle.position,
+                .size = circle.radius * 2,
+                .rotation = circle.rotation
+            }).data(), screenRect)) objects.pop_back();
+        } else return false;
+
+        return true;
+    }
 };
 
 namespace TakeOvererComponents {
@@ -5776,10 +5825,11 @@ namespace TakeOvererComponents {
         GL::GL33Canvas& cvs,
         GL::TextManager& textManager
     ) {
+        using namespace SharedCalculatedObjects;
         using namespace GL;
 
-        if (std::holds_alternative<SharedCalculatedObjects::CalculatedText>(obj)) {
-            auto& text = std::get<SharedCalculatedObjects::CalculatedText>(obj);
+        if (std::holds_alternative<CalculatedText>(obj)) {
+            auto& text = std::get<CalculatedText>(obj);
 
             TextManager::DrawTextConfig config {
                 .text = text.text,
@@ -5792,8 +5842,8 @@ namespace TakeOvererComponents {
             };
 
             textManager.drawText(cvs, config);
-        } else if (std::holds_alternative<SharedCalculatedObjects::CalculatedRect>(obj)) {
-            auto& rect = std::get<SharedCalculatedObjects::CalculatedRect>(obj);
+        } else if (std::holds_alternative<CalculatedRect>(obj)) {
+            auto& rect = std::get<CalculatedRect>(obj);
 
             cvs.save();
             cvs.translate(rect.position);
@@ -5804,15 +5854,15 @@ namespace TakeOvererComponents {
                 .color = rect.color
             });
             cvs.restore();
-        } else if (std::holds_alternative<SharedCalculatedObjects::CalculatedPoly>(obj)) {
-            auto& poly = std::get<SharedCalculatedObjects::CalculatedPoly>(obj);
+        } else if (std::holds_alternative<CalculatedPoly>(obj)) {
+            auto& poly = std::get<CalculatedPoly>(obj);
 
             auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
             mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
             mesh.color = poly.color;
             cvs.drawMesh(mesh);
-        } else if (std::holds_alternative<SharedCalculatedObjects::CalculatedCircle>(obj)) {
-            auto& cir = std::get<SharedCalculatedObjects::CalculatedCircle>(obj);
+        } else if (std::holds_alternative<CalculatedCircle>(obj)) {
+            auto& cir = std::get<CalculatedCircle>(obj);
 
             cvs.save();
             cvs.translate(cir.position);
@@ -8833,6 +8883,34 @@ struct PhiCalculatedFrame {
     std::vector<CalculatedObject> objects;
     std::vector<EnumPhiNoteType> hitsounds;
 
+    void culling(std::vector<CalculatedObject>& objects, const Rect& screenRect) noexcept {
+        if (SharedCalculatedObjects::sharedCulling(objects, screenRect)) return;
+
+        auto& obj = objects.back();
+
+        if (std::holds_alternative<CalculatedStoryboardTexture>(obj)) {
+            auto& tex = std::get<CalculatedStoryboardTexture>(obj);
+            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                .position = tex.position,
+                .size = tex.size * tex.scale,
+                .rotation = tex.rotation,
+                .anchor = tex.anchor
+            }).data(), screenRect)) objects.pop_back();
+        } else if (std::holds_alternative<CalculatedHitEffectTexture>(obj)) {
+            auto& tex = std::get<CalculatedHitEffectTexture>(obj);
+            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                .position = tex.position,
+                .size = tex.size,
+                .rotation = tex.rotation
+            }).data(), screenRect)) objects.pop_back();
+        }
+    }
+
+    void addObject(std::vector<CalculatedObject>& objects, const CalculatedObject& obj, const Rect& screenRect) noexcept {
+        objects.push_back(obj);
+        culling(objects, screenRect);
+    }
+
     struct Cache {
         struct AttachUIData {
             /* !docs
@@ -9026,7 +9104,7 @@ void calculatePhiFrame(
                         textureWidth *= chart.options.storyboardTextureScaling.x;
                         textureHeight *= chart.options.storyboardTextureScaling.y;
 
-                        frame.objects.push_back(PhiCalculatedFrame::CalculatedStoryboardTexture {
+                        frame.addObject(frame.objects, PhiCalculatedFrame::CalculatedStoryboardTexture {
                             .texture = texture.first,
                             .position = lineScreenPosition,
                             .size = Vec2 { textureWidth, textureHeight },
@@ -9034,17 +9112,17 @@ void calculatePhiFrame(
                             .anchor = line.anchor,
                             .rotation = lineRotation,
                             .color = lineColor.applyAlpha(lineAlpha)
-                        });
+                        }, safeArea);
                     }
                 } else {
-                    frame.objects.push_back(PhiCalculatedFrame::CalculatedPoly::Make(
+                    frame.addObject(frame.objects, PhiCalculatedFrame::CalculatedPoly::Make(
                         Vec2 { -lineWidth, -lineHeight } * line.anchor * lineScale,
                         Vec2 { lineWidth, lineHeight } * lineScale,
                         lineColor.applyAlpha(lineAlpha),
                         Transform2D()
                             .translate(lineScreenPosition)
                             .rotateDegrees(lineRotation)
-                    ));
+                    ), safeArea);
                 }
             }
         }
@@ -9155,13 +9233,13 @@ void calculatePhiFrame(
         auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
 
         if (progress <= 1.0) {
-            frame.objects.push_back(PhiCalculatedFrame::CalculatedHitEffectTexture {
+            frame.addObject(frame.objects, PhiCalculatedFrame::CalculatedHitEffectTexture {
                 .position = effectScreenPosition,
                 .size = { hitEffectTextureSize, hitEffectTextureSize },
                 .progress = progress,
                 .rotation = 0.0,
                 .color = chart.options.lineDefaultColor.applyAlpha(chart.options.hitEffectAlpha)
-            });
+            }, safeArea);
         }
 
         for (auto& particle : hitEffect.particles) {
@@ -9176,12 +9254,12 @@ void calculatePhiFrame(
             auto distance = standardNoteWidth / 180 * chart.options.hitEffectParticleDistance * particle.size * (((850.3997391752 * progress + 6236.3848902154) * progress + 80.3542231806) * progress / ((6570.5817658876 * progress + 495.7977913926) * progress + 1.0));
 
             auto particlePosition = toScreen(info.headPosition.rotateDegrees(particle.rotation, distance));
-            frame.objects.push_back(PhiCalculatedFrame::CalculatedRect {
+            frame.addObject(frame.objects, PhiCalculatedFrame::CalculatedRect {
                 .position = particlePosition,
                 .size = { size, size },
                 .rotation = 0.0,
                 .color = chart.options.lineDefaultColor.applyAlpha(chart.options.hitEffectAlpha * (1.0 - progress))
-            });
+            }, safeArea);
         }
     }
 
@@ -11099,6 +11177,33 @@ struct MilCalculatedFrame {
     std::vector<CalculatedObject> objects;
     std::vector<EnumMilNoteType> hitsounds;
 
+    void culling(std::vector<CalculatedObject>& objects, const Rect& screenRect) noexcept {
+        if (SharedCalculatedObjects::sharedCulling(objects, screenRect)) return;
+
+        auto& obj = objects.back();
+
+        if (std::holds_alternative<CalculatedLineHead>(obj)) {
+            auto& head = std::get<CalculatedLineHead>(obj);
+            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                .position = head.position,
+                .size = head.scale * head.size,
+                .rotation = head.rotation
+            }).data(), screenRect)) objects.pop_back();
+        } else if (std::holds_alternative<CalculatedHitEffectTexture>(obj)) {
+            auto& effect = std::get<CalculatedHitEffectTexture>(obj);
+            if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                .position = effect.position,
+                .size = effect.size,
+                .rotation = effect.rotation
+            }).data(), screenRect)) objects.pop_back();
+        }
+    }
+
+    void addObject(std::vector<CalculatedObject>& objects, const CalculatedObject& obj, const Rect& screenRect) noexcept {
+        objects.push_back(obj);
+        culling(objects, screenRect);
+    }
+
     struct Cache {
         std::vector<CalculatedObject> trackObjects, hitEffectCircs;
         std::unordered_map<EnumMilFinalNoteType, std::vector<CalculatedObject>> noteObjects;
@@ -11212,19 +11317,19 @@ void calculateMilFrame(
         lineBodyAlpha *= lineAlpha;
 
         if (lineHeadAlpha > 0.0) {
-            frame.cache.trackObjects.push_back(MilCalculatedFrame::CalculatedLineHead {
+            frame.addObject(frame.cache.trackObjects, MilCalculatedFrame::CalculatedLineHead {
                 .position = linePosition,
                 .scale = { lineSize, lineSize },
                 .size = lineHeadBase * config.lineHeadScale,
                 .rotation = 180 - lineRotation,
                 .color = lineColor.applyAlpha(lineHeadAlpha)
-            });
+            }, screenArea);
         }
 
         if (lineBodyAlpha > 0.0) {
             auto connectRadius = config.lineHeadConnectPoint * lineHeadBase * config.lineHeadScale;
             auto lineWidth = lineHeadBase * 0.096774;
-            frame.cache.trackObjects.push_back(MilCalculatedFrame::CalculatedPoly::Make(
+            frame.addObject(frame.cache.trackObjects, MilCalculatedFrame::CalculatedPoly::Make(
                 { connectRadius, -lineWidth / 2 },
                 { config.screenSize.y * 2.5, lineWidth },
                 lineColor.applyAlpha(lineBodyAlpha),
@@ -11232,7 +11337,7 @@ void calculateMilFrame(
                     .translate(linePosition)
                     .rotateDegrees(-lineRotation)
                     .scale(lineSize)
-            ));
+            ), screenArea);
         }
 
         for (auto& noteGroup : line.noteGroups) {
@@ -11328,13 +11433,13 @@ void calculateMilFrame(
         auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
 
         if (progress <= 1.0) {
-            frame.cache.hitEffectCircs.push_back(MilCalculatedFrame::CalculatedHitEffectTexture {
+            frame.addObject(frame.cache.hitEffectCircs, MilCalculatedFrame::CalculatedHitEffectTexture {
                 .position = info.headPosition,
                 .size = Vec2(lineHeadBase * 4.632 * (1.0 - std::pow(1.0 - progress, 3.0))) * info.scale.max(),
                 .progress = progress,
                 .rotation = hitEffect.texRotation,
                 .color = Color { 150, 144, 253, 255 } / 255
-            });
+            }, screenArea);
         }
 
         for (auto& particle : hitEffect.particles) {
@@ -11354,12 +11459,12 @@ void calculateMilFrame(
 
             rotate += (rotate - (particlePos - info.headPosition).atanDegrees()) * 2;
 
-            frame.cache.hitEffectParticles.push_back(MilCalculatedFrame::CalculatedCircle {
+            frame.addObject(frame.cache.hitEffectParticles, MilCalculatedFrame::CalculatedCircle {
                 .position = particlePos,
                 .radius = particle.getScale(progress) * size * info.scale.max(),
                 .rotation = rotate,
                 .color = color
-            });
+            }, screenArea);
         }
     }
 

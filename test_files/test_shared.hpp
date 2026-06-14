@@ -42,10 +42,7 @@ struct VideoCap {
     int aFramePts = 0;
     bool wroteAudio = false;
 
-    VideoCap(
-        const char* path,
-        int width, int height, double fps
-    ) {
+    VideoCap(const char* path, int width, int height, double fps) {
         this->path = path;
         this->width = width; this->height = height; this->fps = fps;
 
@@ -149,10 +146,7 @@ struct VideoCap {
         return true;
     }
 
-    bool writeVideoFrame(
-        void* y, void* u, void* v,
-        uint64_t lsy, uint64_t lsu, uint64_t lsv
-    ) {
+    bool writeVideoFrame(void* y, void* u, void* v, uint64_t lsy, uint64_t lsu, uint64_t lsv) {
         writtenVideoFrameCount++;
 
         vSwFrame->pts = vFrameIdx++;
@@ -505,12 +499,12 @@ struct WindowBase {
         bool isRenderingVideo;
     };
 
-    template <typename TakeOverer, typename RenderConfig, typename RenderResultInfo>
+    template <typename TakeOverer>
     bool mainloopFrame(
         const MainloopConfigBase& config,
         const TakeOverer& renderer,
-        std::function<RenderConfig(const RenderConfig&)> renderConfigurer = [](auto c) { return c; },
-        std::function<void(RenderResultInfo&)> callback = [](auto i) {}
+        std::function<typename TakeOverer::element_type::RenderConfig(const typename TakeOverer::element_type::RenderConfig&)> renderConfigurer = [](auto c) { return c; },
+        std::function<void(typename TakeOverer::element_type::RenderResultInfo&)> callback = [](auto i) {}
     ) {
         auto frameSt = globalTimer();
 
@@ -522,7 +516,7 @@ struct WindowBase {
 
         renderer->calcConfig.screenSize = { (double)width, (double)height };
         
-        RenderResultInfo& resultInfo = renderer->render(renderConfigurer({
+        auto& resultInfo = renderer->render(renderConfigurer({
             .base = {
                 .time = config.time,
                 .disableHitsound = config.isRenderingVideo
@@ -682,11 +676,7 @@ struct PhiWindow {
     };
 
     bool mainloopFrame(const MainloopConfig& config) {
-        return base.mainloopFrame<
-            decltype(renderer),
-            decltype(renderer)::element_type::RenderConfig,
-            decltype(renderer)::element_type::RenderResultInfo
-        >(
+        return base.mainloopFrame<decltype(renderer)>(
             config.base,
             renderer,
             [](auto c) { return c; },
@@ -747,15 +737,9 @@ struct MilWindow {
     };
     
     bool mainloopFrame(const MainloopConfig& config) {
-        return base.mainloopFrame<
-            decltype(renderer),
-            decltype(renderer)::element_type::RenderConfig,
-            decltype(renderer)::element_type::RenderResultInfo
-        >(
+        return base.mainloopFrame<decltype(renderer)>(
             config.base,
-            renderer,
-            [](auto c) { return c; },
-            [](auto i) { }
+            renderer
         );
     }
 };
