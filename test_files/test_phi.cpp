@@ -110,17 +110,16 @@ int main(int argc, char** argv) {
     window.renderer->audioManager.load(audioPath);
 
     if (hasArg("--bench")) {
-        auto info = TelemetryDeckClient::Performance::BaseInfo::make().toJson();
-        info.getObject()["data"] = JsonNode::MakeArray();
+        auto data = JsonNode::MakeArray();
 
         ep_f64 t = 0.0;
         while (t < window.renderer->audioManager.getBgmLength()) {
             auto& frameInfo = window.renderer->render({ .base = { .time = t } });
-            info["data"].getArray().push_back(JsonNode::MakeNumber(frameInfo.base.calculatedTook * 1000));
+            data.getArray().push_back(JsonNode::MakeNumber(frameInfo.base.calculatedTook * 1000));
             t += 1.0 / 120.0;
         }
 
-        info.print();
+        data.print();
 
         return 0;
     }

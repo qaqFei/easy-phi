@@ -28,6 +28,8 @@
 #include <cstdlib>
 #include <list>
 #include <cassert>
+#include <condition_variable>
+#include <queue>
 
 namespace easy_phi {
 
@@ -523,6 +525,52 @@ struct ByteWriter {
     Data toData() const {
         return { .data = data };
     }
+};
+
+template <typename T>
+struct ThreadSafeQueue {
+    ~ThreadSafeQueue() {
+        shutdown();
+    }
+    
+    void enqueue(T frame) {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (done) return;
+            queue.push(std::move(frame));
+        }
+
+        cv.notify_one();
+    }
+    
+    bool wait_dequeue(T& frame) {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait(lock, [this] { return !queue.empty() || done; });
+        if (queue.empty()) return false;
+        frame = std::move(queue.front());
+        queue.pop();
+        return true;
+    }
+    
+    void shutdown() {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            done = true;
+        }
+        
+        cv.notify_all();
+    }
+    
+    size_t size_approx() const {
+        std::lock_guard<std::mutex> lock(mtx);
+        return queue.size();
+    }
+    
+private:
+    mutable std::mutex mtx;
+    std::condition_variable cv;
+    std::queue<T> queue;
+    bool done = false;
 };
 
 struct JsonNode {
@@ -1262,6 +1310,9 @@ struct YUV420Frame {
     ep_u64 rowBytesU() const { return width / 2; }
     ep_u64 rowBytesV() const { return width / 2; }
 
+    std::array<ep_u8*, 3> dataPtrs() const { return { y(), u(), v() }; }
+    std::array<ep_u64, 3> rowBytes() const { return { rowBytesY(), rowBytesU(), rowBytesV() }; }
+
     void fromPtr(void* ptr) {
         /* !docs
         Fills the frame with data from a pointer.
@@ -1761,6 +1812,28 @@ struct Timer {
     Timer() : start(globalTimer()) {}
 
     ep_f64 elapsed() const noexcept { return globalTimer() - start; }
+};
+
+struct FramerateMeter {
+    void frame() {
+        auto now = globalTimer();
+        timestamps.push_back(now);
+        auto threshold = now - windowSize;
+        while (!timestamps.empty() && timestamps.front() < threshold) {
+            timestamps.pop_front();
+        }
+    }
+
+    ep_f64 get() const {
+        if (timestamps.size() < 2) return 0.0;
+        ep_f64 delta = timestamps.back() - timestamps.front();
+        if (delta <= 0.0) return 0.0;
+        return (timestamps.size() - 1) / delta;
+    }
+
+private:
+    std::deque<ep_f64> timestamps;
+    const ep_f64 windowSize = 0.5;
 };
 
 struct Transform2D {
@@ -9463,7 +9536,7 @@ struct PhiTakeOverer {
         result->applyVolume(config.musicVol);
         
         std::mt19937 rng { std::random_device {} () };
-        std::uniform_real_distribution<double> sfxRandshakeDist { 0.0, 0.02 };
+        std::uniform_real_distribution<ep_f64> sfxRandshakeDist { 0.0, 0.02 };
 
         for (const auto& line : chart.lines) {
             for (const auto& note : line.notes) {

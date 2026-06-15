@@ -183,7 +183,6 @@ struct Settings {
     static constexpr const wchar_t* appKey = L"Open-RPE-Recorder";
     static constexpr DWORD currentVersion = 0;
 
-    bool enablePerformanceCollection = false;
     double musicVol = 1.0, sfxVol = 1.0;
     double noteScaling = 1.0;
 
@@ -204,7 +203,6 @@ struct Settings {
         }
         api.writeDword(L"version", currentVersion);
 
-        api.readBool(L"enablePerformanceCollection", enablePerformanceCollection);
         api.readDouble(L"musicVol", musicVol);
         api.readDouble(L"sfxVol", sfxVol);
         api.readDouble(L"noteScaling", noteScaling);
@@ -220,7 +218,6 @@ struct Settings {
     void saveToRegistry() {
         RegAPI api(appKey);
 
-        api.writeBool(L"enablePerformanceCollection", enablePerformanceCollection);
         api.writeDouble(L"musicVol", musicVol);
         api.writeDouble(L"sfxVol", sfxVol);
         api.writeDouble(L"noteScaling", noteScaling);
@@ -268,7 +265,6 @@ int main() {
     std::optional<easy_phi::ParsedRPEChartInfo> chartInfo;
 
     int chartFileInput, chartRootInput, bgFileInput, audioFileInput;
-    int enablePerformanceCollectionCheckBox;
     int musicVolInput, sfxVolInput;
     int noteScalingInput;
     int recordWidthInput, recordHeightInput, recordFPSInput;
@@ -394,7 +390,6 @@ int main() {
             WidgetStatics::TextInput::setText(win->refWidget(id), std::to_wstring(value));
         };
 
-        checkbox(enablePerformanceCollectionCheckBox, settings.enablePerformanceCollection);
         doubleInput(musicVolInput, settings.musicVol);
         doubleInput(sfxVolInput, settings.sfxVol);
         doubleInput(noteScalingInput, settings.noteScaling);
@@ -413,13 +408,6 @@ int main() {
     };
 
     win->registerWidget(Widgets::Label({ .text = L"设置 (通用)" }));
-    win->nextRow();
-
-    enablePerformanceCollectionCheckBox = win->registerWidget(Widgets::CheckBox({ .text = L"收集性能数据到云端", .onChange = [&](bool checked) {
-        if (isSyncingSettings) return;
-        settings.enablePerformanceCollection = checked;
-        settingsChanged();
-    } }));
     win->nextRow();
 
     win->registerWidget(Widgets::Label({ .text = L"音乐音量: " }));
@@ -526,12 +514,6 @@ int main() {
         if (!load()) return;
         WinHiddenGuard whguard(win.get());
 
-        TelemetryDeckClient::Performance::ChartPlayback::Completed performanceInfo {
-            .baseInfo = TelemetryDeckClient::Performance::BaseInfo::make(),
-            .chartHash = backendWin.renderer->chart.rawHash,
-            .loadingTook = loadingChartTook
-        };
-
         backendWin.base.setHidden(false);
         backendWin.base.setVSync(true);
         backendWin.renderer->audioManager.startBgm();
@@ -540,19 +522,12 @@ int main() {
         backendWin.renderer->audioManager.setSfxVolume(settings.sfxVol);
 
         while (!backendWin.renderer->audioManager.getBpmIsEnded()) {
-            if (!backendWin.mainloopFrame({
-                .pccfi = &performanceInfo.frames.emplace_back()
-            })) {
+            if (!backendWin.mainloopFrame({})) {
                 backendWin.renderer->audioManager.stopBgm();
                 break;
             }
         }
 
-        if (settings.enablePerformanceCollection) {
-            std::thread([=]() {
-                TelemetryDeckClient::Performance::ChartPlayback::completed(performanceInfo);
-            }).detach();
-        }
         backendWin.base.setHidden(true);
     } }));
     win->registerWidget(Widgets::Button({ .text = L"渲染视频", .onClick = [&]() {
@@ -565,7 +540,8 @@ int main() {
         pd.setLine(1, L"初始化...");
         WinHiddenGuard whguard(win.get());
 
-        VideoCap cap(videoPath.c_str(), settings.recordWidth, settings.recordHeight, settings.recordFPS);
+        VideoCap cap {};
+        cap.init(videoPath, settings.recordWidth, settings.recordHeight, settings.recordFPS);
         
         using FrameType = std::optional<uint64_t>;
         using FrameQueueType = ThreadSafeQueue<FrameType>;
@@ -594,14 +570,7 @@ int main() {
                 if (!frame.has_value()) break;
 
                 auto* yuv = videoRecorder->referYUVFrame(frame.value());
-                cap.writeVideoFrame(
-                    yuv->y(),
-                    yuv->u(),
-                    yuv->v(),
-                    yuv->rowBytesY(),
-                    yuv->rowBytesU(),
-                    yuv->rowBytesV()
-                );
+                cap.writeVideoFrame(yuv->dataPtrs().data(), yuv->rowBytes().data());
                 videoRecorder->returnYUVFrame(frame.value());
             }
         };
@@ -612,14 +581,6 @@ int main() {
         pd.setLine(1, L"加载...");
         if (!load()) return;
         
-        TelemetryDeckClient::Performance::VideoRender::Completed performanceInfo {
-            .baseInfo = TelemetryDeckClient::Performance::BaseInfo::make(),
-            .chartHash = backendWin.renderer->chart.rawHash,
-            .loadingTook = loadingChartTook,
-            .screenSize = { (double)settings.recordWidth, (double)settings.recordHeight },
-            .frameRate = settings.recordFPS,
-        };
-
         double renderSt = globalTimer();
 
         pd.setLine(1, L"渲染音频...");
@@ -629,8 +590,6 @@ int main() {
             .sfxRandshake = settings.recordSfxRandshake
         });
 
-        mixedAudio->resample(PCM_FIXED_CHANNELS, PCM_FIXED_SAMPLE_RATE);
-        
         pd.setLine(1, L"写入音频...");
         cap.writeAudio(mixedAudio);
 
@@ -641,10 +600,10 @@ int main() {
         ud.frameQueue = &frameQueue;
         std::thread frameWriterThread(frameWriter);
         uint64_t surfaceIndex = 0;
-        FPSCalc fpsCalc;
+        FramerateMeter fpsMeter {};
         
         while (true) {
-            double t = frameCut / cap.fps;
+            double t = frameCut / settings.recordFPS;
             if (t > backendWin.renderer->calcConfig.songLength) break;
 
             auto reGuard = videoRecorder->useFrame();
@@ -656,14 +615,14 @@ int main() {
             });
 
             frameCut++;
-            fpsCalc.frame();
+            fpsMeter.frame();
 
-            uint64_t totalFrames = backendWin.renderer->calcConfig.songLength * cap.fps;
+            uint64_t totalFrames = backendWin.renderer->calcConfig.songLength * settings.recordFPS;
             pd.setProgress(frameCut, totalFrames);
 
             {
                 std::wstring msg = L"渲染视频... ";
-                msg += std::to_wstring(frameCut) + L"/" + std::to_wstring(totalFrames) + L" (" + std::to_wstring((uint64_t)fpsCalc.fps) + L" fps)";
+                msg += std::to_wstring(frameCut) + L"/" + std::to_wstring(totalFrames) + L" (" + std::to_wstring((uint64_t)fpsMeter.get()) + L" fps)";
                 pd.setLine(1, msg.c_str());
             }
         }
@@ -673,16 +632,7 @@ int main() {
         frameQueue.enqueue(std::nullopt);
         frameWriterThread.join();
 
-        performanceInfo.frameCount = frameCut;
-        performanceInfo.renderTotalTook = globalTimer() - renderSt;
-
         pd.setLine(1, L"释放资源...");
-        if (settings.enablePerformanceCollection) {
-            std::thread([=]() {
-                TelemetryDeckClient::Performance::VideoRender::completed(performanceInfo);
-            }).detach();
-        }
-
         std::wstring msg(L"渲染完成, 已保存到 ");
         msg += Win32Utils::stringToWstring(videoPath);
         showInfoMsg(win.get(), msg.c_str());
@@ -692,13 +642,6 @@ int main() {
     win->doGrid();
     win->resizeToGridBounds();
     syncSettingsToUI();
-
-    if (settings.getIsFirstRun()) {
-        const wchar_t* openPerformanceCollectionMsg = L"是否开启性能数据收集?\n\n开启后, 您的性能数据将会被发送到Telemetry Deck, 以帮助开发者改进软件。\n我们同时也会收集一些设备信息, 例如CPU型号, GPU型号, 操作系统版本等, 这些信息不会包含您的个人隐私信息, 如果您不希望我们收集这些信息, 可以关闭此选项。";
-        if (showYesNoMsg(win.get(), openPerformanceCollectionMsg)) {
-            WidgetStatics::CheckBox::toggle(win->refWidget(enablePerformanceCollectionCheckBox), true);
-        }
-    }
 
     win->mainloop();
     return 0;

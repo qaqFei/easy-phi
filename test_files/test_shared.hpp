@@ -12,43 +12,31 @@ extern "C" {
     #include <libavcodec/avcodec.h>
     #include <libavformat/avformat.h>
 }
-#include <cpr/cpr.h>
-
-#include <condition_variable>
-#include <queue>
 
 using namespace easy_phi;
 using namespace GL;
 
-#define PCM_FIXED_SAMPLE_RATE 44100
-#define PCM_FIXED_CHANNELS 2
-
 struct VideoCap {
-    const char* path;
-    int width; int height; double fps;
-    bool isOpened = false;
-
     AVFormatContext* fmtCtx;
 
-    AVCodecContext* vCodecCtx = nullptr;
-    AVStream* vStream = nullptr;
-    int vFrameIdx = 0;
-    uint64_t writtenVideoFrameCount = 0;
+    AVStream* vStream;
+    AVCodecContext* vCodecCtx;
 
-    AVFrame* vSwFrame = nullptr;
+    AVStream* aStream;
+    AVCodecContext* aCodecCtx;
 
-    AVStream* aStream = nullptr;
-    AVCodecContext* aCodecCtx = nullptr;
-    int aFramePts = 0;
-    bool wroteAudio = false;
+    AVFrame* vFrame;
+    AVFrame* aFrame;
+    AVPacket* packet;
 
-    VideoCap(const char* path, int width, int height, double fps) {
-        this->path = path;
-        this->width = width; this->height = height; this->fps = fps;
+    static constexpr uint64_t aSampleRate = 44100;
+    static constexpr uint64_t aChannels = 2;
 
-        AVCodec* vCodec = (AVCodec*)avcodec_find_encoder(AV_CODEC_ID_H264);
+    void init(const std::string& path, int width, int height, double fps) {
         fmtCtx = avformat_alloc_context();
         fmtCtx->oformat = av_guess_format("mp4", nullptr, nullptr);
+
+        const AVCodec* vCodec = avcodec_find_encoder(AV_CODEC_ID_H264);
         vStream = avformat_new_stream(fmtCtx, vCodec);
         vCodecCtx = avcodec_alloc_context3(vCodec);
         vCodecCtx->width = width;
@@ -69,380 +57,109 @@ struct VideoCap {
         av_dict_set(&vopts, "rc-lookahead", "20", 0);
         avcodec_open2(vCodecCtx, vCodec, &vopts);
         av_dict_free(&vopts);
-
-        vSwFrame = av_frame_alloc();
-        vSwFrame->format = AV_PIX_FMT_YUV420P;
-        vSwFrame->width = width;
-        vSwFrame->height = height;
-        
         avcodec_parameters_from_context(vStream->codecpar, vCodecCtx);
 
         const AVCodec* aCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
         aStream = avformat_new_stream(fmtCtx, aCodec);
-        aStream->time_base = {1, PCM_FIXED_SAMPLE_RATE};
+        aStream->time_base = {1, aSampleRate};
         aCodecCtx = avcodec_alloc_context3(aCodec);
         aCodecCtx->sample_fmt = AV_SAMPLE_FMT_S16;
         aCodecCtx->bit_rate = 192000;
-        aCodecCtx->sample_rate = PCM_FIXED_SAMPLE_RATE;
-        aCodecCtx->ch_layout.nb_channels = PCM_FIXED_CHANNELS;
+        aCodecCtx->sample_rate = aSampleRate;
+        aCodecCtx->ch_layout.nb_channels = aChannels;
         av_channel_layout_default(&aCodecCtx->ch_layout, aCodecCtx->ch_layout.nb_channels);
-        aCodecCtx->time_base = {1, PCM_FIXED_SAMPLE_RATE};
+        aCodecCtx->time_base = {1, aSampleRate};
 
         AVDictionary* aopts = nullptr;
         avcodec_open2(aCodecCtx, aCodec, &aopts);
         av_dict_free(&aopts);
         avcodec_parameters_from_context(aStream->codecpar, aCodecCtx);
-        avio_open(&fmtCtx->pb, path, AVIO_FLAG_WRITE);
-        avformat_write_header(fmtCtx, nullptr) < 0;
 
-        isOpened = true;
+        vFrame = av_frame_alloc();
+        vFrame->pts = 0;
+        vFrame->format = AV_PIX_FMT_YUV420P;
+        vFrame->width = width;
+        vFrame->height = height;
+
+        aFrame = av_frame_alloc();
+        aFrame->pts = 0;
+        aFrame->format = aCodecCtx->sample_fmt;
+        aFrame->ch_layout = aCodecCtx->ch_layout;
+        aFrame->sample_rate = aCodecCtx->sample_rate;
+        aFrame->nb_samples = aCodecCtx->frame_size;
+
+        packet = av_packet_alloc();
+
+        avio_open(&fmtCtx->pb, path.c_str(), AVIO_FLAG_WRITE);
+        avformat_write_header(fmtCtx, nullptr) == 0;
     }
 
-    void flush() {
-        AVPacket* packet = av_packet_alloc();
-
-        while (avcodec_receive_packet(vCodecCtx, packet) == 0) {
-            av_packet_rescale_ts(packet, vCodecCtx->time_base, vStream->time_base);
-            packet->stream_index = vStream->index;
-            av_interleaved_write_frame(fmtCtx, packet);
-            av_packet_unref(packet);
+    void writeAudio(ep_sp<DecodedAudio> audio) {
+        if ((int)audio->sampleRate != aCodecCtx->sample_rate || (int)audio->channels != aCodecCtx->ch_layout.nb_channels) {
+            audio = audio->copy();
+            audio->resample(aCodecCtx->ch_layout.nb_channels, aCodecCtx->sample_rate);
         }
 
-        while (avcodec_receive_packet(aCodecCtx, packet) == 0) {
-            av_packet_rescale_ts(packet, aCodecCtx->time_base, aStream->time_base);
-            packet->stream_index = aStream->index;
-            av_interleaved_write_frame(fmtCtx, packet);
-            av_packet_unref(packet);
-        }
+        auto frameSamples = aCodecCtx->frame_size * audio->channels;
 
-        av_packet_free(&packet);
-    }
+        for (uint64_t offset = 0; offset + frameSamples <= audio->data.size(); offset += frameSamples) {
+            aFrame->data[0] = (uint8_t*)(audio->data.data() + offset);
+            aFrame->pts += aCodecCtx->frame_size;
 
-    bool writeAudio(const ep_sp<DecodedAudio>& audio) {
-        if (wroteAudio) return false;
-        if ((int)audio->sampleRate != aCodecCtx->sample_rate || (int)audio->channels != aCodecCtx->ch_layout.nb_channels) return false;
-
-        const int frameSize = aCodecCtx->frame_size;
-        for (uint64_t offset = 0; offset + frameSize * audio->channels <= audio->data.size(); offset += frameSize * audio->channels) {
-            AVFrame* f = av_frame_alloc();
-            f->format = aCodecCtx->sample_fmt;
-            f->ch_layout = aCodecCtx->ch_layout;
-            f->sample_rate = aCodecCtx->sample_rate;
-            f->nb_samples = frameSize;
-            f->data[0] = (uint8_t*)(audio->data.data() + offset);
-            f->pts = aFramePts;
-            aFramePts += frameSize;
-
-            avcodec_send_frame(aCodecCtx, f);
-
-            if (offset + frameSize * audio->channels > audio->data.size()) {
-                avcodec_send_frame(aCodecCtx, nullptr);
+            if (avcodec_send_frame(aCodecCtx, aFrame) < 0) {
+                std::cerr << "failed to send a frame" << std::endl;
             }
 
             flush();
-            av_frame_free(&f);
         }
-
-        return true;
     }
 
-    bool writeVideoFrame(void* y, void* u, void* v, uint64_t lsy, uint64_t lsu, uint64_t lsv) {
-        writtenVideoFrameCount++;
+    void writeVideoFrame(uint8_t* data[3], uint64_t linesize[3]) {
+        vFrame->data[0] = data[0];
+        vFrame->data[1] = data[1];
+        vFrame->data[2] = data[2];
+        vFrame->linesize[0] = linesize[0];
+        vFrame->linesize[1] = linesize[1];
+        vFrame->linesize[2] = linesize[2];
+        vFrame->pts++;
 
-        vSwFrame->pts = vFrameIdx++;
-        vSwFrame->data[0] = (uint8_t*)y;
-        vSwFrame->data[1] = (uint8_t*)u;
-        vSwFrame->data[2] = (uint8_t*)v;
-        vSwFrame->linesize[0] = lsy;
-        vSwFrame->linesize[1] = lsu;
-        vSwFrame->linesize[2] = lsv;
-
-        if (avcodec_send_frame(vCodecCtx, vSwFrame) < 0) {
-            std::cerr << "failed to send frame" << std::endl;
-            return false;
+        if (avcodec_send_frame(vCodecCtx, vFrame) < 0) {
+            std::cerr << "failed to send v frame" << std::endl;
         }
 
         flush();
-        return true;
     }
 
     ~VideoCap() {
-        if (isOpened) {
-            avcodec_send_frame(vCodecCtx, nullptr);
-            flush();
+        avcodec_send_frame(vCodecCtx, nullptr);
+        avcodec_send_frame(aCodecCtx, nullptr);
+        flush();
 
-            av_write_trailer(fmtCtx);
-            avio_closep(&fmtCtx->pb);
+        av_write_trailer(fmtCtx);
+        avio_closep(&fmtCtx->pb);
+
+        avformat_free_context(fmtCtx);
+        avcodec_free_context(&vCodecCtx);
+        avcodec_free_context(&aCodecCtx);
+        av_frame_free(&vFrame);
+        av_frame_free(&aFrame);
+        av_packet_free(&packet);
+    }
+
+    private:
+    void flushStream(AVStream* stream, AVCodecContext* codecCtx) {
+        while (avcodec_receive_packet(codecCtx, packet) == 0) {
+            av_packet_rescale_ts(packet, codecCtx->time_base, stream->time_base);
+            packet->stream_index = stream->index;
+            av_interleaved_write_frame(fmtCtx, packet);
+            av_packet_unref(packet);
         }
-
-        if (vSwFrame) av_frame_free(&vSwFrame);
-        if (vCodecCtx) avcodec_free_context(&vCodecCtx);
-        if (aCodecCtx) avcodec_free_context(&aCodecCtx);
-        if (fmtCtx) avformat_free_context(fmtCtx);
-    }
-};
-
-struct TelemetryDeckClient {
-    static constexpr uint64_t version = 1;
-
-    static void postSignal(const std::string& type, const JsonNode& rawPayload) {
-        auto data = JsonNode::MakeArray({ JsonNode::MakeObject({
-            { "appID", JsonNode::MakeString("9C828357-123C-42F6-AD02-62100B3B75A7") },
-            { "clientUser", JsonNode::MakeString("anonymous") },
-            { "type", JsonNode::MakeString(type) },
-            { "payload", JsonNode::MakeObject({
-                { "data", JsonNode::MakeString(rawPayload.toString()) }
-            }) }
-        }) });
-
-        cpr::Response resp = cpr::Post(
-            cpr::Url { "https://nom.telemetrydeck.com/v2/namespace/com.qaqfei/" },
-            cpr::VerifySsl { false },
-            cpr::Header {
-                { "Content-Type", "application/json; charset=utf-8" }
-            },
-            cpr::Body { data.toString() }
-        );
     }
 
-    struct Performance {
-        struct BaseInfo {
-            struct CpuInfo {
-                std::string vendor;
-                std::string model;
-                std::string arch;
-
-                JsonNode toJson() const {
-                    return JsonNode::MakeObject({
-                        { "vendor", JsonNode::MakeString(vendor) },
-                        { "model", JsonNode::MakeString(model) },
-                    });
-                }
-            } cpuInfo;
-
-            struct GpuInfo {
-                std::string vendor;
-                std::string model;
-
-                JsonNode toJson() const {
-                    return JsonNode::MakeObject({
-                        { "vendor", JsonNode::MakeString(vendor) },
-                        { "model", JsonNode::MakeString(model) },
-                    });
-                }
-            } gpuInfo;
-
-            struct SystemInfo {
-                std::string os;
-                std::string version;
-
-                JsonNode toJson() const {
-                    return JsonNode::MakeObject({
-                        { "os", JsonNode::MakeString(os) },
-                        { "version", JsonNode::MakeString(version) },
-                    });
-                }
-            } systemInfo;
-
-            struct BuildInfo {
-                std::string shortCommitHash;
-                double buildTime;
-                bool isDebug;
-                bool isDev;
-
-                JsonNode toJson() const {
-                    return JsonNode::MakeObject({
-                        { "shortCommitHash", JsonNode::MakeString(shortCommitHash) },
-                        { "buildTime", JsonNode::MakeNumber(buildTime) },
-                        { "isDebug", JsonNode::MakeBool(isDebug) },
-                        { "isDev", JsonNode::MakeBool(isDev) }
-                    });
-                }
-
-                void fill() {
-                    shortCommitHash = BUILD_SHORT_COMMIT_HASH;
-                    buildTime = BUILD_TIME;
-                    isDebug = BUILD_IS_DEBUG;
-                    isDev = std::filesystem::exists("dev.flag");
-                }
-            } buildInfo;
-
-            JsonNode toJson() const {
-                return JsonNode::MakeObject({
-                    { "cpuInfo", cpuInfo.toJson() },
-                    { "gpuInfo", gpuInfo.toJson() },
-                    { "systemInfo", systemInfo.toJson() },
-                    { "buildInfo", buildInfo.toJson() },
-                    { "version", JsonNode::MakeNumber(version) },
-                    { "uploadTime", JsonNode::MakeNumber(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::utc_clock::now().time_since_epoch()).count()) }
-                });
-            }
-
-            #ifdef _WIN32
-            static BaseInfo make() {
-                BaseInfo info;
-
-                {
-                    auto cpuid_gcc = [](int info[4], int func_id) {
-                        unsigned int eax, ebx, ecx, edx;
-                        __get_cpuid(func_id, &eax, &ebx, &ecx, &edx);
-                        info[0] = (int)eax;
-                        info[1] = (int)ebx;
-                        info[2] = (int)ecx;
-                        info[3] = (int)edx;
-                    };
-
-                    auto cpuid_gcc_ext = [](int info[4], unsigned int func_id) {
-                        unsigned int eax, ebx, ecx, edx;
-                        __get_cpuid(func_id, &eax, &ebx, &ecx, &edx);
-                        info[0] = (int)eax;
-                        info[1] = (int)ebx;
-                        info[2] = (int)ecx;
-                        info[3] = (int)edx;
-                    };
-
-                    int cpuInfo[4] = {};
-                    char vendor[13] = {};
-                    cpuid_gcc(cpuInfo, 0);
-                    *(int*)&vendor[0] = cpuInfo[1];   // ebx
-                    *(int*)&vendor[4] = cpuInfo[3];  // edx
-                    *(int*)&vendor[8] = cpuInfo[2];  // ecx
-                    info.cpuInfo.vendor = vendor;
-
-                    cpuid_gcc_ext(cpuInfo, 0x80000000);
-                    if ((unsigned)cpuInfo[0] >= 0x80000004) {
-                        char brand[49] = {};
-                        char* p = brand;
-                        for (unsigned int i = 0x80000002; i <= 0x80000004; ++i) {
-                            cpuid_gcc_ext(cpuInfo, i);
-                            memcpy(p, cpuInfo, 16);
-                            p += 16;
-                        }
-                        info.cpuInfo.model = brand;
-                        size_t pos = info.cpuInfo.model.find_first_not_of(' ');
-                        if (pos != std::string::npos) info.cpuInfo.model = info.cpuInfo.model.substr(pos);
-                    }
-
-                    SYSTEM_INFO si;
-                    GetNativeSystemInfo(&si);
-                    switch (si.wProcessorArchitecture) {
-                        case PROCESSOR_ARCHITECTURE_AMD64: info.cpuInfo.arch = "x86_64"; break;
-                        case PROCESSOR_ARCHITECTURE_INTEL: info.cpuInfo.arch = "x86"; break;
-                        case PROCESSOR_ARCHITECTURE_ARM64: info.cpuInfo.arch = "arm64"; break;
-                        case PROCESSOR_ARCHITECTURE_ARM: info.cpuInfo.arch = "arm"; break;
-                        default: info.cpuInfo.arch = "unknown"; break;
-                    }
-                }
-
-                {
-                    DISPLAY_DEVICEA dd = { sizeof(dd) };
-                    for (DWORD i = 0; EnumDisplayDevicesA(nullptr, i, &dd, 0); ++i) {
-                        if (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) {
-                            info.gpuInfo.model = dd.DeviceString;
-                            break;
-                        }
-                    }
-
-                    std::string lower = info.gpuInfo.model;
-                    for (auto& c : lower) c = (char)tolower(c);
-                    if (lower.find("nvidia") != std::string::npos) info.gpuInfo.vendor = "NVIDIA";
-                    else if (lower.find("amd") != std::string::npos || lower.find("radeon") != std::string::npos) info.gpuInfo.vendor = "AMD";
-                    else if (lower.find("intel") != std::string::npos) info.gpuInfo.vendor = "Intel";
-                    else info.gpuInfo.vendor = "Unknown";
-                }
-
-                {
-                    info.systemInfo.os = "Windows";
-
-                    typedef LONG (WINAPI *RtlGetVersion_t)(void*);
-                    auto rtlGetVersion = (RtlGetVersion_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlGetVersion");
-                    if (rtlGetVersion) {
-                        struct { ULONG size, major, minor, build, platform; WCHAR csd[128]; } osvi = { sizeof(osvi) };
-                        if (rtlGetVersion(&osvi) >= 0) {
-                            info.systemInfo.version = std::to_string(osvi.major) + "." + std::to_string(osvi.minor) + "." + std::to_string(osvi.build);
-                        }
-                    }
-                }
-
-                info.buildInfo.fill();
-                return info;
-            }
-            #endif
-        };
-
-        struct ChartPlayback {
-            struct Completed {
-                struct FrameInfo {
-                    std::pair<double, double> screenSize;
-                    std::pair<double, double> timeRange; // s
-                    double calculationTook; // ms
-                    double renderTook; // ms
-
-                    JsonNode toJson() const {
-                        return JsonNode::MakeObject({
-                            { "screenSize", JsonNode::MakeArray({ JsonNode::MakeNumber(screenSize.first), JsonNode::MakeNumber(screenSize.second) }) },
-                            { "timeRange", JsonNode::MakeArray({ JsonNode::MakeNumber(timeRange.first), JsonNode::MakeNumber(timeRange.second) }) },
-                            { "calculationTook", JsonNode::MakeNumber(calculationTook) },
-                            { "renderTook", JsonNode::MakeNumber(renderTook) },
-                        });
-                    }
-                };
-
-                BaseInfo baseInfo;
-                uint64_t chartHash;
-                double loadingTook; // s
-                std::vector<FrameInfo> frames;
-
-                JsonNode toJson() const {
-                    return JsonNode::MakeObject({
-                        { "baseInfo", baseInfo.toJson() },
-                        { "chartHash", JsonNode::MakeString(std::to_string(chartHash)) },
-                        { "loadingTook", JsonNode::MakeNumber(loadingTook) },
-                        { "frames", [&]{
-                            std::vector<JsonNode> arr;
-                            arr.reserve(frames.size());
-                            for (const auto& f : frames) arr.push_back(f.toJson());
-                            return JsonNode::MakeArray(arr);
-                        }() },
-                    });
-                }
-            };
-
-            static void completed(const Completed& payload) {
-                postSignal("Performance.ChartPlayback.completed", payload.toJson());
-            }
-        };
-
-        struct VideoRender {
-            struct Completed {
-                BaseInfo baseInfo;
-                uint64_t chartHash;
-                double loadingTook; // s
-                std::pair<double, double> screenSize;
-                double frameRate;
-                uint64_t frameCount;
-                double renderTotalTook; // s
-                std::string encoderName;
-
-                JsonNode toJson() const {
-                    return JsonNode::MakeObject({
-                        { "baseInfo", baseInfo.toJson() },
-                        { "chartHash", JsonNode::MakeString(std::to_string(chartHash)) },
-                        { "loadingTook", JsonNode::MakeNumber(loadingTook) },
-                        { "screenSize", JsonNode::MakeArray({ JsonNode::MakeNumber(screenSize.first), JsonNode::MakeNumber(screenSize.second) }) },
-                        { "frameRate", JsonNode::MakeNumber(frameRate) },
-                        { "frameCount", JsonNode::MakeNumber(frameCount) },
-                        { "renderTotalTook", JsonNode::MakeNumber(renderTotalTook) },
-                        { "encoderName", JsonNode::MakeString(encoderName) }
-                    });
-                }
-            };
-
-            static void completed(const Completed& payload) {
-                postSignal("Performance.VideoRender.completed", payload.toJson());
-            }
-        };
-    };
+    void flush() {
+        flushStream(vStream, vCodecCtx);
+        flushStream(aStream, aCodecCtx);
+    }
 };
 
 struct WindowBase {
@@ -672,22 +389,12 @@ struct PhiWindow {
 
     struct MainloopConfig {
         WindowBase::MainloopConfigBase base;
-        TelemetryDeckClient::Performance::ChartPlayback::Completed::FrameInfo* pccfi;
     };
 
     bool mainloopFrame(const MainloopConfig& config) {
         return base.mainloopFrame<decltype(renderer)>(
             config.base,
-            renderer,
-            [](auto c) { return c; },
-            [&](auto info) {
-                if (config.pccfi) {
-                    config.pccfi->calculationTook = info.base.calculatedTook * 1000;
-                    config.pccfi->screenSize = { (double)base.width, (double)base.height };
-                    config.pccfi->timeRange = renderer->calculatedFrame.frameTimeRange.toPair();
-                    config.pccfi->renderTook = info.base.glOperationsTook * 1000;
-                }
-            }
+            renderer
         );
     }
 };
@@ -742,80 +449,4 @@ struct MilWindow {
             renderer
         );
     }
-};
-
-template<typename T>
-class ThreadSafeQueue {
-public:
-    ~ThreadSafeQueue() {
-        shutdown();
-    }
-    
-    void enqueue(T frame) {
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            if (done) return;
-            queue.push(std::move(frame));
-        }
-        cv.notify_one();
-    }
-    
-    bool wait_dequeue(T& frame) {
-        std::unique_lock<std::mutex> lock(mtx);
-        cv.wait(lock, [this] { return !queue.empty() || done; });
-        if (queue.empty()) return false;
-        frame = std::move(queue.front());
-        queue.pop();
-        return true;
-    }
-    
-    void shutdown() {
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            done = true;
-        }
-        cv.notify_all();
-    }
-    
-    size_t size_approx() const {
-        std::lock_guard<std::mutex> lock(mtx);
-        return queue.size();
-    }
-    
-private:
-    mutable std::mutex mtx;
-    std::condition_variable cv;
-    std::queue<T> queue;
-    bool done = false;
-};
-
-struct FPSCalc {
-    double fps;
-
-    FPSCalc() {
-        lastTime = globalTimer();
-    }
-
-    void frame() {
-        double t = globalTimer();
-        count++;
-        if (count >= maxCount) {
-            if (t != lastTime) {
-                fps = count / (t - lastTime);
-                maxCount = fps / 10;
-            } else {
-                fps = std::numeric_limits<double>::infinity();
-                maxCount *= 2;
-            }
-
-            maxCount = std::min(std::max(maxCount, 1.0), 50.0);
-            count = 0;
-            lastTime = t;
-        }
-    }
-
-    private:
-    uint64_t count;
-    double maxCount = 12.0;
-    double lastTime;
 };
