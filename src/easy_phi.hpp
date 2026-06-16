@@ -4172,54 +4172,6 @@ namespace GL {
         }
     };
 
-    static const char* defaultVertexShaderSource = R"(
-#version 330 core
-
-in vec2 inPosition;
-in vec2 inTexCoord;
-in vec4 inColor;
-
-out vec2 fragTexCoord;
-out vec4 vColor;
-
-void main() {
-    gl_Position = vec4(inPosition, 0.0, 1.0);
-    fragTexCoord = inTexCoord;
-    vColor = inColor;
-}
-)";
-
-    static const char* defaultVertexShaderSource_RPE = R"(
-#version 100
-
-attribute vec2 inPosition;
-attribute vec2 inTexCoord;
-attribute vec4 inColor;
-
-varying vec2 uv;
-
-void main() {
-    gl_Position = vec4(inPosition, 0.0, 1.0);
-    uv = inTexCoord;
-}
-)";
-
-    static const char* defaultFragmentShaderSource = R"(
-#version 330 core
-
-in vec2 fragTexCoord;
-in vec4 vColor;
-
-uniform vec4 uColor;
-uniform sampler2D uTexture;
-
-out vec4 outColor;
-
-void main() {
-    outColor = vColor * uColor * texture(uTexture, fragTexCoord);
-}
-)";
-
     struct GL33Context {
         /* !docs
         A gl context.
@@ -4361,7 +4313,94 @@ void main() {
             return ep_sp<SyncInfo>(info);
         }
 
-        ep_sp<ProgramInfo> createConfiguredProgram(const std::string& fragCode, const std::string& vertCode = defaultVertexShaderSource) {
+        struct CreateProgramConfig {
+            std::string vertCode;
+            std::string fragCode;
+            std::function<void(ProgramInfo*, VertexArrayInfo*, BufferInfo*)> vertConfigurer;
+
+            CreateProgramConfig& defaultColorVert() {
+                if (vertCode.empty()) vertCode = R"(
+#version 330 core
+
+in vec2 inPosition;
+in vec2 inTexCoord;
+in vec4 inColor;
+
+out vec2 fragTexCoord;
+out vec4 vColor;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+    fragTexCoord = inTexCoord;
+    vColor = inColor;
+}
+)";
+                vertConfigurer = [](ProgramInfo* prog, VertexArrayInfo* vao, BufferInfo* vbo) {
+                    auto vaoGuard = vao->use();
+                    auto vboGuard = vbo->use();
+                    auto inPosition = prog->getAttribLocationPosition("inPosition");
+                    auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
+                    auto inColor = prog->getAttribLocationPosition("inColor");
+                    vaoGuard.enable(inPosition);
+                    vaoGuard.enable(inTexCoord);
+                    vaoGuard.enable(inColor);
+                    vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
+                    vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
+                    vaoGuard.pointer(inColor, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, color));
+                };
+
+                return *this;
+            }
+
+            CreateProgramConfig& defaultColorVertV100() {
+                if (vertCode.empty()) vertCode = R"(
+#version 100
+
+attribute vec2 inPosition;
+attribute vec2 inTexCoord;
+
+varying vec2 uv;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+    uv = inTexCoord;
+}
+)";
+                vertConfigurer = [](ProgramInfo* prog, VertexArrayInfo* vao, BufferInfo* vbo) {
+                    auto vaoGuard = vao->use();
+                    auto vboGuard = vbo->use();
+                    auto inPosition = prog->getAttribLocationPosition("inPosition");
+                    auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
+                    vaoGuard.enable(inPosition);
+                    vaoGuard.enable(inTexCoord);
+                    vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
+                    vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
+                };
+
+                return *this;
+            }
+
+            CreateProgramConfig& defaultColorFrag() {
+                if (fragCode.empty()) fragCode = R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+in vec4 vColor;
+
+uniform vec4 uColor;
+uniform sampler2D uTexture;
+
+out vec4 outColor;
+
+void main() {
+    outColor = vColor * uColor * texture(uTexture, fragTexCoord);
+}
+)";
+                return *this;
+            }
+        };
+
+        ep_sp<ProgramInfo> createConfiguredProgram(const CreateProgramConfig& config) {
             /* !docs
             Creates a configured program with default vertex shader and given fragment shader.
             */
@@ -4369,8 +4408,8 @@ void main() {
             auto vert = createShader(GL_VERTEX_SHADER);
             auto frag = createShader(GL_FRAGMENT_SHADER);
             
-            vert->source(vertCode);
-            frag->source(fragCode);
+            vert->source(config.vertCode);
+            frag->source(config.fragCode);
 
             std::string log;
             if (!vert->compile(&log)) throw std::runtime_error("vertex compile: " + log);
@@ -4383,17 +4422,7 @@ void main() {
 
             prog->vertexLayoutPool.resize(8, [&]() { return VertexLayout { .vao = createVertexArray(), .vbo = createBuffer() }; });
             prog->vertexLayoutPool.configure([&](VertexArrayInfo* vao, BufferInfo* vbo) {
-                auto vaoGuard = vao->use();
-                auto vboGuard = vbo->use();
-                auto inPosition = prog->getAttribLocationPosition("inPosition");
-                auto inTexCoord = prog->getAttribLocationPosition("inTexCoord");
-                auto inColor = prog->getAttribLocationPosition("inColor");
-                vaoGuard.enable(inPosition);
-                vaoGuard.enable(inTexCoord);
-                vaoGuard.enable(inColor);
-                vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
-                vaoGuard.pointer(inTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
-                vaoGuard.pointer(inColor, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, color));
+                config.vertConfigurer(prog.get(), vao, vbo);
             });
 
             prog->bufferFiller = [](ProgramInfo* prog, const VertexLayout& vertexLayout, VertexPool::AllocResult& vertices) {
@@ -4415,7 +4444,7 @@ void main() {
             */
 
             static ep_sp<ProgramInfo> gaussianBlur(GL33Context* glCtx) {
-                auto prog = glCtx->createConfiguredProgram(R"(
+                auto prog = glCtx->createConfiguredProgram(CreateProgramConfig { .fragCode = R"(
 #version 330 core
 
 in vec2 fragTexCoord;
@@ -4450,13 +4479,13 @@ void main() {
     outColor = sum / wsum;
     outColor.a = 1.0;
 }
-)");
+)" }.defaultColorVert());
                 prog->fragConfig.colorUniformName = std::nullopt;
                 return prog;
             }
 
             static ep_sp<ProgramInfo> yuvConverter(GL33Context* glCtx) {
-                auto prog = glCtx->createConfiguredProgram(R"(
+                auto prog = glCtx->createConfiguredProgram(CreateProgramConfig { .fragCode = R"(
 #version 330 core
 
 in vec2 fragTexCoord;
@@ -4536,13 +4565,13 @@ void main() {
         );
     } else outColor = vec4(0);
 }
-)");
+)" }.defaultColorVert());
                 prog->fragConfig.colorUniformName = std::nullopt;
                 return prog;
             }
 
             static ep_sp<ProgramInfo> circle(GL33Context* glCtx) {
-                return glCtx->createConfiguredProgram(R"(
+                return glCtx->createConfiguredProgram(CreateProgramConfig { .fragCode = R"(
 #version 330 core
 
 in vec2 fragTexCoord;
@@ -4561,7 +4590,7 @@ void main() {
     float alpha = 1.0 - smoothstep(0.5 - edgeWidth, 0.5, dist);
     outColor.a *= alpha;
 }
-)");
+)" }.defaultColorVert());
             }
         };
 
@@ -5038,7 +5067,7 @@ void main() {
             if (resourcesInitialized) return;
             resourcesInitialized = true;
             
-            defaultProgram = createConfiguredProgram(defaultFragmentShaderSource);
+            defaultProgram = createConfiguredProgram(CreateProgramConfig { }.defaultColorVert().defaultColorFrag());
             preloadedPrograms.gaussianBlur = ProgramPresets::gaussianBlur(this);
             preloadedPrograms.yuvConverter = ProgramPresets::yuvConverter(this);
             preloadedPrograms.circle = ProgramPresets::circle(this);
@@ -9600,7 +9629,7 @@ struct PhiTakeOverer {
             }
 
             try {
-                auto prog = glCtx->createConfiguredProgram(shaderString, GL::defaultVertexShaderSource_RPE);
+                auto prog = glCtx->createConfiguredProgram(GL::GL33Context::CreateProgramConfig { .fragCode = shaderString }.defaultColorVertV100());
                 prog->fragConfig.textureUniformName = "screenTexture";
                 prog->fragConfig.colorUniformName = std::nullopt;
                 shaders[id] = prog;
@@ -12033,7 +12062,7 @@ struct MilTakeOverer {
             pauseButtonTex = glCtx->createTextureFromDecoded(decoded, true);
         }
 
-        circHitEffectProg = glCtx->createConfiguredProgram(R"(
+        circHitEffectProg = glCtx->createConfiguredProgram(GL33Context::CreateProgramConfig { .fragCode = R"(
 #version 330 core
 
 in vec2 fragTexCoord;
@@ -12091,7 +12120,8 @@ void main() {
         outColor.a = 0.0;
     }
 }
-)");
+)" }.defaultColorVert());
+
         circHitEffectProg->fragConfig.textureUniformName = std::nullopt;
         circHitEffectProg->fragConfig.colorUniformName = std::nullopt;
 
