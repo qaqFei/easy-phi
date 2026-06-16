@@ -4398,6 +4398,40 @@ void main() {
 )";
                 return *this;
             }
+
+            CreateProgramConfig& defaultStencilVert() {
+                if (vertCode.empty()) vertCode = R"(
+#version 330 core
+
+in vec2 inPosition;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+}
+)";
+                vertConfigurer = [](ProgramInfo* prog, VertexArrayInfo* vao, BufferInfo* vbo) {
+                    auto vaoGuard = vao->use();
+                    auto vboGuard = vbo->use();
+                    auto inPosition = prog->getAttribLocationPosition("inPosition");
+                    vaoGuard.enable(inPosition);
+                    vaoGuard.pointer(inPosition, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
+                };
+                
+                return *this;
+            }
+
+            CreateProgramConfig& defaultStencilFrag() {
+                if (fragCode.empty()) fragCode = R"(
+#version 330 core
+
+out vec4 outColor;
+
+void main() {
+    outColor = vec4(1.0);
+}
+)";
+                return *this;
+            }
         };
 
         ep_sp<ProgramInfo> createConfiguredProgram(const CreateProgramConfig& config) {
