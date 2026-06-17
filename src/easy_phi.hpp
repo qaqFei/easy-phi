@@ -114,7 +114,7 @@ using aligned_vector = std::vector<T, AlignedAllocator<T, Alignment>>;
 
 ep_f64 globalTimer() {
     /* !docs
-    Get the current time in seconds since the program started.
+    Get the current time in **seconds** since the program started.
     */
 
     return std::chrono::duration<ep_f64>(
@@ -125,7 +125,7 @@ ep_f64 globalTimer() {
 
 std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
     /* !docs
-    Convert a codepoint to a UTF-8 string.
+    Convert a codepoint to a UTF-8 char.
     */
 
     ep_u32 codepoint;
@@ -168,7 +168,7 @@ std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
 
 std::string formatToStdString(const char* fmt, ...) {
     /* !docs
-    Format a string with the same syntax as `printf`.
+    Format a string with the same syntax as **`printf`**.
     */
 
     va_list args;
@@ -212,7 +212,7 @@ void checkBoolAndThrow(bool condition, const std::string& msg, const std::string
 template <typename T>
 struct ep_sp {
     /* !docs
-    The small pointer class.
+    A shared pointer.
     */
 
     struct RefCnt {
@@ -307,10 +307,6 @@ template <typename T>
 bool operator==(std::nullptr_t, const ep_sp<T>& a) noexcept { return !a; }
 
 struct HashBucket {
-    /* !docs
-    A FNV-1a hash bucket, used to generate a hash from a sequence of numbers and booleans.
-    */
-
     ep_u64 hash = 0xcbf29ce484222325ULL;
     
     static constexpr ep_u64 FNV_PRIME = 0x100000001b3ULL;
@@ -350,7 +346,7 @@ struct HashBucket {
 template <typename T1, typename T2>
 struct SKVCache {
     /* !docs
-    A simple key-value cache.
+    A key-value cache.
     */
 
     T1 key;
@@ -360,8 +356,7 @@ struct SKVCache {
     [[gnu::always_inline, gnu::hot]]
     const T2& get(const T1& k, F&& reseter) noexcept {
         /* !docs
-        Gets the value from the cache.
-        If the key is different from the cached key, the value is reset by reseter function and the key is updated.
+        Updates and gets.
         */
 
         if (__builtin_expect(key != k, 0)) {
@@ -374,10 +369,6 @@ struct SKVCache {
 };
 
 struct Data {
-    /* !docs
-    A simple byte array, used to store data.
-    */
-
     std::vector<ep_u8> data;
 
     static Data MakeFromFile(const std::string& fn) {
@@ -407,10 +398,6 @@ struct Data {
     }
 
     ep_u64 getHash() const {
-        /* !docs
-        Returns a hash of the data, by submitting each byte to a `@HashBucket`.
-        */
-
         HashBucket bucket;
         for (ep_u8 byte : data) bucket.submitNumber(byte);
         return bucket.getHash();
@@ -449,10 +436,6 @@ enum class ByteEndian {
 
 template<ByteEndian E>
 struct ByteWriter {
-    /* !docs
-    A class for writing bytes to a vector.
-    */
-
     std::vector<ep_u8> data;
 
     static ep_sp<ByteWriter<E>> Make() {
@@ -574,10 +557,6 @@ private:
 };
 
 struct JsonNode {
-    /* !docs
-    A JSON node.
-    */
-
     enum class EnumType {
         String, Number, Bool, Array, Object, Null
     };
@@ -1018,10 +997,6 @@ struct JsonNode {
 
     template<typename T>
     void print(T& stream) const {
-        /* !docs
-        Prints the json node to the given stream.
-        */
-
         if (isString()) {
             stream << '"';
             for (ep_u8 c : getString()) {
@@ -1061,18 +1036,10 @@ struct JsonNode {
     }
 
     void print() const {
-        /* !docs
-        Prints the json node to the standard output.
-        */
-
         print(std::cout);
     }
 
     std::string toString() const {
-        /* !docs
-        Converts the json node to a string.
-        */
-
         std::string result;
         result.reserve(256);
         toStringImpl(result);
@@ -1126,7 +1093,7 @@ struct JsonNode {
 
     bool hasKey(const std::string& key) const {
         /* !docs
-        Checks if the json node is an object and contains the specified key.
+        Checks if it the specified key.
         */
 
         if (type != EnumType::Object) return false;
@@ -1175,18 +1142,13 @@ private:
 
 struct DecodedRGBATexture {
     /* !docs
-    The decoded RGBA texture.
-    The data is a flat array of RGBA pixels.
+    The data is a flat array of uint8 RGBA pixels.
     */
 
     std::vector<ep_u8> data;
     ep_u64 width, height;
 
     static DecodedRGBATexture Make(ep_u64 width, ep_u64 height, ep_u8 init = 0) {
-        /* !docs
-        Create a new texture with the given width and height, and fill it with the given value.
-        */
-
         return {
             .data = std::vector<ep_u8>(width * height * 4, init),
             .width = width, .height = height
@@ -1212,10 +1174,6 @@ struct DecodedRGBATexture {
     }
 
     void fillRGBWhite() {
-        /* !docs
-        Fill the texture with white color.
-        */
-
         ensureDataSize();
         std::fill(data.begin(), data.end(), 255);
         for (ep_u64 i = 0; i < width * height; ++i) data[i * 4 + 3] = 0;
@@ -1267,7 +1225,6 @@ struct DecodedRGBATexture {
 
 struct YUV420Frame {
     /* !docs
-    A YUV420 frame.
     The data is stored in a `aligned_vector` with the following layout:
     ```
     y[width * height]
@@ -1314,17 +1271,13 @@ struct YUV420Frame {
     std::array<ep_u64, 3> rowBytes() const { return { rowBytesY(), rowBytesU(), rowBytesV() }; }
 
     void fromPtr(void* ptr) {
-        /* !docs
-        Fills the frame with data from a pointer.
-        */
-
         memcpy(data.data(), ptr, getDataSize());
     }
 };
 
 void stripString(std::string& str) {
     /* !docs
-    Strip a string like python's `str.strip()`.
+    Like python's `str.strip()`.
     */
 
     auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
@@ -1336,7 +1289,7 @@ void stripString(std::string& str) {
 
 void splitString(const std::string& str, std::vector<std::string>& lines, char delimiter = '\n') {
     /* !docs
-    Split a string to lines like python's `str.split(delimiter)`.
+    Like python's `str.split(delimiter)`.
     */
 
     for (auto&& subrange : str | std::views::split(delimiter)) {
@@ -1382,10 +1335,10 @@ std::string stringSliceProgress(const std::string& str, ep_f64 p) {
     return str.substr(0, (ep_u64)(str.size() * p));
 }
 
-std::string doubleChars(const std::string& color) {
+std::string doubleChars(const std::string& str) {
     std::string result;
-    result.reserve(color.size() * 2);
-    for (auto c : color) result.append(2, c);
+    result.reserve(str.size() * 2);
+    for (auto c : str) result.append(2, c);
     return result;
 }
 
@@ -1451,7 +1404,7 @@ struct Rect {
 
     Rect extend(ep_f64 padding) const noexcept {
         /* !docs
-        Returns a new rect with the padding applied to all sides.
+        New a rect with the padding applied to all sides.
         */
 
         return Rect {
@@ -1649,13 +1602,7 @@ struct Color {
         return {};
     }
 
-    Color applyAlpha(ep_f64 alpha) const noexcept {
-        /* !docs
-        Returns a new color with the alpha multiplied by `alpha`.
-        */
-
-        return Color { r, g, b, a * alpha };
-    }
+    Color applyAlpha(ep_f64 alpha) const noexcept { return Color { r, g, b, a * alpha }; }
 
     Color operator*(const Color& c) const noexcept { return Color { r * c.r, g * c.g, b * c.b, a * c.a }; }
     Color operator*(ep_f64 v) const noexcept { return Color { r * v, g * v, b * v, a * v }; }
@@ -1754,6 +1701,10 @@ struct Color {
 };
 
 struct ColorLink {
+    /* !docs
+    Maps a position to a blended color between keyframes.
+    */
+
     std::vector<std::pair<ep_f64, Color>> steps;
 
     Color get(ep_f64 p) const {
@@ -1777,10 +1728,6 @@ struct ColorLink {
 };
 
 struct ObjectIndexer {
-    /* !docs
-    A class that stores the index of a object.
-    */
-
     ep_u64 index;
 
     ep_u64 get() noexcept {
@@ -1837,10 +1784,6 @@ private:
 };
 
 struct Transform2D {
-    /* !docs
-    A 2D transformation by a 3x3 matrix.
-    */
-
     ep_f64 matrix[6];
 
     Transform2D(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) noexcept {
@@ -2119,6 +2062,11 @@ bool lineIsLeavingScreen(const Vec2& linePoint, ep_f64 lineDeg, const Rect& scre
 }
 
 Rect getCoveredOrContainRect(const Rect& dst, const Vec2& size, bool isCovered) {
+    /* !docs
+    Returns a rect that is covered or contained by `dst` with the given size.
+    Like CSS `object-fit: cover` or `object-fit: contain`.
+    */
+
     ep_f64 dst_ratio = dst.w / dst.h;
     ep_f64 src_ratio = size.x / size.y;
 
@@ -2155,10 +2103,6 @@ std::array<Vec2, 4> makeQuadFromRectInfo(const RectInfo& info) {
 }
 
 struct EaseSet {
-    /* !docs
-    A set of easing functions.
-    */
-
     static constexpr ep_u64 ktIntegralTableSize = 128;
 
     static ep_f64 getIntegralValue(const ep_f64* table, ep_u64 size, ep_f64 p) noexcept {
@@ -2395,6 +2339,10 @@ struct EaseSet {
 };
 
 struct TimeBasedAnim {
+    /* !docs
+    Smoothly changes a number from old to new over time.
+    */
+
     ep_f64 duration;
     ep_f64 lastTime;
     Vec2 value;
@@ -2423,10 +2371,6 @@ struct TimeBasedAnim {
 };
 
 namespace GL {
-    /* !docs
-    The OpenGL namespace.
-    */
-
     using GLboolean = unsigned char;
     using GLbitfield = unsigned int;
     using GLbyte = signed char;
@@ -2676,7 +2620,7 @@ namespace GL {
 
     struct GL33CoreInterface {
         /* !docs
-        A struct containing pointers to the OpenGL 3.3 core functions.
+        Contained pointers to the OpenGL 3.3 core functions.
         */
 
         GLenum (*glGetError)();
@@ -2836,7 +2780,7 @@ namespace GL {
     using GLProcLoader = std::function<void*(const char*)>;
     static GL33CoreInterface MakeGL33CoreInterface(GLProcLoader loader) {
         /* !docs
-        Creates a interface object from a procedure loader.
+        Creates an interface object from a procedure loader.
         */
 
         GL33CoreInterface interface {};
@@ -3092,10 +3036,6 @@ namespace GL {
     static_assert(offsetof(GLvec4, w) == sizeof(GLfloat) * 3, "GLvec4.w must be at offset 3");
 
     struct Vertex {
-        /* !docs
-        A vertex, with position and texture coordinates.
-        */
-
         GLvec2 position;
         GLvec2 texCoord;
         GLvec4 color;
@@ -3112,10 +3052,6 @@ namespace GL {
     struct SyncInfo;
 
     struct VertexPool {
-        /* !docs
-        A pool of vertices, which can be allocated from.
-        */
-
         struct Chunk {
             std::vector<Vertex> vertices;
             ep_u64 offset;
@@ -3150,10 +3086,6 @@ namespace GL {
         }
 
         struct AllocResult {
-            /* !docs
-            The result of allocating vertices from a `@../VertexPool`.
-            */
-
             Vertex* vertices;
             ep_u64 count;
             ep_u64 sig;
@@ -3224,10 +3156,6 @@ namespace GL {
     };
 
     struct Mesh {
-        /* !docs
-        A mesh of vertices, which can be drawn.
-        */
-
         VertexPool::AllocResult vertices;
         GLvec4 color;
         TextureInfo* texture;
@@ -3246,18 +3174,10 @@ namespace GL {
         }
 
         void addFullRect(const GLvec4& color = GLvec4::White()) noexcept {
-            /* !docs
-            Adds a full-screen rectangle to the mesh.
-            */
-
             addRect({ -1, -1 }, { 2, 2 }, { 0, 0 }, { 1, 1 }, color);
         }
 
         void addRectCentered(const GLvec2& center, const GLvec2& radius, const GLvec2& uvCenter, const GLvec2& uvRadius, const GLvec4& color = GLvec4::White()) noexcept {
-            /* !docs
-            Adds a rectangle to the mesh, centered at the given position.
-            */
-            
             addRect(center - radius, radius * 2, uvCenter - uvRadius, uvRadius * 2, color);
         }
 
@@ -3270,12 +3190,6 @@ namespace GL {
         }
 
         void addPolygon(const std::vector<GLvec2>& points, const std::vector<GLvec2>& uvs) noexcept {
-            /* !docs
-            Adds a polygon to the mesh.
-            */
-
-            ep_assert(uvs.size() >= points.size(), "Not enough UVs for polygon");
-
             for (ep_i64 i = 0; i < (ep_i64)points.size() - 2; i++) {
                 *vertices.next() = { points[0], uvs[0], GLvec4::White() };
                 *vertices.next() = { points[i + 1], uvs[i + 1], GLvec4::White() };
@@ -3285,10 +3199,6 @@ namespace GL {
     };
 
     struct BufferInfo {
-        /* !docs
-        A buffer object, which is created by `glGenBuffers`.
-        */
-        
         BufferInfo() = default;
         BufferInfo(const BufferInfo&) = delete;
         BufferInfo& operator=(const BufferInfo&) = delete;
@@ -3427,10 +3337,6 @@ namespace GL {
     };
 
     struct VertexArrayInfo {
-        /* !docs
-        A vertex array object (VAO), which is created by `glGenVertexArrays`.
-        */
-
         VertexArrayInfo() = default;
         VertexArrayInfo(const VertexArrayInfo&) = delete;
         VertexArrayInfo& operator=(const VertexArrayInfo&) = delete;
@@ -3504,10 +3410,6 @@ namespace GL {
     };
 
     struct ShaderInfo {
-        /* !docs
-        A shader object, which is created by `glCreateShader`.
-        */
-
         ShaderInfo() = default;
         ShaderInfo(const ShaderInfo&) = delete;
         ShaderInfo& operator=(const ShaderInfo&) = delete;
@@ -3593,10 +3495,6 @@ namespace GL {
     };
 
     struct VertexLayoutPool {
-        /* !docs
-        A vertex layout pool.
-        */
-
         std::vector<VertexLayout> layouts;
         ep_u64 currentIndex;
         ep_u64 frameSig;
@@ -3627,10 +3525,6 @@ namespace GL {
     };
 
     struct ProgramInfo {
-        /* !docs
-        A program object, which is created by `glCreateProgram`.
-        */
-
         ProgramInfo() = default;
         ProgramInfo(const ProgramInfo&) = delete;
         ProgramInfo& operator=(const ProgramInfo&) = delete;
@@ -3795,10 +3689,6 @@ namespace GL {
     };
 
     struct TextureInfo {
-        /* !docs
-        A texture object, which is created by `glGenTextures`.
-        */
-
         TextureInfo() = default;
         TextureInfo(const TextureInfo&) = delete;
         TextureInfo& operator=(const TextureInfo&) = delete;
@@ -3917,10 +3807,6 @@ namespace GL {
     };
 
     struct FramebufferInfo {
-        /* !docs
-        A framebuffer object (FBO), which is created by `glGenFramebuffers`.
-        */
-
         FramebufferInfo() = default;
         FramebufferInfo(const FramebufferInfo&) = delete;
         FramebufferInfo& operator=(const FramebufferInfo&) = delete;
@@ -3983,10 +3869,6 @@ namespace GL {
     };
 
     struct RenderbufferInfo {
-        /* !docs
-        A renderbuffer object (RBO), which is created by `glGenRenderbuffers`.
-        */
-
         RenderbufferInfo() = default;
         RenderbufferInfo(const RenderbufferInfo&) = delete;
         RenderbufferInfo& operator=(const RenderbufferInfo&) = delete;
@@ -4046,10 +3928,6 @@ namespace GL {
     };
 
     struct QueryInfo {
-        /* !docs
-        A query object, which is created by `glGenQueries`.
-        */
-
         QueryInfo() = default;
         QueryInfo(const QueryInfo&) = delete;
         QueryInfo& operator=(const QueryInfo&) = delete;
@@ -4122,10 +4000,6 @@ namespace GL {
     };
 
     struct SyncInfo {
-        /* !docs
-        A sync object, which is created by `glFenceSync`.
-        */
-
         SyncInfo() = default;
         SyncInfo(const SyncInfo&) = delete;
         SyncInfo& operator=(const SyncInfo&) = delete;
@@ -4173,10 +4047,6 @@ namespace GL {
     };
 
     struct GL33Context {
-        /* !docs
-        A gl context.
-        */
-
         GL33Context() = default;
         GL33Context(const GL33Context&) = delete;
         GL33Context& operator=(const GL33Context&) = delete;
@@ -4215,10 +4085,6 @@ namespace GL {
         };
 
         GLFeatureGuard getFeatureGuard(GLenum cap) noexcept {
-            /* !docs
-            Returns a guard that will keep the feature enabled or disabled when it goes out of scope.
-            */
-
             return GLFeatureGuard(this, cap, isEnabled(cap));
         }
 
@@ -4436,7 +4302,7 @@ void main() {
 
         ep_sp<ProgramInfo> createConfiguredProgram(const CreateProgramConfig& config) {
             /* !docs
-            Creates a configured program with default vertex shader and given fragment shader.
+            Creates a configured program with given config.
             */
 
             auto vert = createShader(GL_VERTEX_SHADER);
@@ -4629,10 +4495,6 @@ void main() {
         };
 
         void drawMesh(Mesh& mesh) noexcept {
-            /* !docs
-            Draw a mesh.
-            */
-
             if (!vertexPool->valid(mesh.vertices)) {
                 std::abort();
             }
@@ -4675,18 +4537,10 @@ void main() {
         };
 
         ViewportGuard getViewportGuard() noexcept {
-            /* !docs
-            Get a guard that will restore viewport on destruction.
-            */
-
             return ViewportGuard(this, getViewport());
         }
 
         void copyTexture(TextureInfo* src, TextureInfo* dst) noexcept {
-            /* !docs
-            Copy texture to another texture.
-            */
-
             if (!dst->sizeIsSame(src)) {
                 dst->use().image2D(src->width, src->height, nullptr);
             }
@@ -4704,7 +4558,6 @@ void main() {
 
         void copyCurrentToTexture(TextureInfo* dst) noexcept {
             /* !docs
-            Copy current framebuffer to texture.
             It supports multisampling framebuffers.
             */
 
@@ -4748,10 +4601,6 @@ void main() {
         }
 
         void gaussianBlurToTexture(TextureInfo* texture, ep_f64 radius) {
-            /* !docs
-            Apply gaussian blur to texture.
-            */
-
             auto mesh = requestMesh(6);
             mesh.program = preloadedPrograms.gaussianBlur.get();
 
@@ -4769,7 +4618,7 @@ void main() {
 
         void renderToDrawFbo(ep_u64 width, ep_u64 height, Mesh& descMesh) {
             /* !docs
-            Render mesh into draw framebuffer.
+            Render mesh into the draw framebuffer.
             */
 
             auto tempTexGuard = allocTempTexture(width, height);
@@ -5052,10 +4901,6 @@ void main() {
         };
 
         FBOGuard getFBOGuard() noexcept {
-            /* !docs
-            Creates a guard that will restore the draw&read framebuffer bindings when it goes out of scope.
-            */
-
             return FBOGuard(this);
         }
 
@@ -5167,10 +5012,6 @@ void main() {
     };
 
     struct GL33Canvas {
-        /* !docs
-        A canvas to draw on.
-        */
-
         Transform2D transform;
         GL33Context* glCtx;
 
@@ -5505,7 +5346,6 @@ void main() {
 
 struct DecodedAudio {
     /* !docs
-    A class to store decoded audio data.
     The data is pcm 16-bit signed integer and interleaved.
     */
 
@@ -5632,7 +5472,7 @@ struct DecodedAudio {
 
 struct AudioEngine {
     /* !docs
-    An audio engine to play audio.
+    A audio engine but it needs an external API to output audio.
     */
 
     AudioEngine() = default;
@@ -6029,10 +5869,6 @@ bool phiEventTypeIsMultiply(EnumPhiEventType type) noexcept {
 }
 
 struct PhiNoteTypeHelper {
-    /* !docs
-    A helper class for converting phigros note type to `@EnumPhiNoteType`.
-    */
-
     static EnumPhiNoteType FromOfficial(ep_u64 n) {
         if (n == 1) return EnumPhiNoteType::Tap;
         if (n == 2) return EnumPhiNoteType::Drag;
@@ -6059,10 +5895,6 @@ struct PhiNoteTypeHelper {
 };
 
 struct PhiLineAttachUIHelper {
-    /* !docs
-    A helper class for converting phigros line attach ui target to `@EnumPhiLineAttachUI`.
-    */
-
     static EnumPhiLineAttachUI FromString(const std::string& s) {
         if (s == "pause") return EnumPhiLineAttachUI::Pause;
         if (s == "bar") return EnumPhiLineAttachUI::Bar;
@@ -6076,10 +5908,6 @@ struct PhiLineAttachUIHelper {
 };
 
 struct PhiMeta {
-    /* !docs
-    The meta information of a phigros chart.
-    */
-
     ep_f64 offset;
     std::string title;
     std::string composer;
@@ -6115,10 +5943,6 @@ struct PhiMeta {
 };
 
 struct PhiBPMEvent {
-    /* !docs
-    A bpm event item for the phigros chart.
-    */
-
     ep_f64 time; // !inline-docs| It is a beat value, not a second value.
     ep_f64 bpm;
 
@@ -6131,7 +5955,7 @@ struct PhiBPMEvent {
 
 struct PhiEventLayerIndexs {
     /* !docs
-    The layer indexs preset of a phigros chart.
+    The layer indexs presets for phigros chart.
     */
 
     static constexpr ep_u64 RPE_MAX = 5;
@@ -6144,10 +5968,6 @@ struct PhiEventLayerIndexs {
 };
 
 struct PhiEvent {
-    /* !docs
-    A event item for the phigros chart.
-    */
-
     Vec2 timeZone; // !inline-docs| in seconds.
     Vec2 valueZone;
     EnumPhiEventType type;
@@ -6251,10 +6071,6 @@ struct PhiAnimLayer {
     }
 
     void updateType(ep_u64 type, ep_f64 t) noexcept {
-        /* !docs
-        Update the event value of a event type at a time.
-        */
-
         auto& typedEvents = getEvents((EnumPhiEventType)type);
         if (typedEvents.empty()) return;
 
@@ -6283,20 +6099,12 @@ struct PhiAnimLayer {
     }
 
     void update(ep_f64 t) noexcept {
-        /* !docs
-        Update all event values at a time.
-        */
-
         for (ep_u64 type = 0; type < (ep_u64)EnumPhiEventType::MAX; type++) {
             updateType(type, t);
         }
     }
 
     ep_f64 get(EnumPhiEventType type) noexcept {
-        /* !docs
-        Get the event value of a event type.
-        */
-
         if (events[(ep_u64)type].empty()) return PhiEvent::getDefaultValue(type);
         return currentValues[(ep_u64)type];
     }
@@ -6375,30 +6183,18 @@ struct PhiAnimGroup {
     }
 
     void init() {
-        /* !docs
-        Initialize all animation layers.
-        */
-
         for (auto& layer : layers) {
             layer.init();
         }
     }
 
     void updateType(EnumPhiEventType type, ep_f64 t) noexcept {
-        /* !docs
-        Update the event value of a event type at a time.
-        */
-
         for (auto& layer : layers) {
             layer.updateType(type, t);
         }
     }
 
     void update(ep_f64 t) noexcept {
-        /* !docs
-        Update all event values at a time.
-        */
-
         for (auto& layer : layers) {
             layer.update(t);
         }
@@ -6453,8 +6249,7 @@ struct PhiAnimGroup {
 
 struct PhiAnimator {
     /* !docs
-    The animator of a phigros chart.
-    It stores all animation groups of the chart.
+    The animator of a phigros chart that stores all animation groups of the chart.
     */
 
     std::unordered_map<ep_u64, PhiAnimGroup> groups;
@@ -6474,18 +6269,10 @@ struct PhiAnimator {
 
     template <typename T>
     void addEvent(T& obj, const PhiEvent& e) {
-        /* !docs
-        Add a event to a object.
-        */
-
         requestGroup(obj).addEvent(e);
     }
 
     void init() {
-        /* !docs
-        Initialize all animation groups.
-        */
-
         for (auto& [_, group] : groups) {
             group.init();
         }
@@ -6510,10 +6297,6 @@ struct PhiAnimator {
     }
 
     ep_f64 get(ep_u64 index, ep_f64 t, EnumPhiEventType type) noexcept {
-        /* !docs
-        Get the event value of the type of a object at a time.
-        */
-
         return get_based(index, t, type, PhiEvent::getDefaultValue(type));
     }
 
@@ -6587,10 +6370,6 @@ struct PhiAnimator {
 };
 
 struct PhiNote {
-    /* !docs
-    A note of the phigros chart.
-    */
-
     ObjectIndexer indexer;
 
     struct State {
@@ -6636,10 +6415,6 @@ struct PhiNote {
     }
 
     ep_f64 getFloorPositionAt(ep_f64 t, PhiAnimator& animator) noexcept {
-        /* !docs
-        Get the floor position of the note at a time.
-        */
-
         if (t > time && fixedHoldSpeed.has_value()) {
             return getFloorPositionAt(time, animator) + (t - time) * fixedHoldSpeed.value();
         }
@@ -6687,10 +6462,6 @@ struct PhiNoteGroup {
 };
 
 struct PhiLine {
-    /* !docs
-    A line of the phigros chart.
-    */
-
     ObjectIndexer indexer;
 
     std::vector<PhiBPMEvent> bpms;
@@ -6788,10 +6559,6 @@ struct PhiLine {
     }
 
     ep_f64 getBpmAtSecond(ep_f64 t) const noexcept {
-        /* !docs
-        Get the bpm at the given time.
-        */
-
         if (bpms.size() == 1) return bpms[0].bpm;
 
         for (ep_u64 i = 0; i < bpms.size(); i++) {
@@ -6816,10 +6583,6 @@ struct PhiLine {
 };
 
 struct PhiExtraEffectItem {
-    /* !docs
-    A extra effect item of the phigros chart.
-    */
-
     Vec2 timeZone;
     std::optional<ep_u64> targetLine;
     ep_u64 order;
@@ -6830,10 +6593,6 @@ struct PhiExtraEffectItem {
 };
 
 struct PhiExtra {
-    /* !docs
-    The extra of a phigros chart.
-    */
-
     std::vector<PhiExtraEffectItem> effects;
     std::vector<ep_u64> zOrderSortedEffects;
 
@@ -6853,10 +6612,6 @@ struct PhiExtra {
 };
 
 struct PhiShaderUniform {
-    /* !docs
-    A shader uniform of the phigros chart.
-    */
-
     ep_u8 used;
     ep_f64 value[4];
 
@@ -6894,10 +6649,6 @@ struct PhiShaderUniform {
 };
 
 struct PhiStoryboardAssets {
-    /* !docs
-    The assets of the storyboard of a phigros chart.
-    */
-
     // 用于区分是否到达了第一个
     static constexpr ep_f64 kTextIndexOffset = 1;
     static constexpr ep_f64 kColorIndexOffset = 1;
@@ -7048,10 +6799,6 @@ struct PhiStoryboardAssets {
 };
 
 struct PhiHitEffectItem {
-    /* !docs
-    A hit effect item of the phigros chart.
-    */
-
     struct Particle {
         ep_f64 dt, rotation, size;
     };
@@ -7062,10 +6809,6 @@ struct PhiHitEffectItem {
 };
 
 struct PhiChart {
-    /* !docs
-    The phigros chart.
-    */
-
     struct State {
         ep_f64 lastUpdateTime;
         ep_u64 firstHitEffectIndex;
@@ -7227,10 +6970,6 @@ struct PhiChart {
     }
 
     struct NoteFrameInfo {
-        /* !docs
-        Information of a note at a time.
-        */
-
         Vec2 headPosition, tailPosition;
         bool isArrived;
         ep_f64 lineRotation, textureRotation, speedVectorRotation;
@@ -7246,10 +6985,6 @@ struct PhiChart {
         PhiLine& line, PhiNote& note,
         ep_f64 time, const Vec2& screenSize
     ) noexcept {
-        /* !docs
-        Get the information of a note at a time.
-        */
-
         NoteFrameInfo info {};
 
         auto linePosition = getLinePosition(time, line, screenSize);
@@ -7305,10 +7040,6 @@ struct PhiChart {
     }
 
     ep_u64 getCombo(ep_f64 t) const noexcept {
-        /* !docs
-        Get the combo at a time.
-        */
-
         if (comboTimes.empty() || comboTimes[0] > t) return 0;
 
         ep_u64 left = 0, right = comboTimes.size() - 1;
@@ -7400,10 +7131,6 @@ struct PhiChart {
 };
 
 struct PhiChartLoadResult {
-    /* !docs
-    The result of loading a phigros chart.
-    */
-
     bool success;
     std::vector<std::string> errors;
     PhiChart chart;
@@ -7418,10 +7145,6 @@ struct PhiChartLoadResult {
     }
 
 PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
-    /* !docs
-    Loads a phigros chart from an official json data.
-    */
-
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) CHART_LOAD_FAILED("official", std::string("failed to parse json: ") + err);
@@ -7628,10 +7351,6 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
 }
 
 PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
-    /* !docs
-    Loads a phigros chart from a Re:PhiEdit JSON file.
-    */
-
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) CHART_LOAD_FAILED("rpe", std::string("failed to parse json: ") + err);
@@ -8141,10 +7860,6 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 }
 
 PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
-    /* !docs
-    Loads a phigros chart from a PhiEdit Chart file (.pec).
-    */
-
     struct TokenReader {
         std::string str;
         ep_u64 pos = 0;
@@ -8564,10 +8279,6 @@ PhiChartLoadResult loadPhiChartFromData(const Data& data) {
 #undef CHART_LOAD_FAILED
 
 std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
-    /* !docs
-    Loads extra from a data object.
-    */
-
     JsonNode jsonRoot;
     auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
     if (!jsonParseSuccess) return std::string("failed to parse json: ") + err;
@@ -8774,10 +8485,6 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
 }
 
 struct PhiStoryboardHelpers {
-    /* !docs
-    A helper function set for phigros storyboard assets.
-    */
-
     static std::string textureNameToPath(const std::string& dir, const std::string& name) {
         return std::filesystem::path(dir + "/" + name)
             .lexically_normal()
@@ -8840,10 +8547,6 @@ struct PhiStoryboardHelpers {
 };
 
 struct ParsedRPEChartInfo {
-    /* !docs
-    A struct for parsed RPE chart info.
-    */
-
     std::string name;
     std::string path;
     std::string song;
@@ -8914,10 +8617,6 @@ struct ParsedRPEChartInfo {
 };
 
 struct PhiCalculateFrameConfig {
-    /* !docs
-    Configuration for calculating a frame.
-    */
-
     struct NoteTextureInfo {
         struct Item {
             Vec2 textureSize;
@@ -8937,10 +8636,6 @@ struct PhiCalculateFrameConfig {
 };
 
 struct PhiCalculatedFrame {
-    /* !docs
-    The calculated frame.
-    */
-
     using CalculatedText = SharedCalculatedObjects::CalculatedText;
     using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
     using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
@@ -9020,10 +8715,6 @@ struct PhiCalculatedFrame {
 
     struct Cache {
         struct AttachUIData {
-            /* !docs
-            Data for attaching a phigros line which is attached ui.
-            */
-
             Vec2 position, scale = { 1.0, 1.0 };
             ep_f64 rotation;
             Color color = { 1.0, 1.0, 1.0, 1.0 };
@@ -9047,10 +8738,6 @@ void calculatePhiFrame(
     const PhiCalculateFrameConfig& config,
     PhiCalculatedFrame& frame
 ) {
-    /* !docs
-    Calculate a frame of the chart at the given time.
-    */
-
     frame.objects.clear();
     frame.hitsounds.clear();
     frame.cache.clear();
@@ -9956,10 +9643,6 @@ enum class EnumMilStoryboardLayer {
 };
 
 struct MilEventTypeHelper {
-    /* !docs
-    A helper for converting milthm event type to `@EnumMilEventType`.
-    */
-
     static EnumMilEventType FromInt(ep_u64 type) {
         if (type == 0) return EnumMilEventType::PositionX;
         if (type == 1) return EnumMilEventType::PositionY;
@@ -9990,10 +9673,6 @@ struct MilEventTypeHelper {
 };
 
 struct MilObjectTypeHelper {
-    /* !docs
-    A helper for converting milthm object type to `@EnumMilObjectType`.
-    */
-
     static EnumMilObjectType FromInt(ep_u64 type) {
         if (type == 0) return EnumMilObjectType::Line;
         if (type == 1) return EnumMilObjectType::Note;
@@ -10003,10 +9682,6 @@ struct MilObjectTypeHelper {
 };
 
 struct MilNoteTypeHelper {
-    /* !docs
-    A helper for converting milthm note type to `@EnumMilNoteType`.
-    */
-
     static EnumMilNoteType FromInt(ep_u64 type) {
         if (type == 0) return EnumMilNoteType::Hit;
         if (type == 1) return EnumMilNoteType::Drag;
@@ -10015,10 +9690,6 @@ struct MilNoteTypeHelper {
 };
 
 struct MilStoryboardTypeHelper {
-    /* !docs
-    A helper for converting milthm storyboard type to `@EnumMilStoryboardType`.
-    */
-
     static EnumMilStoryboardType FromInt(ep_u64 type) {
         if (type == 0) return EnumMilStoryboardType::Picture;
         if (type == 1) return EnumMilStoryboardType::Text;
@@ -10027,10 +9698,6 @@ struct MilStoryboardTypeHelper {
 };
 
 struct MilStoryboardLayerHelper {
-    /* !docs
-    A helper for converting milthm storyboard layer to `@EnumMilStoryboardLayer`.
-    */
-
     static EnumMilStoryboardLayer FromInt(ep_u64 type) {
         if (type == 0) return EnumMilStoryboardLayer::Background;
         if (type == 1) return EnumMilStoryboardLayer::Normal;
@@ -10040,10 +9707,6 @@ struct MilStoryboardLayerHelper {
 };
 
 struct MilMeta {
-    /* !docs
-    The meta information of a milthm chart.
-    */
-
     std::string title;
     std::string composer;
     std::string artist;
@@ -10070,17 +9733,13 @@ struct MilMeta {
 };
 
 struct MilBPMEvent {
-    /* !docs
-    A bpm event item for the milthm chart.
-    */
-
     ep_f64 time; // !inline-docs| in seconds.
     ep_f64 bpm;
 };
 
 struct MilEventLayerIndexs {
     /* !docs
-    The layer indexs preset of a milthm chart.
+    The layer indexs presets for milthm chart.
     */
 
     static constexpr ep_u64 UNIT = 1000000;
@@ -10172,10 +9831,6 @@ struct MilEvent {
 };
 
 struct MilAnimGroup {
-    /* !docs
-    A animation group for the milthm chart.
-    */
-
     std::vector<MilEvent> events[(ep_u64)EnumMilEventType::MAX];
     EnumMilObjectType objType;
 
@@ -10302,11 +9957,6 @@ struct MilAnimGroup {
 };
 
 struct MilAnimator {
-    /* !docs
-    The animator of a milthm chart.
-    Like `@PhiAnimator`.
-    */
-
     using ObjDesc = std::pair<EnumMilObjectType, ep_u64>;
 
     ObjectIndexGenerator<ObjDesc> indexGen;
@@ -10429,10 +10079,6 @@ bool fallbackMilNoteTextureDesc(MilNoteTextureDesc& desc) {
 }
 
 struct MilNote {
-    /* !docs
-    A note of the milthm chart.
-    */
-
     ObjectIndexer indexer;
     static constexpr auto ObjType = EnumMilObjectType::Note;
 
@@ -10491,10 +10137,6 @@ struct MilNote {
 };
 
 struct MilNoteGroup {
-    /* !docs
-    Like `@PhiNoteGroup`.
-    */
-
     struct State {
         ep_f64 lastUpdateTime;
         ep_u64 firstNoteIndex;
@@ -10521,10 +10163,6 @@ struct MilNoteGroup {
 };
 
 struct MilLine {
-    /* !docs
-    A line(track?) of the milthm chart.
-    */
-
     ObjectIndexer indexer;
     static constexpr auto ObjType = EnumMilObjectType::Line;
 
@@ -10560,10 +10198,6 @@ struct MilLine {
 };
 
 struct MilStoryboardObject {
-    /* !docs
-    A storyboard object of the milthm chart.
-    */
-
     ObjectIndexer indexer;
     static constexpr auto ObjType = EnumMilObjectType::Storyboard;
 
@@ -10573,10 +10207,6 @@ struct MilStoryboardObject {
 };
 
 struct MilStoryboardAssets {
-    /* !docs
-    The assets of the storyboard of a milthm chart.
-    */
-
     static constexpr ep_u64 kColorIndexOffset = 1;
 
     std::vector<Color> colors;
@@ -10601,10 +10231,6 @@ struct MilStoryboardAssets {
 };
 
 struct MilHitEffectItem {
-    /* !docs
-    A hit effect item for the milthm chart.
-    */
-
     struct Particle {
         ep_f64 dt;
         ep_f64 rotate;
@@ -10640,10 +10266,6 @@ struct MilHitEffectItem {
 };
 
 struct MilChart {
-    /* !docs
-    The milthm chart.
-    */
-
     struct State {
         ep_f64 lastUpdateTime;
         ep_u64 firstHitEffectIndex;
@@ -12214,10 +11836,6 @@ namespace easy_phi {
         }
 
         void loadFont(const Data& data, ep_u64 index = 0) {
-            /* !docs
-            Load a font from a data.
-            */
-
             fontData = data;
             if (!stbtt_InitFont(&font, fontData.data.data(), stbtt_GetFontOffsetForIndex(fontData.data.data(), index))) {
                 throw std::runtime_error("failed to load font");
@@ -12225,10 +11843,6 @@ namespace easy_phi {
         }
 
         DecodedRGBATexture render(const std::string& text, ep_u64 fontSize) {
-            /* !docs
-            Render a text to a texture.
-            */
-
             struct DrawedChar {
                 DecodedRGBATexture tex;
                 ep_i32 xoff, yoff;
