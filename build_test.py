@@ -61,8 +61,11 @@ build_cmds = [
     "g++", "-std=c++20",
     "-static",
     
-    "-O3" if not debug else "-O0",
+    "-Os" if not debug else "-O0",
     "" if not debug else "-ggdb",
+    
+    "-ffunction-sections" if not debug else "",
+    "-fdata-sections" if not debug else "",
     
     "-Wsign-compare",
     "-Wa,-mbig-obj",
@@ -78,10 +81,11 @@ build_cmds = [
     
     *sum(libraries.values(), []),
     
-    "-lgdi32", "-lopengl32", "-lole32",
-    "-lshell32", "-luuid", "-lbcrypt",
-    "-lws2_32", "-lcrypt32",
-    "-lcomctl32",
+    "-lole32", "-luuid", "-lgdi32",
+    "-lopengl32", "-lcomctl32", "-lbcrypt",
+    
+    "-Wl,--gc-sections" if not debug else "",
+    "-s" if not debug else "",
     
     "-o", f"./build/test{exec_ext}"
 ]
