@@ -1,4 +1,2 @@
 src/helpers/** linguist-vendored
-
-test_files/resources/inlined_resources.cpp linguist-vendored
 test_files/externals/** linguist-vendored

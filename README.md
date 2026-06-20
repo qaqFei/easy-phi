@@ -47,12 +47,6 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 
 ![Phigros Benchmark Result](./benchmark-phigros.png)
 
-## Examples
-
-For the completed example, check out [here](./test_files/test.cpp).
-
-And the `Open RPE Recorder` is a subproject of this project, you can find it [here](./test_files/open_rpe_recorder.cpp), we also provide its [release](https://github.com/qaqFei/easy-phi/releases).
-
 ## Building
 
 **Note**: This library requires **C++20 or later**.
@@ -71,6 +65,8 @@ If you want to use some extra features, you can define the following macros ([`h
 
 - `EASY_PHI_PHI_RESOURCE`: Enable internal phigros resource.
 
+- `EASY_PHI_MIL_RESOURCE`: Enable internal milthm resource.
+
 ### Tests
 
 Tests only supports Windows, and you need to install [python](https://www.python.org/downloads/) and  [mingw-w64](https://mingw-w64.org/doku.php/download) that supports C++20 or later to build the test programs.
@@ -78,11 +74,11 @@ Tests only supports Windows, and you need to install [python](https://www.python
 You can run the main test program by the following command:
 
 ```bash
-python ./build_test.py --run --debug
+python ./build_test.py --source open_rpe_recorder.cpp --run --debug
 ```
 
 ## Other
 
-The files in `test_files` and `src/helpers/resources` are **maybe not owned** by this project, please contact for removal if there is any copyright infringement.
+The files in `src/helpers/resources` are **maybe not owned** by this project, please contact for removal if there is any copyright infringement.
 
 **We do not guarantee that the api is stable between versions.**

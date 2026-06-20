@@ -4,6 +4,8 @@ import sys
 import time
 import struct
 
+assert os.name == "nt", "This script is only for Windows"
+
 def run(cmds: list[str]):
     cmds = list(filter(bool, cmds))
     print(cmds)
@@ -29,7 +31,7 @@ with open("./dev.flag", "w"):
     ...
 
 debug = "--debug" in sys.argv
-source = "test_phi.cpp" if "--source" not in sys.argv else sys.argv[sys.argv.index("--source") + 1]
+source = sys.argv[sys.argv.index("--source") + 1]
 libraries = {
     "glfw3": [
         "-I./test_files/externals/glfw3/include",
@@ -53,7 +55,7 @@ libraries = {
 
 short_commit_hash = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode("utf-8").strip()
 repo_github = "https://github.com/qaqFei/easy-phi"
-exec_ext = ".exe" if os.name == "nt" else ""
+exec_ext = ".exe"
 
 build_cmds = [
     "g++", "-std=c++20",
@@ -87,10 +89,7 @@ build_cmds = [
 run(build_cmds)
 
 if "--no-console" in sys.argv:
-    if os.name == "nt":
-        change_pe_to_gui_subsystem(f"./build/test{exec_ext}")
-    else:
-        print("WARNING: --no-console is not supported on non-Windows systems")
+    change_pe_to_gui_subsystem(f"./build/test{exec_ext}")
 
 if "--run" in sys.argv:
     run_cmds = [
