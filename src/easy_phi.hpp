@@ -9511,6 +9511,7 @@ struct PhiTakeOverer {
                     for (auto& [k, v] : shader.uniforms) v.setToGlLocation(prog->getUniformLocation(k));
 
                     prog->getUniformLocation("screenSize").setf(calcConfig.screenSize.x, calcConfig.screenSize.y);
+                    prog->getUniformLocation("time").setf(t);
                 }
 
                 auto mesh = glCtx->requestMesh(6);
