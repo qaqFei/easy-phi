@@ -30,6 +30,7 @@
 #include <cassert>
 #include <condition_variable>
 #include <queue>
+#include <format>
 
 namespace easy_phi {
 
@@ -46,18 +47,9 @@ using ep_i64 = int64_t;
 using ep_f32 = float;
 using ep_f64 = double;
 
-static ep_u64 globalCounter = 1;
-
 ep_u64 reqGlobalCounter() {
-    return globalCounter++;
-}
-
-bool cpuHasSSE2() {
-    unsigned int eax, ebx, ecx, edx;
-    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
-        return false;
-    }
-    return (edx & (1u << 26)) != 0;
+    static ep_u64 n = 1;
+    return n++;
 }
 
 template <typename T1, typename T2>
@@ -82,13 +74,10 @@ struct AlignedAllocator {
     using value_type = T;
 
     AlignedAllocator() = default;
-    template <typename U>
-    AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+    template <typename U> AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
 
     template <typename U>
-    struct rebind {
-        using other = AlignedAllocator<U, Alignment>;
-    };
+    struct rebind { using other = AlignedAllocator<U, Alignment>; };
 
     T* allocate(std::size_t n) {
         if (n > std::numeric_limits<std::size_t>::max() / sizeof(T))
@@ -164,27 +153,6 @@ std::string toUtfChar(ep_u16 n, ep_u16 n2 = 0) {
     }
     
     return result;
-}
-
-std::string formatToStdString(const char* fmt, ...) {
-    /* !docs
-    Format a string with the same syntax as **`printf`**.
-    */
-
-    va_list args;
-
-    va_start(args, fmt);
-    int len = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if (len < 0) return "";
-
-    std::vector<char> buf(len + 1);
-    va_start(args, fmt);
-    vsnprintf(buf.data(), buf.size(), fmt, args);
-    va_end(args);
-
-    return std::string(buf.data(), len);
 }
 
 void checkBoolAndThrow(bool condition, const std::string& msg, const std::string& prefix = "") {
@@ -544,7 +512,7 @@ struct ThreadSafeQueue {
         cv.notify_all();
     }
     
-    size_t size_approx() const {
+    ep_u64 size_approx() const {
         std::lock_guard<std::mutex> lock(mtx);
         return queue.size();
     }
@@ -1012,7 +980,7 @@ struct JsonNode {
             stream << '"';
         } else if (isNumber()) {
             auto number = getNumber();
-            stream << (std::fmod(number, 1.0) != 0.0 ? formatToStdString("%.10g", number) : std::to_string((ep_i64)number));
+            stream << (std::fmod(number, 1.0) != 0.0 ? std::format("{:.10g}", number) : std::to_string((ep_i64)number));
         } else if (isBool()) stream << (getBool() ? "true" : "false");
         else if (isArray()) {
             stream << '[';
@@ -1035,9 +1003,7 @@ struct JsonNode {
         } else if (isNull()) stream << "null";
     }
 
-    void print() const {
-        print(std::cout);
-    }
+    void print() const { print(std::cout); }
 
     std::string toString() const {
         std::string result;
@@ -1115,7 +1081,7 @@ private:
                 else out += c;
             }
             out += '"';
-        } else if (isNumber()) out += formatToStdString("%.10g", getNumber());
+        } else if (isNumber()) out += std::format("{:.10g}", getNumber());
         else if (isBool()) out += (getBool() ? "true" : "false");
         else if (isArray()) {
             out += '[';
@@ -1407,11 +1373,9 @@ struct Rect {
         New a rect with the padding applied to all sides.
         */
 
-        return Rect {
-            .x = x - padding,
-            .y = y - padding,
-            .w = w + padding * 2,
-            .h = h + padding * 2
+        return {
+            x - padding, y - padding,
+            w + padding * 2, h + padding * 2
         };
     }
 };
@@ -1722,7 +1686,7 @@ struct ColorLink {
             }
         }
 
-        ep_assert(false, "??????");
+        ep_assert(false, "ColorLink::get failed");
         return {};
     }
 };
@@ -1755,9 +1719,7 @@ struct ObjectIndexGenerator {
 
 struct Timer {
     ep_f64 start;
-
     Timer() : start(globalTimer()) {}
-
     ep_f64 elapsed() const noexcept { return globalTimer() - start; }
 };
 
@@ -1784,45 +1746,37 @@ private:
 };
 
 struct Transform2D {
-    ep_f64 matrix[6];
+    ep_f64 mat[6];
 
     Transform2D(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) noexcept {
-        matrix[0] = a; matrix[1] = b;
-        matrix[2] = c; matrix[3] = d;
-        matrix[4] = e; matrix[5] = f;
+        set(a, b, c, d, e, f);
     }
 
     Transform2D() noexcept {
-        matrix[0] = 1.0; matrix[1] = 0.0;
-        matrix[2] = 0.0; matrix[3] = 1.0;
-        matrix[4] = 0.0; matrix[5] = 0.0;
+        set(1, 0, 0, 1, 0, 0);
     }
 
     Transform2D& set(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) noexcept {
-        matrix[0] = a; matrix[1] = b;
-        matrix[2] = c; matrix[3] = d;
-        matrix[4] = e; matrix[5] = f;
+        mat[0] = a; mat[1] = b;
+        mat[2] = c; mat[3] = d;
+        mat[4] = e; mat[5] = f;
         return *this;
     }
 
     Transform2D& transform(ep_f64 a, ep_f64 b, ep_f64 c, ep_f64 d, ep_f64 e, ep_f64 f) noexcept {
         set(
-            matrix[0] * a + matrix[2] * b,
-            matrix[1] * a + matrix[3] * b,
-            matrix[0] * c + matrix[2] * d,
-            matrix[1] * c + matrix[3] * d,
-            matrix[0] * e + matrix[2] * f + matrix[4],
-            matrix[1] * e + matrix[3] * f + matrix[5]
+            mat[0] * a + mat[2] * b,
+            mat[1] * a + mat[3] * b,
+            mat[0] * c + mat[2] * d,
+            mat[1] * c + mat[3] * d,
+            mat[0] * e + mat[2] * f + mat[4],
+            mat[1] * e + mat[3] * f + mat[5]
         );
         return *this;
     }
 
     Transform2D& transform(const Transform2D& o) noexcept {
-        transform(
-            o.matrix[0], o.matrix[1],
-            o.matrix[2], o.matrix[3],
-            o.matrix[4], o.matrix[5]
-        );
+        transform(o.mat[0], o.mat[1], o.mat[2], o.mat[3], o.mat[4], o.mat[5]);
         return *this;
     }
 
@@ -1865,8 +1819,8 @@ struct Transform2D {
 
     Vec2 transformPoint(ep_f64 x, ep_f64 y) const noexcept {
         return Vec2 {
-            matrix[0] * x + matrix[2] * y + matrix[4],
-            matrix[1] * x + matrix[3] * y + matrix[5]
+            mat[0] * x + mat[2] * y + mat[4],
+            mat[1] * x + mat[3] * y + mat[5]
         };
     }
 
@@ -1875,13 +1829,13 @@ struct Transform2D {
     }
 
     Transform2D getInverse() const noexcept {
-        ep_f64 det = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+        ep_f64 det = mat[0] * mat[3] - mat[1] * mat[2];
         ep_f64 invDet = det != 0 ? 1.0 / det : 1e9;
         return Transform2D(
-            matrix[3] * invDet, -matrix[1] * invDet,
-            -matrix[2] * invDet, matrix[0] * invDet,
-            (matrix[2] * matrix[5] - matrix[3] * matrix[4]) * invDet,
-            (matrix[1] * matrix[4] - matrix[0] * matrix[5]) * invDet
+            mat[3] * invDet, -mat[1] * invDet,
+            -mat[2] * invDet, mat[0] * invDet,
+            (mat[2] * mat[5] - mat[3] * mat[4]) * invDet,
+            (mat[1] * mat[4] - mat[0] * mat[5]) * invDet
         );
     }
 };
@@ -3038,7 +2992,7 @@ namespace GL {
     struct Vertex {
         GLvec2 position;
         GLvec2 texCoord;
-        GLvec4 color;
+        GLvec4 color = GLvec4::White();
     };
 
     struct BufferInfo;
@@ -3125,7 +3079,7 @@ namespace GL {
                 offset++;
             }
 
-            chunks.push_back(Chunk::Make(std::max(defaultChunkSize, count)));
+            chunks.push_back(Chunk::Make(count + defaultChunkSize));
             return allocSuccess(chunks[offset]->alloc(count), count);
         }
 
@@ -3161,6 +3115,8 @@ namespace GL {
         TextureInfo* texture;
         ProgramInfo* program;
 
+        auto* vnext() noexcept { return vertices.next(); }
+
         void addRect(const GLvec2& position, const GLvec2& size, const GLvec2& uvPosition, const GLvec2& uvSize, const GLvec4& color = GLvec4::White()) noexcept {
             if (size.x <= 0 || size.y <= 0) return;
 
@@ -3179,22 +3135,6 @@ namespace GL {
 
         void addRectCentered(const GLvec2& center, const GLvec2& radius, const GLvec2& uvCenter, const GLvec2& uvRadius, const GLvec4& color = GLvec4::White()) noexcept {
             addRect(center - radius, radius * 2, uvCenter - uvRadius, uvRadius * 2, color);
-        }
-
-        static ep_u64 getPolygonVerticesCount(ep_u64 pointsCount) noexcept {
-            /* !docs
-            Get the number of vertices required to draw a polygon with the given number of points.
-            */
-
-            return (pointsCount - 2) * 3;
-        }
-
-        void addPolygon(const std::vector<GLvec2>& points, const std::vector<GLvec2>& uvs) noexcept {
-            for (ep_i64 i = 0; i < (ep_i64)points.size() - 2; i++) {
-                *vertices.next() = { points[0], uvs[0], GLvec4::White() };
-                *vertices.next() = { points[i + 1], uvs[i + 1], GLvec4::White() };
-                *vertices.next() = { points[i + 2], uvs[i + 2], GLvec4::White() };
-            }
         }
     };
 
@@ -3273,24 +3213,6 @@ namespace GL {
                 }
             };
 
-            struct RangeMappingGuard {
-                UsingGuard* ref;
-                void* data;
-
-                RangeMappingGuard(UsingGuard& buffer, GLintptr offset, GLsizeiptr length, GLbitfield access = GL_READ_WRITE) : ref(&buffer) {
-                    data = ref->ref->glRef->glMapBufferRange(ref->ref->target, offset, length, access);
-                }
-
-                RangeMappingGuard(const RangeMappingGuard&) = delete;
-                RangeMappingGuard& operator=(const RangeMappingGuard&) = delete;
-                RangeMappingGuard(RangeMappingGuard&&) = delete;
-                RangeMappingGuard& operator=(RangeMappingGuard&&) = delete;
-
-                ~RangeMappingGuard() {
-                    ref->ref->glRef->glUnmapBuffer(ref->ref->target);
-                }
-            };
-
             MappingGuard map(GLbitfield access) {
                 return MappingGuard(*this, access);
             }
@@ -3298,15 +3220,6 @@ namespace GL {
             ep_sp<MappingGuard> mapSp(GLbitfield access) {
                 auto* guard = new MappingGuard(*this, access);
                 return ep_sp<MappingGuard>(guard);
-            }
-
-            RangeMappingGuard mapRange(GLintptr offset, GLsizeiptr length, GLbitfield access) {
-                return RangeMappingGuard(*this, offset, length, access);
-            }
-
-            ep_sp<RangeMappingGuard> mapRangeSp(GLintptr offset, GLsizeiptr length, GLbitfield access) {
-                auto* guard = new RangeMappingGuard(*this, offset, length, access);
-                return ep_sp<RangeMappingGuard>(guard);
             }
 
             ~UsingGuard() {
@@ -3383,10 +3296,6 @@ namespace GL {
                 ref->glRef->glVertexAttribIPointer(index, size, type, stride, pointer);
             }
 
-            void divisor(GLuint index, GLuint divisor) {
-                ref->glRef->glVertexAttribDivisor(index, divisor);
-            }
-
             ~UsingGuard() {
                 // ref->glRef->glBindVertexArray(0);
             }
@@ -3440,18 +3349,6 @@ namespace GL {
             const GLchar* ptr = (GLchar*)source.c_str();
             GLint len = source.length();
             glRef->glShaderSource(id, 1, &ptr, &len);
-        }
-
-        void source(std::span<const std::string> sources) {
-            std::vector<const GLchar*> ptrs;
-            std::vector<GLint> lens;
-            ptrs.reserve(sources.size());
-            lens.reserve(sources.size());
-            for (const auto& source : sources) {
-                ptrs.push_back((GLchar*)source.c_str());
-                lens.push_back(source.length());
-            }
-            glRef->glShaderSource(id, sources.size(), ptrs.data(), lens.data());
         }
 
         bool compile(std::string* outLog = nullptr) {
@@ -4158,12 +4055,6 @@ namespace GL {
         }
 
         void blendFunc(GLenum sfactor, GLenum dfactor) noexcept { gl.glBlendFunc(sfactor, dfactor); }
-        void blendFuncSeparate(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha) noexcept { gl.glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha); }
-        void blendEquation(GLenum mode) noexcept { gl.glBlendEquation(mode); }
-        void blendEquationSeparate(GLenum modeRGB, GLenum modeAlpha) noexcept { gl.glBlendEquationSeparate(modeRGB, modeAlpha); }
-        void blendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) noexcept { gl.glBlendColor(r, g, b, a); }
-        
-        void colorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a) noexcept { gl.glColorMask(r, g, b, a); }
 
         ep_sp<QueryInfo> createQuery() {
             auto* info = new QueryInfo();
@@ -5817,8 +5708,9 @@ namespace TakeOvererComponents {
         } else if (std::holds_alternative<CalculatedPoly>(obj)) {
             auto& poly = std::get<CalculatedPoly>(obj);
 
-            auto mesh = glCtx->requestMesh(Mesh::getPolygonVerticesCount(4));
-            mesh.addPolygon({ poly.p1, poly.p2, poly.p3, poly.p4 }, { {}, {}, {}, {} });
+            auto mesh = glCtx->requestMesh(6);
+            *mesh.vnext() = { poly.p1 }; *mesh.vnext() = { poly.p2 }; *mesh.vnext() = { poly.p4 };
+            *mesh.vnext() = { poly.p4 }; *mesh.vnext() = { poly.p3 }; *mesh.vnext() = { poly.p2 };
             mesh.color = poly.color;
             cvs.drawMesh(mesh);
         } else return false;
@@ -6707,9 +6599,9 @@ struct PhiStoryboardAssets {
             auto v = (ev - sv) * p + sv;
 
             if (std::fmod(sv, 1.0) == 0.0 && std::fmod(ev, 1.0) == 0.0) {
-                return formatToStdString("%.0f", v);
+                return std::format("{:.0f}", v);
             } else {
-                return formatToStdString("%.3f", v);
+                return std::format("{:.3f}", v);
             }
         } else if (s.empty() && e.empty()) return "";
         else if (e.empty()) return textInterplate(e, replaceStringWith(s, "%P%", ""), 1.0 - p);
@@ -9160,7 +9052,7 @@ void calculatePhiFrame(
 
     ep_u64 score = chart.comboTimes.size() ? std::clamp<ep_f64>(std::ceil((ep_f64)1000000 / chart.comboTimes.size() * combo), 0, 1000000) : 1000000;
     frame.objects.push_back(processAttachUIText(PhiCalculatedFrame::CalculatedText {
-        .text = formatToStdString("%07llu", score),
+        .text = std::format("{:07}", score),
         .position = toScreen({ safeAreaSize.x * (1 - ((ep_f64)40 / 1920)), safeAreaSize.x * 0.01614583 }),
         .anchor = { 1.0, 0.0 },
         .fontSize = safeAreaSize.x * 0.0277778
@@ -11301,7 +11193,7 @@ void calculateMilFrame(
 
     ep_f64 targetScore = chart.comboTimes.size() ? std::clamp<ep_f64>(std::ceil((ep_f64)1010000 / chart.comboTimes.size() * combo), 0, 1010000) : 1010000;
     frame.objects.push_back(MilCalculatedFrame::CalculatedText {
-        .text = formatToStdString("%07llu", (ep_u64)chart.state.scoreAnim.weakSet(time, targetScore).get(time)),
+        .text = std::format("{:07}", (ep_u64)chart.state.scoreAnim.weakSet(time, targetScore).get(time)),
         .position = Vec2(config.screenSize.x) * Vec2 { 0.9752375, 0.0395833 },
         .anchor = { 1.0, 0.5 },
         .fontSize = config.screenSize.x * 0.0268352,

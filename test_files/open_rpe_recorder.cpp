@@ -375,7 +375,7 @@ int main() {
                 }
             } catch (...) { }
 
-            WidgetStatics::TextInput::setText(win->refWidget(id), Win32Utils::stringToWstring(easy_phi::formatToStdString("%.10g", value)));
+            WidgetStatics::TextInput::setText(win->refWidget(id), Win32Utils::stringToWstring(std::format("{:.10g}", value)));
         };
 
         auto intInput = [&](int id, int value) {
