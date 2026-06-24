@@ -5,9 +5,7 @@
 #define EASY_PHI_MIL_RESOURCE
 #include <easy_phi.hpp>
 
-#define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
 extern "C" {
     #include <libavcodec/avcodec.h>
     #include <libavformat/avformat.h>
@@ -362,26 +360,21 @@ struct PhiWindow {
     }
 
     auto loadChart(const std::string& path, const std::string& chartDir) {
-        auto data = Data::MakeFromFile(path);
-
         base.chartDir = chartDir;
+        auto data = Data::MakeFromFile(path);
 
         auto resultInfo = renderer->loadChart(data, [this](auto& chart) {
             Data extraData;
             if (Data::MakeFromFile(extraData, base.chartDir + "extra.json")) {
-                auto extraLoadResult = loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
-                if (std::holds_alternative<PhiExtra>(extraLoadResult)) {
-                    chart.extra = std::move(std::get<PhiExtra>(extraLoadResult));
-                } else if (std::holds_alternative<std::string>(extraLoadResult)) {
-                    std::cout << "failed to load extra: " << std::get<std::string>(extraLoadResult) << std::endl;
+                try {
+                    chart.extra = loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
+                } catch (const std::exception& e) {
+                    std::cout << "failed to load extra: " << e.what() << std::endl;
                 }
             }
 
             chart.init();
         });
-
-        std::cout << "create chart object took: " << resultInfo.createObjectTook << " s" << std::endl;
-        std::cout << "init chart took: " << resultInfo.initTook << " s" << std::endl;
 
         resultInfo.checkAndThrow();
         return resultInfo;
@@ -392,10 +385,7 @@ struct PhiWindow {
     };
 
     bool mainloopFrame(const MainloopConfig& config) {
-        return base.mainloopFrame<decltype(renderer)>(
-            config.base,
-            renderer
-        );
+        return base.mainloopFrame<decltype(renderer)>(config.base, renderer);
     }
 };
 
@@ -426,15 +416,10 @@ struct MilWindow {
     }
 
     auto loadChart(const std::string& path, const std::string& chartDir) {
-        auto data = Data::MakeFromFile(path);
-
         base.chartDir = chartDir;
+        auto data = Data::MakeFromFile(path);
         
         auto resultInfo = renderer->loadChart(data);
-
-        std::cout << "create chart object took: " << resultInfo.createObjectTook << " s" << std::endl;
-        std::cout << "init chart took: " << resultInfo.initTook << " s" << std::endl;
-
         resultInfo.checkAndThrow();
         return resultInfo;
     }
@@ -444,9 +429,6 @@ struct MilWindow {
     };
     
     bool mainloopFrame(const MainloopConfig& config) {
-        return base.mainloopFrame<decltype(renderer)>(
-            config.base,
-            renderer
-        );
+        return base.mainloopFrame<decltype(renderer)>(config.base, renderer);
     }
 };

@@ -730,16 +730,15 @@ struct JsonNode {
         }
     };
 
-    static std::pair<bool, std::string> Parse(JsonNode* dst, StringReader& reader) {
+    static JsonNode Parse(StringReader& reader) {
         /* !docs
         Parse a JSON string into a JsonNode.
         The result is a pair of a boolean indicating success and a string containing an error message if failed.
         */
 
-        #define FAILED(err, msg) \
-            { \
-                return { false, std::string(err) + ": " + msg + " " + reader.generatePositionString() }; \
-            }
+        auto failed = [&](const std::string& err) {
+            throw std::runtime_error(std::format("{} at {}", err, reader.generatePositionString()));
+        };
         
         reader.eatWhitespace();
 
@@ -753,8 +752,7 @@ struct JsonNode {
                 if (reader.nextIs('"') && !isInBackslash) {
                     reader.pos++;
                     str.shrink_to_fit();
-                    *dst = MakeStringMove(std::move(str));
-                    return { true, "" };
+                    return MakeStringMove(std::move(str));
                 } else if (reader.nextIs('\\') && !isInBackslash) {
                     isInBackslash = true;
                     reader.pos++;
@@ -780,22 +778,22 @@ struct JsonNode {
                         reader.pos++;
 
                         ep_u16 u1;
-                        if (!reader.readUnicodeEscape(&u1)) FAILED("invalid unicode escape", reader.getNextCharToString());
+                        if (!reader.readUnicodeEscape(&u1)) failed("invalid unicode escape");
 
                         ep_u16 u2 = 0;
                         if (u1 >= 0xD800 && u1 <= 0xDBFF) {
-                            if (!reader.nextIsSub("\\u")) FAILED("expected \\u for surrogate pair", reader.getNextCharToString());
+                            if (!reader.nextIsSub("\\u")) failed("expected \\u for surrogate pair");
                             reader.pos += 2;
 
-                            if (!reader.readUnicodeEscape(&u2)) FAILED("invalid unicode escape", reader.getNextCharToString());
-                            if (u2 < 0xDC00 || u2 > 0xDFFF) FAILED("invalid surrogate pair", reader.getNextCharToString());
+                            if (!reader.readUnicodeEscape(&u2)) failed("invalid unicode escape");
+                            if (u2 < 0xDC00 || u2 > 0xDFFF) failed("invalid surrogate pair");
                         } else if (u1 >= 0xDC00 && u1 <= 0xDFFF) {
-                            FAILED("invalid low surrogate", reader.getNextCharToString());
+                            failed("invalid low surrogate");
                         }
 
                         str += toUtfChar(u1, u2);
                     } else {
-                        FAILED("unexpected char after backslash", reader.getNextCharToString());
+                        failed("unexpected char after backslash");
                     }
 
                     isInBackslash = false;
@@ -804,7 +802,7 @@ struct JsonNode {
                 }
             }
 
-            FAILED("unexpected eof", "");
+            failed("unexpected eof");
         } else if (reader.nextIsAny("0123456789-")) {
             ep_f64 num = 0;
             bool isNegative = reader.nextIs('-');
@@ -828,7 +826,7 @@ struct JsonNode {
                         hasFraction = true;
                     }
                 } else if (c == '.') {
-                    if (afterDot) FAILED("unexpected dot", reader.getNextCharToString());
+                    if (afterDot) failed("unexpected dot");
                     afterDot = true;
                 } else if (c == 'e' || c == 'E') {
                     if (hasFraction) num += fraction / (ep_f64)decimal;
@@ -852,28 +850,24 @@ struct JsonNode {
                         }
                     }
                     
-                    if (!hasExp) FAILED("expected exponent digits", reader.getNextCharToString());
+                    if (!hasExp) failed("expected exponent digits");
 
                     if (isNegativeExp) num /= std::pow<ep_f64>(10, exp);
                     else num *= std::pow<ep_f64>(10, exp);
-                    *dst = MakeNumber(num * (isNegative ? -1 : 1));
-                    return { true, "" };
+                    return MakeNumber(num * (isNegative ? -1 : 1));
                 } else {
                     reader.pos--;
                     if (hasFraction) num += fraction / (ep_f64)decimal;
-                    *dst = MakeNumber(num * (isNegative ? -1 : 1));
-                    return { true, "" };
+                    return MakeNumber(num * (isNegative ? -1 : 1));
                 }
             }
             
             if (hasFraction) num += fraction / (ep_f64)decimal;
-            *dst = MakeNumber(num * (isNegative ? -1 : 1));
-            return { true, "" };
+            return MakeNumber(num * (isNegative ? -1 : 1));
         } else if (reader.nextIsSubAny({ "true", "false" })) {
             bool b = reader.nextIsSub("true");
-            *dst = MakeBool(b);
             reader.pos += b ? 4 : 5;
-            return { true, "" };
+            return MakeBool(b);
         } else if (reader.nextIs('[')) {
             reader.pos++;
             std::vector<JsonNode> arr;
@@ -883,25 +877,21 @@ struct JsonNode {
                 reader.eatWhitespace();
 
                 if (reader.nextIs(']')) {
-                    *dst = MakeArrayMove(std::move(arr));
                     reader.pos++;
-                    return { true, "" };
+                    return MakeArrayMove(std::move(arr));
                 }
 
                 if (arr.size()) {
-                    if (!reader.nextIs(',')) FAILED("expected comma", reader.getNextCharToString());
+                    if (!reader.nextIs(',')) failed("expected comma");
                     reader.pos++;
                     reader.eatWhitespace();
                 }
 
-                JsonNode node;
-                auto [success, err] = Parse(&node, reader);
-                if (!success) return { false, err };
-
+                auto node = Parse(reader);
                 arr.push_back(std::move(node));
             }
 
-            FAILED("unexpected eof", "");
+            failed("unexpected eof");
         } else if (reader.nextIs('{')) {
             reader.pos++;
             std::unordered_map<std::string, JsonNode> obj;
@@ -911,56 +901,44 @@ struct JsonNode {
                 reader.eatWhitespace();
 
                 if (reader.nextIs('}')) {
-                    *dst = MakeObjectMove(std::move(obj));
                     reader.pos++;
-                    return { true, "" };
+                    return MakeObjectMove(std::move(obj));
                 }
 
                 if (obj.size()) {
-                    if (!reader.nextIs(',')) FAILED("expected comma", reader.getNextCharToString());
+                    if (!reader.nextIs(',')) failed("expected comma");
                     reader.pos++;
                     reader.eatWhitespace();
                 }
 
-                JsonNode key;
-                {
-                    auto [success, err] = Parse(&key, reader);
-                    if (!success) return { false, err };
-                }
-
-                if (!key.isString()) FAILED("expected string", key.getString());
+                auto key = Parse(reader);
+                if (!key.isString()) failed("expected string");
 
                 reader.eatWhitespace();
-                if (!reader.nextIs(':')) FAILED("expected colon", reader.getNextCharToString());
+                if (!reader.nextIs(':')) failed("expected colon");
                 reader.pos++;
                 reader.eatWhitespace();
 
-                JsonNode value;
-                {
-                    auto [success, err] = Parse(&value, reader);
-                    if (!success) return { false, err };
-                }
-
+                auto value = Parse(reader);
                 obj.emplace(std::move(key.getString()), std::move(value));
             }
 
-            FAILED("unexpected eof", "");
+            failed("unexpected eof");
         } else if (reader.nextIsSub("null")) {
-            *dst = MakeNull();
             reader.pos += 4;
-            return { true, "" };
+            return MakeNull();
         }
 
-        FAILED("unexpected char", reader.getNextCharToString());
-        #undef FAILED
+        failed("unexpected char");
+        return MakeNull();
     }
 
-    static std::pair<bool, std::string> Parse(JsonNode* dst, const Data& data) {
+    static JsonNode Parse(const Data& data) {
         StringReader reader(std::string_view(
             (const char*)data.data.data(),
             data.data.size()
         ));
-        return Parse(dst, reader);
+        return Parse(reader);
     }
 
     template<typename T>
@@ -5637,16 +5615,14 @@ namespace TakeOvererComponents {
 
     struct LoadChartResultInfo {
         bool success = true;
-        std::vector<std::string> errors;
+        std::string error;
 
         ep_f64 createObjectTook;
         ep_f64 initTook;
 
         void checkAndThrow() const {
             if (success) return;
-            std::string messages = "";
-            for (const auto& error : errors) messages += error + "\n";
-            throw std::runtime_error("failed to load chart: " + messages);
+            throw std::runtime_error(error);
         }
 
         ep_f64 totalTook() const {
@@ -7022,31 +6998,19 @@ struct PhiChart {
     }
 };
 
-struct PhiChartLoadResult {
-    bool success;
-    std::vector<std::string> errors;
-    PhiChart chart;
-};
+PhiChart loadPhiChartFromOfficialJson(const Data& data) {
+    auto failed = [](const std::string& msg) {
+        throw std::runtime_error(std::format("official: {}", msg));
+    };
 
-#define CHART_LOAD_FAILED(prefix, err) \
-    { \
-        return PhiChartLoadResult { \
-            .success = false, \
-            .errors = { std::string(prefix) + ": " + (err) } \
-        }; \
-    }
-
-PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
-    JsonNode jsonRoot;
-    auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
-    if (!jsonParseSuccess) CHART_LOAD_FAILED("official", std::string("failed to parse json: ") + err);
+    auto jsonRoot = JsonNode::Parse(data);
 
     PhiChart chart {};
 
-    if (!jsonRoot.isObject()) CHART_LOAD_FAILED("official", "root is not an object");
+    if (!jsonRoot.isObject()) failed("root is not an object");
 
-    if (!jsonRoot.hasKey("formatVersion")) CHART_LOAD_FAILED("official", "missing formatVersion field");
-    if (!jsonRoot["formatVersion"].isNumber()) CHART_LOAD_FAILED("official", "formatVersion is not a number");
+    if (!jsonRoot.hasKey("formatVersion")) failed("missing formatVersion field");
+    if (!jsonRoot["formatVersion"].isNumber()) failed("formatVersion is not a number");
     ep_u64 formatVersion = jsonRoot["formatVersion"].getNumber();
 
     chart.meta.isHoldCoverAtHead = true;
@@ -7059,30 +7023,30 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
     chart.meta.worldViewport = { 1.0, -1.0 };
 
     if (1 <= formatVersion && formatVersion <= 3) {
-        if (!jsonRoot.hasKey("offset")) CHART_LOAD_FAILED("official", "missing offset field");
-        if (!jsonRoot["offset"].isNumber()) CHART_LOAD_FAILED("official", "offset is not a number");
+        if (!jsonRoot.hasKey("offset")) failed("missing offset field");
+        if (!jsonRoot["offset"].isNumber()) failed("offset is not a number");
         chart.meta.offset = jsonRoot["offset"].getNumber();
 
-        if (!jsonRoot.hasKey("judgeLineList")) CHART_LOAD_FAILED("official", "missing judgeLineList field");
-        if (!jsonRoot["judgeLineList"].isArray()) CHART_LOAD_FAILED("official", "judgeLineList is not an array");
+        if (!jsonRoot.hasKey("judgeLineList")) failed("missing judgeLineList field");
+        if (!jsonRoot["judgeLineList"].isArray()) failed("judgeLineList is not an array");
         auto& judgeLineListNode = jsonRoot["judgeLineList"];
 
         for (auto& judgeLineNode : judgeLineListNode.getArray()) {
-            if (!judgeLineNode.isObject()) CHART_LOAD_FAILED("official", "judgeLineList item is not an object");
+            if (!judgeLineNode.isObject()) failed("judgeLineList item is not an object");
             
             auto& line = chart.lines.emplace_back();
             line.enableCover = true;
 
-            if (!judgeLineNode.hasKey("bpm")) CHART_LOAD_FAILED("official", "missing bpm field");
-            if (!judgeLineNode["bpm"].isNumber()) CHART_LOAD_FAILED("official", "bpm is not a number");
+            if (!judgeLineNode.hasKey("bpm")) failed("missing bpm field");
+            if (!judgeLineNode["bpm"].isNumber()) failed("bpm is not a number");
             ep_f64 bpm = judgeLineNode["bpm"].getNumber();
             ep_f64 timeFactor = 1.875 / bpm;
             line.bpms = { { 0, bpm } };
 
-            if (!judgeLineNode.hasKey("notesAbove")) CHART_LOAD_FAILED("official", "missing notesAbove field");
-            if (!judgeLineNode["notesAbove"].isArray()) CHART_LOAD_FAILED("official", "notesAbove is not an array");
-            if (!judgeLineNode.hasKey("notesBelow")) CHART_LOAD_FAILED("official", "missing notesBelow field");
-            if (!judgeLineNode["notesBelow"].isArray()) CHART_LOAD_FAILED("official", "notesBelow is not an array");
+            if (!judgeLineNode.hasKey("notesAbove")) failed("missing notesAbove field");
+            if (!judgeLineNode["notesAbove"].isArray()) failed("notesAbove is not an array");
+            if (!judgeLineNode.hasKey("notesBelow")) failed("missing notesBelow field");
+            if (!judgeLineNode["notesBelow"].isArray()) failed("notesBelow is not an array");
 
             auto& notesAboveNode = judgeLineNode["notesAbove"];
             auto& notesBelowNode = judgeLineNode["notesBelow"];
@@ -7095,27 +7059,27 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
                 auto& notesNode = *notesNodePtr;
 
                 for (auto& noteNode : notesNode.getArray()) {
-                    if (!noteNode.isObject()) CHART_LOAD_FAILED("official", "notesAbove/notesBelow item is not an object");
+                    if (!noteNode.isObject()) failed("notesAbove/notesBelow item is not an object");
 
-                    if (!noteNode.hasKey("type")) CHART_LOAD_FAILED("official", "missing type field");
-                    if (!noteNode["type"].isNumber()) CHART_LOAD_FAILED("official", "type is not a number");
+                    if (!noteNode.hasKey("type")) failed("missing type field");
+                    if (!noteNode["type"].isNumber()) failed("type is not a number");
                     auto type = PhiNoteTypeHelper::FromOfficial(noteNode["type"].getNumber());
 
-                    if (!noteNode.hasKey("time")) CHART_LOAD_FAILED("official", "missing time field");
-                    if (!noteNode["time"].isNumber()) CHART_LOAD_FAILED("official", "time is not a number");
+                    if (!noteNode.hasKey("time")) failed("missing time field");
+                    if (!noteNode["time"].isNumber()) failed("time is not a number");
                     auto time = noteNode["time"].getNumber() * timeFactor;
 
-                    if (!noteNode.hasKey("holdTime")) CHART_LOAD_FAILED("official", "missing holdTime field");
-                    if (!noteNode["holdTime"].isNumber()) CHART_LOAD_FAILED("official", "holdTime is not a number");
+                    if (!noteNode.hasKey("holdTime")) failed("missing holdTime field");
+                    if (!noteNode["holdTime"].isNumber()) failed("holdTime is not a number");
                     auto holdTime = noteNode["holdTime"].getNumber() * timeFactor;
 
-                    if (!noteNode.hasKey("positionX")) CHART_LOAD_FAILED("official", "missing positionX field");
-                    if (!noteNode["positionX"].isNumber()) CHART_LOAD_FAILED("official", "positionX is not a number");
+                    if (!noteNode.hasKey("positionX")) failed("missing positionX field");
+                    if (!noteNode["positionX"].isNumber()) failed("positionX is not a number");
                     auto positionX = noteNode["positionX"].getNumber() * 0.05625;
 
                     std::string speedKey = "speed";
-                    if (!noteNode.hasKey(speedKey)) CHART_LOAD_FAILED("official", std::string("missing ") + speedKey + " field");
-                    if (!noteNode[speedKey].isNumber()) CHART_LOAD_FAILED("official", speedKey + " is not a number");
+                    if (!noteNode.hasKey(speedKey)) failed(std::string("missing ") + speedKey + " field");
+                    if (!noteNode[speedKey].isNumber()) failed(speedKey + " is not a number");
                     auto speed = noteNode[speedKey].getNumber();
 
                     auto& note = line.notes.emplace_back();
@@ -7164,14 +7128,14 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
                 }
             }
 
-            if (!judgeLineNode.hasKey("speedEvents")) CHART_LOAD_FAILED("official", "missing speedEvents field");
-            if (!judgeLineNode["speedEvents"].isArray()) CHART_LOAD_FAILED("official", "speedEvents is not an array");
-            if (!judgeLineNode.hasKey("judgeLineMoveEvents")) CHART_LOAD_FAILED("official", "missing judgeLineMoveEvents field");
-            if (!judgeLineNode["judgeLineMoveEvents"].isArray()) CHART_LOAD_FAILED("official", "judgeLineMoveEvents is not an array");
-            if (!judgeLineNode.hasKey("judgeLineRotateEvents")) CHART_LOAD_FAILED("official", "missing judgeLineRotateEvents field");
-            if (!judgeLineNode["judgeLineRotateEvents"].isArray()) CHART_LOAD_FAILED("official", "judgeLineRotateEvents is not an array");
-            if (!judgeLineNode.hasKey("judgeLineDisappearEvents")) CHART_LOAD_FAILED("official", "missing judgeLineDisappearEvents field");
-            if (!judgeLineNode["judgeLineDisappearEvents"].isArray()) CHART_LOAD_FAILED("official", "judgeLineDisappearEvents is not an array");
+            if (!judgeLineNode.hasKey("speedEvents")) failed("missing speedEvents field");
+            if (!judgeLineNode["speedEvents"].isArray()) failed("speedEvents is not an array");
+            if (!judgeLineNode.hasKey("judgeLineMoveEvents")) failed("missing judgeLineMoveEvents field");
+            if (!judgeLineNode["judgeLineMoveEvents"].isArray()) failed("judgeLineMoveEvents is not an array");
+            if (!judgeLineNode.hasKey("judgeLineRotateEvents")) failed("missing judgeLineRotateEvents field");
+            if (!judgeLineNode["judgeLineRotateEvents"].isArray()) failed("judgeLineRotateEvents is not an array");
+            if (!judgeLineNode.hasKey("judgeLineDisappearEvents")) failed("missing judgeLineDisappearEvents field");
+            if (!judgeLineNode["judgeLineDisappearEvents"].isArray()) failed("judgeLineDisappearEvents is not an array");
 
             auto& speedEventsNode = judgeLineNode["speedEvents"];
             auto& judgeLineMoveEventsNode = judgeLineNode["judgeLineMoveEvents"];
@@ -7200,25 +7164,25 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
             }
 
             for (auto& [eventsNode, startKey, endKey, easeTypeKey, type, converter] : eventGroups) {
-                if (!eventsNode->isArray()) CHART_LOAD_FAILED("official", "XXXEvents is not an array");
+                if (!eventsNode->isArray()) failed("XXXEvents is not an array");
 
                 for (auto& eventNode : eventsNode->getArray()) {
-                    if (!eventNode.isObject()) CHART_LOAD_FAILED("official", "XXXEvents item is not an object");
+                    if (!eventNode.isObject()) failed("XXXEvents item is not an object");
 
-                    if (!eventNode.hasKey("startTime")) CHART_LOAD_FAILED("official", "missing startTime field");
-                    if (!eventNode["startTime"].isNumber()) CHART_LOAD_FAILED("official", "startTime is not a number");
+                    if (!eventNode.hasKey("startTime")) failed("missing startTime field");
+                    if (!eventNode["startTime"].isNumber()) failed("startTime is not a number");
                     auto startTime = eventNode["startTime"].getNumber() * timeFactor;
 
-                    if (!eventNode.hasKey("endTime")) CHART_LOAD_FAILED("official", "missing endTime field");
-                    if (!eventNode["endTime"].isNumber()) CHART_LOAD_FAILED("official", "endTime is not a number");
+                    if (!eventNode.hasKey("endTime")) failed("missing endTime field");
+                    if (!eventNode["endTime"].isNumber()) failed("endTime is not a number");
                     auto endTime = eventNode["endTime"].getNumber() * timeFactor;
 
-                    if (!eventNode.hasKey(startKey)) CHART_LOAD_FAILED("official", std::string("missing ") + startKey + " field");
-                    if (!eventNode[startKey].isNumber()) CHART_LOAD_FAILED("official", std::string(startKey) + " is not a number");
+                    if (!eventNode.hasKey(startKey)) failed(std::string("missing ") + startKey + " field");
+                    if (!eventNode[startKey].isNumber()) failed(std::string(startKey) + " is not a number");
                     auto startValue = converter(eventNode[startKey].getNumber());
 
-                    if (!eventNode.hasKey(endKey)) CHART_LOAD_FAILED("official", std::string("missing ") + endKey + " field");
-                    if (!eventNode[endKey].isNumber()) CHART_LOAD_FAILED("official", std::string(endKey) + " is not a number");
+                    if (!eventNode.hasKey(endKey)) failed(std::string("missing ") + endKey + " field");
+                    if (!eventNode[endKey].isNumber()) failed(std::string(endKey) + " is not a number");
                     auto endValue = converter(eventNode[endKey].getNumber());
 
                     chart.animator.addEvent(line, PhiEvent {
@@ -7231,21 +7195,19 @@ PhiChartLoadResult loadPhiChartFromOfficialJson(const Data& data) {
             }
         }
     } else {
-        CHART_LOAD_FAILED("official", std::string("unsupported formatVersion: ") + std::to_string(formatVersion))
+        failed(std::string("unsupported formatVersion: ") + std::to_string(formatVersion));
     }
 
     chart.rawHash = data.getHash();
-
-    return PhiChartLoadResult {
-        .success = true,
-        .chart = chart
-    };
+    return chart;
 }
 
-PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
-    JsonNode jsonRoot;
-    auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
-    if (!jsonParseSuccess) CHART_LOAD_FAILED("rpe", std::string("failed to parse json: ") + err);
+PhiChart loadPhiChartFromRpeJson(const Data& data) {
+    auto failed = [](const std::string& msg) {
+        throw std::runtime_error(std::format("rpe: {}", msg));
+    };
+
+    auto jsonRoot = JsonNode::Parse(data);
     
     PhiChart chart {};
 
@@ -7259,34 +7221,34 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
     chart.meta.worldViewport = { 1350, -900 };
     chart.meta.speedUnit = 120.0;
 
-    if (!jsonRoot.isObject()) CHART_LOAD_FAILED("rpe", "root is not an object");
+    if (!jsonRoot.isObject()) failed("root is not an object");
 
-    if (!jsonRoot.hasKey("META")) CHART_LOAD_FAILED("rpe", "missing META field");
-    if (!jsonRoot["META"].isObject()) CHART_LOAD_FAILED("rpe", "META is not an object");
+    if (!jsonRoot.hasKey("META")) failed("missing META field");
+    if (!jsonRoot["META"].isObject()) failed("META is not an object");
     auto& metaNode = jsonRoot["META"];
 
-    if (!metaNode.hasKey("RPEVersion")) CHART_LOAD_FAILED("rpe", "missing RPEVersion field");
-    if (!metaNode["RPEVersion"].isNumber()) CHART_LOAD_FAILED("rpe", "RPEVersion is not a number");
+    if (!metaNode.hasKey("RPEVersion")) failed("missing RPEVersion field");
+    if (!metaNode["RPEVersion"].isNumber()) failed("RPEVersion is not a number");
     chart.meta.rpeVersion = metaNode["RPEVersion"].getNumber();
 
-    if (!metaNode.hasKey("charter")) CHART_LOAD_FAILED("rpe", "missing charter field");
-    if (!metaNode["charter"].isString()) CHART_LOAD_FAILED("rpe", "charter is not a string");
+    if (!metaNode.hasKey("charter")) failed("missing charter field");
+    if (!metaNode["charter"].isString()) failed("charter is not a string");
     chart.meta.charter = metaNode["charter"].getString();
 
-    if (!metaNode.hasKey("composer")) CHART_LOAD_FAILED("rpe", "missing composer field");
-    if (!metaNode["composer"].isString()) CHART_LOAD_FAILED("rpe", "composer is not a string");
+    if (!metaNode.hasKey("composer")) failed("missing composer field");
+    if (!metaNode["composer"].isString()) failed("composer is not a string");
     chart.meta.composer = metaNode["composer"].getString();
 
-    if (!metaNode.hasKey("name")) CHART_LOAD_FAILED("rpe", "missing name field");
-    if (!metaNode["name"].isString()) CHART_LOAD_FAILED("rpe", "name is not a string");
+    if (!metaNode.hasKey("name")) failed("missing name field");
+    if (!metaNode["name"].isString()) failed("name is not a string");
     chart.meta.title = metaNode["name"].getString();
 
-    if (!metaNode.hasKey("level")) CHART_LOAD_FAILED("rpe", "missing level field");
-    if (!metaNode["level"].isString()) CHART_LOAD_FAILED("rpe", "level is not a string");
+    if (!metaNode.hasKey("level")) failed("missing level field");
+    if (!metaNode["level"].isString()) failed("level is not a string");
     chart.meta.difficulty = metaNode["level"].getString();
 
-    if (!metaNode.hasKey("offset")) CHART_LOAD_FAILED("rpe", "missing offset field");
-    if (!metaNode["offset"].isNumber()) CHART_LOAD_FAILED("rpe", "offset is not a number");
+    if (!metaNode.hasKey("offset")) failed("missing offset field");
+    if (!metaNode["offset"].isNumber()) failed("offset is not a number");
     chart.meta.offset = metaNode["offset"].getNumber() / 1000;
 
     auto parseTimeTuple = [](const JsonNode& node, ep_f64* dst) {
@@ -7308,19 +7270,19 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
     std::vector<PhiBPMEvent> sharedBpmEvents;
     
-    if (!jsonRoot.hasKey("BPMList")) CHART_LOAD_FAILED("rpe", "missing BPMList field");
-    if (!jsonRoot["BPMList"].isArray()) CHART_LOAD_FAILED("rpe", "BPMList is not an array");
+    if (!jsonRoot.hasKey("BPMList")) failed("missing BPMList field");
+    if (!jsonRoot["BPMList"].isArray()) failed("BPMList is not an array");
     auto& bpmListNode = jsonRoot["BPMList"];
 
     for (auto& bpmEventNode : bpmListNode.getArray()) {
-        if (!bpmEventNode.isObject()) CHART_LOAD_FAILED("rpe", "BPMList item is not an object");
+        if (!bpmEventNode.isObject()) failed("BPMList item is not an object");
 
-        if (!bpmEventNode.hasKey("startTime")) CHART_LOAD_FAILED("rpe", "missing startTime field");
+        if (!bpmEventNode.hasKey("startTime")) failed("missing startTime field");
         ep_f64 startTime;
-        if (!parseTimeTuple(bpmEventNode["startTime"], &startTime)) CHART_LOAD_FAILED("rpe", "startTime is not a valid time tuple");
+        if (!parseTimeTuple(bpmEventNode["startTime"], &startTime)) failed("startTime is not a valid time tuple");
 
-        if (!bpmEventNode.hasKey("bpm")) CHART_LOAD_FAILED("rpe", "missing bpm field");
-        if (!bpmEventNode["bpm"].isNumber()) CHART_LOAD_FAILED("rpe", "bpm is not a number");
+        if (!bpmEventNode.hasKey("bpm")) failed("missing bpm field");
+        if (!bpmEventNode["bpm"].isNumber()) failed("bpm is not a number");
         ep_f64 bpm = bpmEventNode["bpm"].getNumber();
 
         sharedBpmEvents.push_back({
@@ -7331,18 +7293,18 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
     PhiBPMEvent::SortBpmEvents(sharedBpmEvents);
 
-    if (!jsonRoot.hasKey("judgeLineList")) CHART_LOAD_FAILED("rpe", "missing judgeLineList field");
-    if (!jsonRoot["judgeLineList"].isArray()) CHART_LOAD_FAILED("rpe", "judgeLineList is not an array");
+    if (!jsonRoot.hasKey("judgeLineList")) failed("missing judgeLineList field");
+    if (!jsonRoot["judgeLineList"].isArray()) failed("judgeLineList is not an array");
     auto& judgeLineListNode = jsonRoot["judgeLineList"];
 
     for (auto& judgeLineNode : judgeLineListNode.getArray()) {
-        if (!judgeLineNode.isObject()) CHART_LOAD_FAILED("rpe", "judgeLineList item is not an object");
+        if (!judgeLineNode.isObject()) failed("judgeLineList item is not an object");
 
         auto& line = chart.lines.emplace_back();
         line.bpms = sharedBpmEvents;
 
         if (judgeLineNode.hasKey("bpmfactor")) {
-            if (!judgeLineNode["bpmfactor"].isNumber()) CHART_LOAD_FAILED("rpe", "bpmfactor is not a number");
+            if (!judgeLineNode["bpmfactor"].isNumber()) failed("bpmfactor is not a number");
             auto factor = judgeLineNode["bpmfactor"].getNumber();
 
             for (auto& e : line.bpms) {
@@ -7350,8 +7312,8 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
             }
         }
 
-        if (!judgeLineNode.hasKey("eventLayers")) CHART_LOAD_FAILED("rpe", "missing eventLayers field");
-        if (!judgeLineNode["eventLayers"].isArray()) CHART_LOAD_FAILED("rpe", "eventLayers is not an array");
+        if (!judgeLineNode.hasKey("eventLayers")) failed("missing eventLayers field");
+        if (!judgeLineNode["eventLayers"].isArray()) failed("eventLayers is not an array");
         auto& eventLayersNode = judgeLineNode["eventLayers"];
 
         ep_u64 eventLayerIndex = 0;
@@ -7482,7 +7444,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
         for (auto& eventLayerNode : eventLayersNode.getArray()) {
             if (eventLayerNode.isNull()) continue;
-            if (!eventLayerNode.isObject()) CHART_LOAD_FAILED("rpe", "eventLayers item is not an object");
+            if (!eventLayerNode.isObject()) failed("eventLayers item is not an object");
 
             std::vector<EventGroupType> groups;
 
@@ -7494,7 +7456,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
             for (auto& group : groups) {
                 auto [success, msg] = progressEventGroup(group);
-                if (!success) CHART_LOAD_FAILED("rpe", msg);
+                if (!success) failed(msg);
             }
 
             eventLayerIndex++;
@@ -7502,7 +7464,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
         if (judgeLineNode.hasKey("extended")) {
             auto& extendedNode = judgeLineNode["extended"];
-            if (!extendedNode.isObject()) CHART_LOAD_FAILED("rpe", "extended is not an object");
+            if (!extendedNode.isObject()) failed("extended is not an object");
 
             std::vector<EventGroupType> groups;
 
@@ -7513,7 +7475,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
             for (auto& group : groups) {
                 auto [success, msg] = progressEventGroup(group);
-                if (!success) CHART_LOAD_FAILED("rpe", msg);
+                if (!success) failed(msg);
             }
 
             eventLayerIndex++;
@@ -7521,50 +7483,50 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
 
         if (judgeLineNode.hasKey("notes")) {
             auto& notesNode = judgeLineNode["notes"];
-            if (!notesNode.isArray()) CHART_LOAD_FAILED("rpe", "notes is not an array");
+            if (!notesNode.isArray()) failed("notes is not an array");
 
             for (auto& noteNode : notesNode.getArray()) {
-                if (!noteNode.isObject()) CHART_LOAD_FAILED("rpe", "notes item is not an object");
+                if (!noteNode.isObject()) failed("notes item is not an object");
 
                 auto& note = line.notes.emplace_back();
 
-                if (!noteNode.hasKey("startTime")) CHART_LOAD_FAILED("rpe", "missing startTime field");
+                if (!noteNode.hasKey("startTime")) failed("missing startTime field");
                 ep_f64 startTime;
-                if (!parseTimeTuple(noteNode["startTime"], &startTime)) CHART_LOAD_FAILED("rpe", "startTime is not a valid time tuple");
+                if (!parseTimeTuple(noteNode["startTime"], &startTime)) failed("startTime is not a valid time tuple");
 
-                if (!noteNode.hasKey("endTime")) CHART_LOAD_FAILED("rpe", "missing endTime field");
+                if (!noteNode.hasKey("endTime")) failed("missing endTime field");
                 ep_f64 endTime;
-                if (!parseTimeTuple(noteNode["endTime"], &endTime)) CHART_LOAD_FAILED("rpe", "endTime is not a valid time tuple");
+                if (!parseTimeTuple(noteNode["endTime"], &endTime)) failed("endTime is not a valid time tuple");
 
                 startTime = line.beat2sec(startTime);
                 endTime = line.beat2sec(endTime);
 
-                if (!noteNode.hasKey("above")) CHART_LOAD_FAILED("rpe", "missing above field");
+                if (!noteNode.hasKey("above")) failed("missing above field");
                 bool isAbove;
                 if (noteNode["above"].isBool()) isAbove = noteNode["above"].getBool();
                 else if (noteNode["above"].isNumber()) isAbove = noteNode["above"].getNumber() == 1;
-                else CHART_LOAD_FAILED("rpe", "above is not a boolean or number");
+                else failed("above is not a boolean or number");
 
-                if (!noteNode.hasKey("type")) CHART_LOAD_FAILED("rpe", "missing type field");
-                if (!noteNode["type"].isNumber()) CHART_LOAD_FAILED("rpe", "type is not a number");
+                if (!noteNode.hasKey("type")) failed("missing type field");
+                if (!noteNode["type"].isNumber()) failed("type is not a number");
                 auto type = PhiNoteTypeHelper::FromRPE(noteNode["type"].getNumber());
 
-                if (!noteNode.hasKey("speed")) CHART_LOAD_FAILED("rpe", "missing speed field");
-                if (!noteNode["speed"].isNumber()) CHART_LOAD_FAILED("rpe", "speed is not a number");
+                if (!noteNode.hasKey("speed")) failed("missing speed field");
+                if (!noteNode["speed"].isNumber()) failed("speed is not a number");
                 ep_f64 speed = noteNode["speed"].getNumber();
 
-                if (!noteNode.hasKey("isFake")) CHART_LOAD_FAILED("rpe", "missing isFake field");
+                if (!noteNode.hasKey("isFake")) failed("missing isFake field");
                 bool isFake;
                 if (noteNode["isFake"].isBool()) isFake = noteNode["isFake"].getBool();
                 else if (noteNode["isFake"].isNumber()) isFake = noteNode["isFake"].getNumber() == 1;
-                else CHART_LOAD_FAILED("rpe", "isFake is not a boolean or number");
+                else failed("isFake is not a boolean or number");
 
-                if (!noteNode.hasKey("positionX")) CHART_LOAD_FAILED("rpe", "missing positionX field");
-                if (!noteNode["positionX"].isNumber()) CHART_LOAD_FAILED("rpe", "positionX is not a number");
+                if (!noteNode.hasKey("positionX")) failed("missing positionX field");
+                if (!noteNode["positionX"].isNumber()) failed("positionX is not a number");
                 ep_f64 positionX = noteNode["positionX"].getNumber();
                 
                 if (noteNode.hasKey("yOffset")) {
-                    if (!noteNode["yOffset"].isNumber()) CHART_LOAD_FAILED("rpe", "yOffset is not a number");
+                    if (!noteNode["yOffset"].isNumber()) failed("yOffset is not a number");
                     auto yOffset = noteNode["yOffset"].getNumber() * speed;
                     if (!isAbove) yOffset *= -1;
                     
@@ -7579,7 +7541,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                 }
 
                 if (noteNode.hasKey("visibleTime")) {
-                    if (!noteNode["visibleTime"].isNumber()) CHART_LOAD_FAILED("rpe", "visibleTime is not a number");
+                    if (!noteNode["visibleTime"].isNumber()) failed("visibleTime is not a number");
                     auto visibleTime = noteNode["visibleTime"].getNumber();
 
                     if (visibleTime < 999999.0) {
@@ -7600,7 +7562,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                 }
 
                 if (noteNode.hasKey("size")) {
-                    if (!noteNode["size"].isNumber()) CHART_LOAD_FAILED("rpe", "size is not a number");
+                    if (!noteNode["size"].isNumber()) failed("size is not a number");
                     auto size = noteNode["size"].getNumber();
 
                     if (size != 1.0) {
@@ -7614,7 +7576,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                 }
 
                 if (noteNode.hasKey("alpha")) {
-                    if (!noteNode["alpha"].isNumber()) CHART_LOAD_FAILED("rpe", "alpha is not a number");
+                    if (!noteNode["alpha"].isNumber()) failed("alpha is not a number");
                     auto alpha = noteNode["alpha"].getNumber() / 255;
 
                     if (alpha != 1.0) {
@@ -7628,18 +7590,18 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
                 }
 
                 if (noteNode.hasKey("tint")) {
-                    if (!noteNode["tint"].isArray()) CHART_LOAD_FAILED("rpe", "tint is not an array");
+                    if (!noteNode["tint"].isArray()) failed("tint is not an array");
 
                     auto& arr = noteNode["tint"].getArray();
-                    if (arr.size() < 3) CHART_LOAD_FAILED("rpe", "tint array is too small");
+                    if (arr.size() < 3) failed("tint array is too small");
 
                     auto& n1 = arr[0];
                     auto& n2 = arr[1];
                     auto& n3 = arr[2];
 
-                    if (!n1.isNumber()) CHART_LOAD_FAILED("rpe", "tint[0] is not a number");
-                    if (!n2.isNumber()) CHART_LOAD_FAILED("rpe", "tint[1] is not a number");
-                    if (!n3.isNumber()) CHART_LOAD_FAILED("rpe", "tint[2] is not a number");
+                    if (!n1.isNumber()) failed("tint[0] is not a number");
+                    if (!n2.isNumber()) failed("tint[1] is not a number");
+                    if (!n3.isNumber()) failed("tint[2] is not a number");
 
                     auto color = Color {
                         n1.getNumber() / 255,
@@ -7698,12 +7660,12 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
         }
 
         if (judgeLineNode.hasKey("attachUI")) {
-            if (!judgeLineNode["attachUI"].isString()) CHART_LOAD_FAILED("rpe", "attachUI is not a string");
+            if (!judgeLineNode["attachUI"].isString()) failed("attachUI is not a string");
             line.attachUI = PhiLineAttachUIHelper::FromString(judgeLineNode["attachUI"].getString());
         }
 
         if (judgeLineNode.hasKey("Texture")) {
-            if (!judgeLineNode["Texture"].isString()) CHART_LOAD_FAILED("rpe", "Texture is not a string");
+            if (!judgeLineNode["Texture"].isString()) failed("Texture is not a string");
             auto textureName = judgeLineNode["Texture"].getString();
 
             if (textureName != "line.png") {
@@ -7712,7 +7674,7 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
         }
 
         if (judgeLineNode.hasKey("father")) {
-            if (!judgeLineNode["father"].isNumber()) CHART_LOAD_FAILED("rpe", "father is not a number");
+            if (!judgeLineNode["father"].isNumber()) failed("father is not a number");
             ep_i64 fatherLineIndex = judgeLineNode["father"].getNumber();
             if (fatherLineIndex >= 0) {
                 line.fatherLineIndex = fatherLineIndex;
@@ -7723,35 +7685,35 @@ PhiChartLoadResult loadPhiChartFromRpeJson(const Data& data) {
         if (judgeLineNode.hasKey("isCover")) {
             if (judgeLineNode["isCover"].isNumber()) enableCover = judgeLineNode["isCover"].getNumber() == 1;
             else if (judgeLineNode["isCover"].isBool()) enableCover = judgeLineNode["isCover"].getBool();
-            else CHART_LOAD_FAILED("rpe", "isCover is not a boolean or number");
+            else failed("isCover is not a boolean or number");
         }
         line.enableCover = enableCover;
 
         if (judgeLineNode.hasKey("zOrder")) {
-            if (!judgeLineNode["zOrder"].isNumber()) CHART_LOAD_FAILED("rpe", "zOrder is not a number");
+            if (!judgeLineNode["zOrder"].isNumber()) failed("zOrder is not a number");
             line.zOrder = judgeLineNode["zOrder"].getNumber();
         }
 
         if (judgeLineNode.hasKey("anchor")) {
-            if (!judgeLineNode["anchor"].isArray()) CHART_LOAD_FAILED("rpe", "anchor is not an array");
+            if (!judgeLineNode["anchor"].isArray()) failed("anchor is not an array");
 
             auto& anchorArr = judgeLineNode["anchor"].getArray();
-            if (anchorArr.size() < 2) CHART_LOAD_FAILED("rpe", "anchor array size is less than 2");
+            if (anchorArr.size() < 2) failed("anchor array size is less than 2");
 
-            if (!anchorArr[0].isNumber() || !anchorArr[1].isNumber()) CHART_LOAD_FAILED("rpe", "anchor array element is not a number");
+            if (!anchorArr[0].isNumber() || !anchorArr[1].isNumber()) failed("anchor array element is not a number");
             line.anchor = { anchorArr[0].getNumber(), anchorArr[1].getNumber() };
         }
     }
 
     chart.rawHash = data.getHash();
-
-    return PhiChartLoadResult {
-        .success = true,
-        .chart = chart
-    };
+    return chart;
 }
 
-PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
+PhiChart loadPhiChartFromPec(const Data& data) {
+    auto failed = [](const std::string& msg) {
+        throw std::runtime_error(std::format("pec: {}", msg));
+    };
+
     struct TokenReader {
         std::string str;
         ep_u64 pos = 0;
@@ -7812,7 +7774,7 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
     chart.meta.speedUnit = 120.0;
 
     ep_f64 offset;
-    if (!readNumber(&offset)) CHART_LOAD_FAILED("pec", "failed to read offset");
+    if (!readNumber(&offset)) failed("failed to read offset");
     chart.meta.offset = (offset - 150.0) / 1000.0;
 
     struct Commands {
@@ -7842,8 +7804,8 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
     while (reader.nextToken(token)) {
         if (token == "bp") {
             ep_f64 startTime, bpm;
-            if (!readNumber(&startTime)) CHART_LOAD_FAILED("pec", "failed to read startTime (bp)");
-            if (!readNumber(&bpm)) CHART_LOAD_FAILED("pec", "failed to read bpm (bp)");
+            if (!readNumber(&startTime)) failed("failed to read startTime (bp)");
+            if (!readNumber(&bpm)) failed("failed to read bpm (bp)");
 
             bpmCommands.push_back({
                 .startTime = startTime,
@@ -7853,20 +7815,20 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
             auto type = PhiNoteTypeHelper::FromPEC(token);
 
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (nx)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (nx)");
 
             ep_f64 startTime, endTime;
-            if (!readNumber(&startTime)) CHART_LOAD_FAILED("pec", "failed to read startTime (nx)");
+            if (!readNumber(&startTime)) failed("failed to read startTime (nx)");
             if (type == EnumPhiNoteType::Hold) {
-                if (!readNumber(&endTime)) CHART_LOAD_FAILED("pec", "failed to read endTime (nx)");
+                if (!readNumber(&endTime)) failed("failed to read endTime (nx)");
             } else endTime = startTime;
 
             ep_f64 positionX;
             bool isAbove, isFake;
 
-            if (!readNumber(&positionX)) CHART_LOAD_FAILED("pec", "failed to read positionX (nx)");
-            if (!readBool(&isAbove)) CHART_LOAD_FAILED("pec", "failed to read isAbove (nx)");
-            if (!readBool(&isFake)) CHART_LOAD_FAILED("pec", "failed to read isFake (nx)");
+            if (!readNumber(&positionX)) failed("failed to read positionX (nx)");
+            if (!readBool(&isAbove)) failed("failed to read isAbove (nx)");
+            if (!readBool(&isFake)) failed("failed to read isFake (nx)");
 
             noteCommands.push_back(Commands::Note {
                 .lineIndex = (ep_i64)lineIndex,
@@ -7881,22 +7843,22 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
             });
         } else if (token == "#") {
             ep_f64 speed;
-            if (!readNumber(&speed)) CHART_LOAD_FAILED("pec", "failed to read speed (#)");
+            if (!readNumber(&speed)) failed("failed to read speed (#)");
             if (!noteCommands.empty()) noteCommands.back().speed = speed;
         } else if (token == "&") {
             ep_f64 size;
-            if (!readNumber(&size)) CHART_LOAD_FAILED("pec", "failed to read size (&)");
+            if (!readNumber(&size)) failed("failed to read size (&)");
             if (!noteCommands.empty()) noteCommands.back().size = size;
         } else if (token == "cp") {
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (cp)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cp)");
 
             ep_f64 time;
-            if (!readNumber(&time)) CHART_LOAD_FAILED("pec", "failed to read time (cp)");
+            if (!readNumber(&time)) failed("failed to read time (cp)");
 
             ep_f64 x, y;
-            if (!readNumber(&x)) CHART_LOAD_FAILED("pec", "failed to read x (cp)");
-            if (!readNumber(&y)) CHART_LOAD_FAILED("pec", "failed to read y (cp)");
+            if (!readNumber(&x)) failed("failed to read x (cp)");
+            if (!readNumber(&y)) failed("failed to read y (cp)");
 
             eventCommands[lineIndex][EnumPhiEventType::PositionX].push_back(Commands::Event {
                 .timeZone = { time, time }, .value = x
@@ -7907,57 +7869,57 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
             });
         } else if (token == "cd") {
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (cd)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cd)");
 
             ep_f64 time;
-            if (!readNumber(&time)) CHART_LOAD_FAILED("pec", "failed to read time (cd)");
+            if (!readNumber(&time)) failed("failed to read time (cd)");
 
             ep_f64 r;
-            if (!readNumber(&r)) CHART_LOAD_FAILED("pec", "failed to read y (cd)");
+            if (!readNumber(&r)) failed("failed to read y (cd)");
 
             eventCommands[lineIndex][EnumPhiEventType::SelfRotation].push_back(Commands::Event {
                 .timeZone = { time, time }, .value = r
             });
         } else if (token == "ca") {
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (ca)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (ca)");
 
             ep_f64 time;
-            if (!readNumber(&time)) CHART_LOAD_FAILED("pec", "failed to read time (ca)");
+            if (!readNumber(&time)) failed("failed to read time (ca)");
 
             ep_f64 a;
-            if (!readNumber(&a)) CHART_LOAD_FAILED("pec", "failed to read a (ca)");
+            if (!readNumber(&a)) failed("failed to read a (ca)");
 
             eventCommands[lineIndex][EnumPhiEventType::AdditiveAlpha].push_back(Commands::Event {
                 .timeZone = { time, time }, .value = a
             });
         } else if (token == "cv") {
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (cv)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cv)");
 
             ep_f64 time;
-            if (!readNumber(&time)) CHART_LOAD_FAILED("pec", "failed to read time (cv)");
+            if (!readNumber(&time)) failed("failed to read time (cv)");
 
             ep_f64 v;
-            if (!readNumber(&v)) CHART_LOAD_FAILED("pec", "failed to read v (cv)");
+            if (!readNumber(&v)) failed("failed to read v (cv)");
 
             eventCommands[lineIndex][EnumPhiEventType::Speed].push_back(Commands::Event {
                 .timeZone = { time, time }, .value = v
             });
         } else if (token == "cm") {
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (cm)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cm)");
 
             ep_f64 startTime, endTime;
-            if (!readNumber(&startTime)) CHART_LOAD_FAILED("pec", "failed to read startTime (cm)");
-            if (!readNumber(&endTime)) CHART_LOAD_FAILED("pec", "failed to read endTime (cm)");
+            if (!readNumber(&startTime)) failed("failed to read startTime (cm)");
+            if (!readNumber(&endTime)) failed("failed to read endTime (cm)");
 
             ep_f64 x, y;
-            if (!readNumber(&x)) CHART_LOAD_FAILED("pec", "failed to read x (cm)");
-            if (!readNumber(&y)) CHART_LOAD_FAILED("pec", "failed to read y (cm)");
+            if (!readNumber(&x)) failed("failed to read x (cm)");
+            if (!readNumber(&y)) failed("failed to read y (cm)");
 
             ep_f64 easingType;
-            if (!readNumber(&easingType)) CHART_LOAD_FAILED("pec", "failed to read easingType (cm)");
+            if (!readNumber(&easingType)) failed("failed to read easingType (cm)");
 
             eventCommands[lineIndex][EnumPhiEventType::PositionX].push_back(Commands::Event {
                 .timeZone = { startTime, endTime }, .value = x,
@@ -7970,17 +7932,17 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
             });
         } else if (token == "cr") {
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (cr)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cr)");
 
             ep_f64 startTime, endTime;
-            if (!readNumber(&startTime)) CHART_LOAD_FAILED("pec", "failed to read startTime (cr)");
-            if (!readNumber(&endTime)) CHART_LOAD_FAILED("pec", "failed to read endTime (cr)");
+            if (!readNumber(&startTime)) failed("failed to read startTime (cr)");
+            if (!readNumber(&endTime)) failed("failed to read endTime (cr)");
 
             ep_f64 r;
-            if (!readNumber(&r)) CHART_LOAD_FAILED("pec", "failed to read r (cr)");
+            if (!readNumber(&r)) failed("failed to read r (cr)");
 
             ep_f64 easingType;
-            if (!readNumber(&easingType)) CHART_LOAD_FAILED("pec", "failed to read easingType (cr)");
+            if (!readNumber(&easingType)) failed("failed to read easingType (cr)");
 
             eventCommands[lineIndex][EnumPhiEventType::SelfRotation].push_back(Commands::Event {
                 .timeZone = { startTime, endTime }, .value = r,
@@ -7988,14 +7950,14 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
             });
         } else if (token == "cf") {
             ep_f64 lineIndex;
-            if (!readNumber(&lineIndex)) CHART_LOAD_FAILED("pec", "failed to read lineIndex (cf)");
+            if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cf)");
 
             ep_f64 startTime, endTime;
-            if (!readNumber(&startTime)) CHART_LOAD_FAILED("pec", "failed to read startTime (cf)");
-            if (!readNumber(&endTime)) CHART_LOAD_FAILED("pec", "failed to read endTime (cf)");
+            if (!readNumber(&startTime)) failed("failed to read startTime (cf)");
+            if (!readNumber(&endTime)) failed("failed to read endTime (cf)");
 
             ep_f64 a;
-            if (!readNumber(&a)) CHART_LOAD_FAILED("pec", "failed to read a (cf)");
+            if (!readNumber(&a)) failed("failed to read a (cf)");
 
             eventCommands[lineIndex][EnumPhiEventType::AdditiveAlpha].push_back(Commands::Event {
                 .timeZone = { startTime, endTime }, .value = a,
@@ -8131,14 +8093,10 @@ PhiChartLoadResult loadPhiChartFromPec(const Data& data) {
     }
 
     chart.rawHash = data.getHash();
-
-    return PhiChartLoadResult {
-        .success = true,
-        .chart = chart
-    };
+    return chart;
 }
 
-PhiChartLoadResult loadPhiChartFromData(const Data& data) {
+PhiChart loadPhiChartFromData(const Data& data) {
     /* !docs
     Loads a Phi chart from a data object.
     
@@ -8149,33 +8107,31 @@ PhiChartLoadResult loadPhiChartFromData(const Data& data) {
     - PhiEdit Chart (pec)
     */
 
-    PhiChartLoadResult result {};
-    result.success = false;
+    std::vector<std::string> msgs;
 
-    #define TRY_LOAD_FUNC(func) \
-        { \
-            auto res = func(data); \
-            if (res.success) return res; \
-            result.errors.insert(result.errors.end(), res.errors.begin(), res.errors.end()); \
-        }
+    #define try_(func) \
+        try { return func(data); } \
+        catch (const std::exception& err) { msgs.push_back(err.what()); }
     
-    TRY_LOAD_FUNC(loadPhiChartFromOfficialJson);
-    TRY_LOAD_FUNC(loadPhiChartFromRpeJson);
-    TRY_LOAD_FUNC(loadPhiChartFromPec);
+    try_(loadPhiChartFromOfficialJson);
+    try_(loadPhiChartFromRpeJson);
+    try_(loadPhiChartFromPec);
 
-    return result;
+    std::string msg = "failures: \n";
+    for (auto& m : msgs) msg += m + "\n";
+    return {};
 
-    #undef TRY_LOAD_FUNC
+    #undef try
 }
 
-#undef CHART_LOAD_FAILED
+PhiExtra loadPhiExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
+    auto failed = [](const std::string& msg) {
+        throw std::runtime_error(msg);
+    };
 
-std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
-    JsonNode jsonRoot;
-    auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
-    if (!jsonParseSuccess) return std::string("failed to parse json: ") + err;
+    auto jsonRoot = JsonNode::Parse(data);
 
-    if (!jsonRoot.isObject()) return "root is not an object";
+    if (!jsonRoot.isObject()) failed("root is not an object");
 
     PhiExtra extra {};
     
@@ -8198,19 +8154,19 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
 
     std::vector<PhiBPMEvent> bpmEvents;
 
-    if (!jsonRoot.hasKey("bpm")) return "missing bpm field";
-    if (!jsonRoot["bpm"].isArray()) return "bpm is not an array";
+    if (!jsonRoot.hasKey("bpm")) failed("missing bpm field");
+    if (!jsonRoot["bpm"].isArray()) failed("bpm is not an array");
 
     auto& bpmArr = jsonRoot["bpm"].getArray();
     for (auto& bpmEventNode : bpmArr) {
-        if (!bpmEventNode.isObject()) return "bpm item is not an object";
+        if (!bpmEventNode.isObject()) failed("bpm item is not an object");
 
-        if (!bpmEventNode.hasKey("time")) return "missing time field";
+        if (!bpmEventNode.hasKey("time")) failed("missing time field");
         ep_f64 time;
-        if (!parseTimeTuple(bpmEventNode["time"], &time)) return "time is not a valid time tuple";
+        if (!parseTimeTuple(bpmEventNode["time"], &time)) failed("time is not a valid time tuple");
 
-        if (!bpmEventNode.hasKey("bpm")) return "missing bpm field";
-        if (!bpmEventNode["bpm"].isNumber()) return "bpm is not a number";
+        if (!bpmEventNode.hasKey("bpm")) failed("missing bpm field");
+        if (!bpmEventNode["bpm"].isNumber()) failed("bpm is not a number");
         ep_f64 bpm = bpmEventNode["bpm"].getNumber();
 
         bpmEvents.push_back({
@@ -8249,40 +8205,40 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
         return true;
     };
 
-    if (!jsonRoot.hasKey("effects")) return "missing effects field";
-    if (!jsonRoot["effects"].isArray()) return "effects is not an array";
+    if (!jsonRoot.hasKey("effects")) failed("missing effects field");
+    if (!jsonRoot["effects"].isArray()) failed("effects is not an array");
     auto& effectsNode = jsonRoot["effects"].getArray();
 
     for (auto& effectNode : effectsNode) {
-        if (!effectNode.isObject()) return "effects item is not an object";
+        if (!effectNode.isObject()) failed("effects item is not an object");
 
-        if (!effectNode.hasKey("start")) return "missing start field";
-        if (!effectNode.hasKey("end")) return "missing end field";
+        if (!effectNode.hasKey("start")) failed("missing start field");
+        if (!effectNode.hasKey("end")) failed("missing end field");
         
         ep_f64 startTime, endTime;
-        if (!parseTimeTupleToSecond(effectNode["start"], &startTime)) return "start is not a valid time tuple";
-        if (!parseTimeTupleToSecond(effectNode["end"], &endTime)) return "end is not a valid time tuple";
+        if (!parseTimeTupleToSecond(effectNode["start"], &startTime)) failed("start is not a valid time tuple");
+        if (!parseTimeTupleToSecond(effectNode["end"], &endTime)) failed("end is not a valid time tuple");
 
         bool isGlobal = false;
         if (effectNode.hasKey("global")) {
-            if (!effectNode["global"].isBool()) return "global is not a bool";
+            if (!effectNode["global"].isBool()) failed("global is not a bool");
             isGlobal = effectNode["global"].getBool();
         }
 
         std::optional<ep_u64> targetLine;
         if (effectNode.hasKey("line")) {
-            if (!effectNode["line"].isNumber()) return "line is not a number";
+            if (!effectNode["line"].isNumber()) failed("line is not a number");
             targetLine = effectNode["line"].getNumber();
         }
 
         ep_u64 order = 0;
         if (effectNode.hasKey("order")) {
-            if (!effectNode["order"].isNumber()) return "order is not a number";
+            if (!effectNode["order"].isNumber()) failed("order is not a number");
             order = effectNode["order"].getNumber();
         }
 
-        if (!effectNode.hasKey("shader")) return "missing shader field";
-        if (!effectNode["shader"].isString()) return "shader is not a string";
+        if (!effectNode.hasKey("shader")) failed("missing shader field");
+        if (!effectNode["shader"].isString()) failed("shader is not a string");
         auto shaderName = effectNode["shader"].getString();
 
         auto& item = extra.effects.emplace_back();
@@ -8293,7 +8249,7 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
         item.shaderName = shaderName;
 
         if (effectNode.hasKey("vars")) {
-            if (!effectNode["vars"].isObject()) return "vars is not an object";
+            if (!effectNode["vars"].isObject()) failed("vars is not an object");
             auto& varsNode = effectNode["vars"].getObject();
 
             for (auto& [uniformName, eventsNode] : varsNode) {
@@ -8301,25 +8257,25 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
 
                 if (eventsNode.isArray()) {
                     auto& eventsArr = eventsNode.getArray();
-                    if (eventsArr.empty()) return "events array is empty";
+                    if (eventsArr.empty()) failed("events array is empty");
 
                     JsonNode::EnumType eventItemNodeType = eventsArr[0].type;
                     for (auto& node : eventsArr) {
-                        if (node.type != eventItemNodeType) return "events array contains different types of nodes";
+                        if (node.type != eventItemNodeType) failed("events array contains different types of nodes");
                     }
 
                     if (eventItemNodeType == JsonNode::EnumType::Object) {
                         for (auto& eventNode : eventsArr) {
-                            if (!eventNode.hasKey("startTime")) return "missing startTime field";
-                            if (!eventNode.hasKey("endTime")) return "missing endTime field";
+                            if (!eventNode.hasKey("startTime")) failed("missing startTime field");
+                            if (!eventNode.hasKey("endTime")) failed("missing endTime field");
 
                             ep_f64 startTime, endTime;
-                            if (!parseTimeTupleToSecond(eventNode["startTime"], &startTime)) return "startTime is not a valid time tuple";
-                            if (!parseTimeTupleToSecond(eventNode["endTime"], &endTime)) return "endTime is not a valid time tuple";
+                            if (!parseTimeTupleToSecond(eventNode["startTime"], &startTime)) failed("startTime is not a valid time tuple");
+                            if (!parseTimeTupleToSecond(eventNode["endTime"], &endTime)) failed("endTime is not a valid time tuple");
 
-                            if (!eventNode.hasKey("start")) return "missing start field";
-                            if (!eventNode.hasKey("end")) return "missing end field";
-                            if (eventNode["start"].type != eventNode["end"].type) return "start and end are not the same type";
+                            if (!eventNode.hasKey("start")) failed("missing start field");
+                            if (!eventNode.hasKey("end")) failed("missing end field");
+                            if (eventNode["start"].type != eventNode["end"].type) failed("start and end are not the same type");
 
                             Vec2 valueZone;
                             
@@ -8327,14 +8283,14 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
                                 valueZone = assets.requestShaderUniformPair(eventNode["start"].getNumber(), eventNode["end"].getNumber());
                             } else if (eventNode["start"].isArray()) {
                                 PhiShaderUniform startUniform, endUniform;
-                                if (!parseVectorUniform(eventNode["start"], &startUniform)) return "start is not a valid vector uniform";
-                                if (!parseVectorUniform(eventNode["end"], &endUniform)) return "end is not a valid vector uniform";
+                                if (!parseVectorUniform(eventNode["start"], &startUniform)) failed("start is not a valid vector uniform");
+                                if (!parseVectorUniform(eventNode["end"], &endUniform)) failed("end is not a valid vector uniform");
                                 valueZone = assets.requestShaderUniformPair(startUniform, endUniform);
-                            } else return "start and end are not a number or array";
+                            } else failed("start and end are not a number or array");
 
                             ep_u64 easingType = 1;
                             if (eventNode.hasKey("easingType")) {
-                                if (!eventNode["easingType"].isNumber()) return "easingType is not a number";
+                                if (!eventNode["easingType"].isNumber()) failed("easingType is not a number");
                                 easingType = eventNode["easingType"].getNumber();
                             }
 
@@ -8353,14 +8309,14 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
                         }
                     } else if (eventItemNodeType == JsonNode::EnumType::Number) {
                         PhiShaderUniform uniform;
-                        if (!parseVectorUniform(eventsNode, &uniform)) return "events item is not a valid vector uniform";
+                        if (!parseVectorUniform(eventsNode, &uniform)) failed("events item is not a valid vector uniform");
                         layer.addEvent({
                             .timeZone = INF_TZ,
                             .valueZone = assets.requestShaderUniformPair(uniform, uniform),
                             .type = EnumPhiEventType::PhiShaderUniform,
                             .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
                         });
-                    } else return "events array item is not an object or number";
+                    } else failed("events array item is not an object or number");
                 } else if (eventsNode.isNumber()) {
                     layer.addEvent({
                         .timeZone = INF_TZ,
@@ -8368,7 +8324,7 @@ std::variant<PhiExtra, std::string> loadPhiExtraFromJsonData(const Data& data, P
                         .type = EnumPhiEventType::PhiShaderUniform,
                         .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
                     });
-                } else return "event(s) is not an array or number";
+                } else failed("event(s) is not an array or number");
             }
         }
     }
@@ -9205,16 +9161,16 @@ struct PhiTakeOverer {
 
         {
             Timer timer;
-            auto loadResult = loadPhiChartFromData(data);
-            resultInfo.createObjectTook = timer.elapsed();
 
-            if (!loadResult.success) {
+            try {
+                chart = loadPhiChartFromData(data);
+            } catch (const std::exception& e) {
                 resultInfo.success = false;
-                resultInfo.errors = std::move(loadResult.errors);
+                resultInfo.error = e.what();
                 return resultInfo;
             }
 
-            chart = std::move(loadResult.chart);
+            resultInfo.createObjectTook = timer.elapsed();
         }
 
         ep_u64 storyboardTextureId = 0;
@@ -10433,24 +10389,12 @@ struct MilChart {
     }
 };
 
-struct MilChartLoadResult {
-    bool success;
-    std::vector<std::string> errors;
-    MilChart chart;
-};
+MilChart loadMilChartFromDevJson(const Data& data) {
+    auto failed = [](const std::string& msg) {
+        throw std::runtime_error(std::format("dev: {}", msg));
+    };
 
-#define CHART_LOAD_FAILED(prefix, err) \
-    { \
-        return MilChartLoadResult { \
-            .success = false, \
-            .errors = { std::string(prefix) + ": " + (err) } \
-        }; \
-    }
-
-MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
-    JsonNode jsonRoot;
-    auto [jsonParseSuccess, err] = JsonNode::Parse(&jsonRoot, data);
-    if (!jsonParseSuccess) CHART_LOAD_FAILED("dev", std::string("failed to parse json: ") + err);
+    auto jsonRoot = JsonNode::Parse(data);
 
     MilChart chart {};
     chart.meta.noteFlowSpeedBehavior = MilMeta::NoteFlowSpeedBehavior::Override;
@@ -10458,51 +10402,51 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
     chart.meta.worldViewport = { 1920, -1080 };
     chart.meta.speedUnit = 108.0;
 
-    if (!jsonRoot.isObject()) CHART_LOAD_FAILED("dev", "root is not an object");
+    if (!jsonRoot.isObject()) failed("root is not an object");
 
-    if (!jsonRoot.hasKey("meta")) CHART_LOAD_FAILED("dev", "missing meta field");
-    if (!jsonRoot["meta"].isObject()) CHART_LOAD_FAILED("dev", "meta is not an object");
+    if (!jsonRoot.hasKey("meta")) failed("missing meta field");
+    if (!jsonRoot["meta"].isObject()) failed("meta is not an object");
 
     auto& metaNode = jsonRoot["meta"];
 
-    if (!metaNode.hasKey("Title")) CHART_LOAD_FAILED("dev", "missing Title field");
-    if (!metaNode["Title"].isString()) CHART_LOAD_FAILED("dev", "Title is not a string");
+    if (!metaNode.hasKey("Title")) failed("missing Title field");
+    if (!metaNode["Title"].isString()) failed("Title is not a string");
     chart.meta.title = metaNode["Title"].getString();
 
-    if (!metaNode.hasKey("Composer")) CHART_LOAD_FAILED("dev", "missing Composer field");
-    if (!metaNode["Composer"].isString()) CHART_LOAD_FAILED("dev", "Composer is not a string");
+    if (!metaNode.hasKey("Composer")) failed("missing Composer field");
+    if (!metaNode["Composer"].isString()) failed("Composer is not a string");
     chart.meta.composer = metaNode["Composer"].getString();
 
-    if (!metaNode.hasKey("Illustrator")) CHART_LOAD_FAILED("dev", "missing Illustrator field");
-    if (!metaNode["Illustrator"].isString()) CHART_LOAD_FAILED("dev", "Illustrator is not a string");
+    if (!metaNode.hasKey("Illustrator")) failed("missing Illustrator field");
+    if (!metaNode["Illustrator"].isString()) failed("Illustrator is not a string");
     chart.meta.artist = metaNode["Illustrator"].getString();
 
-    if (!metaNode.hasKey("Beatmapper")) CHART_LOAD_FAILED("dev", "missing Beatmapper field");
-    if (!metaNode["Beatmapper"].isString()) CHART_LOAD_FAILED("dev", "Beatmapper is not a string");
+    if (!metaNode.hasKey("Beatmapper")) failed("missing Beatmapper field");
+    if (!metaNode["Beatmapper"].isString()) failed("Beatmapper is not a string");
     chart.meta.charter = metaNode["Beatmapper"].getString();
 
-    if (!metaNode.hasKey("Difficulty")) CHART_LOAD_FAILED("dev", "missing Difficulty field");
-    if (!metaNode["Difficulty"].isString()) CHART_LOAD_FAILED("dev", "Difficulty is not a string");
+    if (!metaNode.hasKey("Difficulty")) failed("missing Difficulty field");
+    if (!metaNode["Difficulty"].isString()) failed("Difficulty is not a string");
     chart.meta.difficultyName = metaNode["Difficulty"].getString();
 
-    if (!metaNode.hasKey("DifficultyValue")) CHART_LOAD_FAILED("dev", "missing DifficultyValue field");
-    if (!metaNode["DifficultyValue"].isNumber()) CHART_LOAD_FAILED("dev", "DifficultyValue is not a number");
+    if (!metaNode.hasKey("DifficultyValue")) failed("missing DifficultyValue field");
+    if (!metaNode["DifficultyValue"].isNumber()) failed("DifficultyValue is not a number");
     chart.meta.difficultyValue = metaNode["DifficultyValue"].getNumber();
 
     std::vector<MilBPMEvent> bpms;
 
-    if (!jsonRoot.hasKey("bpms")) CHART_LOAD_FAILED("dev", "missing bpms field");
-    if (!jsonRoot["bpms"].isArray()) CHART_LOAD_FAILED("dev", "bpms is not an array");
+    if (!jsonRoot.hasKey("bpms")) failed("missing bpms field");
+    if (!jsonRoot["bpms"].isArray()) failed("bpms is not an array");
 
     for (auto& bpmNode : jsonRoot["bpms"].getArray()) {
-        if (!bpmNode.isObject()) CHART_LOAD_FAILED("dev", "bpm is not an object");
+        if (!bpmNode.isObject()) failed("bpm is not an object");
 
-        if (!bpmNode.hasKey("start")) CHART_LOAD_FAILED("dev", "missing start field");
-        if (!bpmNode["start"].isNumber()) CHART_LOAD_FAILED("dev", "start is not a number");
+        if (!bpmNode.hasKey("start")) failed("missing start field");
+        if (!bpmNode["start"].isNumber()) failed("start is not a number");
         ep_f64 start = bpmNode["start"].getNumber();
 
-        if (!bpmNode.hasKey("bpm")) CHART_LOAD_FAILED("dev", "missing bpm field");
-        if (!bpmNode["bpm"].isNumber()) CHART_LOAD_FAILED("dev", "bpm is not a number");
+        if (!bpmNode.hasKey("bpm")) failed("missing bpm field");
+        if (!bpmNode["bpm"].isNumber()) failed("bpm is not a number");
         ep_f64 bpm = bpmNode["bpm"].getNumber();
 
         bpms.push_back({ .time = start, .bpm = bpm });
@@ -10536,71 +10480,71 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
         return false;
     };
 
-    if (!jsonRoot.hasKey("lines")) CHART_LOAD_FAILED("dev", "missing lines field");
-    if (!jsonRoot["lines"].isArray()) CHART_LOAD_FAILED("dev", "lines is not an array");
+    if (!jsonRoot.hasKey("lines")) failed("missing lines field");
+    if (!jsonRoot["lines"].isArray()) failed("lines is not an array");
 
     ep_u64 lineIndex = 0;
     for (auto& lineNode : jsonRoot["lines"].getArray()) {
-        if (!lineNode.isObject()) CHART_LOAD_FAILED("dev", "line is not an object");
+        if (!lineNode.isObject()) failed("line is not an object");
 
         auto& line = chart.lines.emplace_back();
         line.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Line, lineIndex++ }));
 
-        if (!lineNode.hasKey("notes")) CHART_LOAD_FAILED("dev", "missing notes field");
-        if (!lineNode["notes"].isArray()) CHART_LOAD_FAILED("dev", "notes is not an array");
+        if (!lineNode.hasKey("notes")) failed("missing notes field");
+        if (!lineNode["notes"].isArray()) failed("notes is not an array");
 
         for (auto& noteNode : lineNode["notes"].getArray()) {
-            if (!noteNode.isObject()) CHART_LOAD_FAILED("dev", "note is not an object");
+            if (!noteNode.isObject()) failed("note is not an object");
 
             auto& note = line.notes.emplace_back();
 
-            if (!noteNode.hasKey("bpm")) CHART_LOAD_FAILED("dev", "missing bpm field");
-            if (!noteNode["bpm"].isNumber()) CHART_LOAD_FAILED("dev", "bpm is not a number");
+            if (!noteNode.hasKey("bpm")) failed("missing bpm field");
+            if (!noteNode["bpm"].isNumber()) failed("bpm is not a number");
             ep_u64 bpm = noteNode["bpm"].getNumber();
 
-            if (!cvtTime(noteNode, "startTime", bpm, &note.timeZone.x)) CHART_LOAD_FAILED("dev", "invalid startTime");
-            if (!cvtTime(noteNode, "endTime", bpm, &note.timeZone.y)) CHART_LOAD_FAILED("dev", "invalid endTime");
+            if (!cvtTime(noteNode, "startTime", bpm, &note.timeZone.x)) failed("invalid startTime");
+            if (!cvtTime(noteNode, "endTime", bpm, &note.timeZone.y)) failed("invalid endTime");
 
-            if (!noteNode.hasKey("type")) CHART_LOAD_FAILED("dev", "missing type field");
-            if (!noteNode["type"].isNumber()) CHART_LOAD_FAILED("dev", "type is not a number");
+            if (!noteNode.hasKey("type")) failed("missing type field");
+            if (!noteNode["type"].isNumber()) failed("type is not a number");
             note.type = MilNoteTypeHelper::FromInt(noteNode["type"].getNumber());
 
-            if (!noteNode.hasKey("isFake")) CHART_LOAD_FAILED("dev", "missing isFake field");
-            if (!noteNode["isFake"].isBool()) CHART_LOAD_FAILED("dev", "isFake is not a bool");
+            if (!noteNode.hasKey("isFake")) failed("missing isFake field");
+            if (!noteNode["isFake"].isBool()) failed("isFake is not a bool");
             note.isFake = noteNode["isFake"].getBool();
 
-            if (!noteNode.hasKey("isAlwaysPerfect")) CHART_LOAD_FAILED("dev", "missing isAlwaysPerfect field");
-            if (!noteNode["isAlwaysPerfect"].isBool()) CHART_LOAD_FAILED("dev", "isAlwaysPerfect is not a bool");
+            if (!noteNode.hasKey("isAlwaysPerfect")) failed("missing isAlwaysPerfect field");
+            if (!noteNode["isAlwaysPerfect"].isBool()) failed("isAlwaysPerfect is not a bool");
             note.isAlwaysPerfect = noteNode["isAlwaysPerfect"].getBool();
 
-            if (!noteNode.hasKey("index")) CHART_LOAD_FAILED("dev", "missing index field");
-            if (!noteNode["index"].isNumber()) CHART_LOAD_FAILED("dev", "index is not a number");
+            if (!noteNode.hasKey("index")) failed("missing index field");
+            if (!noteNode["index"].isNumber()) failed("index is not a number");
             ep_u64 noteIndex = noteNode["index"].getNumber();
 
             note.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Note, noteIndex }));
         }
     }
 
-    if (!jsonRoot.hasKey("storyboardObjects")) CHART_LOAD_FAILED("dev", "missing storyboardObjects field");
-    if (!jsonRoot["storyboardObjects"].isArray()) CHART_LOAD_FAILED("dev", "storyboardObjects is not an array");
+    if (!jsonRoot.hasKey("storyboardObjects")) failed("missing storyboardObjects field");
+    if (!jsonRoot["storyboardObjects"].isArray()) failed("storyboardObjects is not an array");
 
     ep_u64 sbIndex = 0;
     for (auto& sbNode : jsonRoot["storyboardObjects"].getArray()) {
-        if (!sbNode.isObject()) CHART_LOAD_FAILED("dev", "storyboardObject is not an object");
+        if (!sbNode.isObject()) failed("storyboardObject is not an object");
 
         auto& sb = chart.storyboardObjects.emplace_back();
         sb.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Storyboard, sbIndex++ }));
 
-        if (!sbNode.hasKey("type")) CHART_LOAD_FAILED("dev", "missing type field");
-        if (!sbNode["type"].isNumber()) CHART_LOAD_FAILED("dev", "type is not a number");
+        if (!sbNode.hasKey("type")) failed("missing type field");
+        if (!sbNode["type"].isNumber()) failed("type is not a number");
         sb.type = MilStoryboardTypeHelper::FromInt(sbNode["type"].getNumber());
 
-        if (!sbNode.hasKey("data")) CHART_LOAD_FAILED("dev", "missing data field");
-        if (!sbNode["data"].isString()) CHART_LOAD_FAILED("dev", "data is not an object");
+        if (!sbNode.hasKey("data")) failed("missing data field");
+        if (!sbNode["data"].isString()) failed("data is not an object");
         sb.data = sbNode["data"].getString();
 
-        if (!sbNode.hasKey("layer")) CHART_LOAD_FAILED("dev", "missing layer field");
-        if (!sbNode["layer"].isNumber()) CHART_LOAD_FAILED("dev", "layer is not a number");
+        if (!sbNode.hasKey("layer")) failed("missing layer field");
+        if (!sbNode["layer"].isNumber()) failed("layer is not a number");
         sb.layer = MilStoryboardLayerHelper::FromInt(sbNode["layer"].getNumber());
     }
 
@@ -10642,51 +10586,51 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
         return false;
     };
 
-    if (!jsonRoot.hasKey("animations")) CHART_LOAD_FAILED("dev", "missing animations field");
-    if (!jsonRoot["animations"].isArray()) CHART_LOAD_FAILED("dev", "animations is not an array");
+    if (!jsonRoot.hasKey("animations")) failed("missing animations field");
+    if (!jsonRoot["animations"].isArray()) failed("animations is not an array");
 
     ep_u64 eventIndex = 0;
     for (auto& animNode : jsonRoot["animations"].getArray()) {
-        if (!animNode.isObject()) CHART_LOAD_FAILED("dev", "animation is not an object");
+        if (!animNode.isObject()) failed("animation is not an object");
 
         MilEvent e {};
         e.index = eventIndex++;
 
-        if (!animNode.hasKey("bpmId")) CHART_LOAD_FAILED("dev", "missing bpmId field");
-        if (!animNode["bpmId"].isNumber()) CHART_LOAD_FAILED("dev", "bpmId is not a number");
+        if (!animNode.hasKey("bpmId")) failed("missing bpmId field");
+        if (!animNode["bpmId"].isNumber()) failed("bpmId is not a number");
         ep_u64 bpm = animNode["bpmId"].getNumber();
 
-        if (!cvtTime(animNode, "fromBeat", bpm, &e.timeZone.x)) CHART_LOAD_FAILED("dev", "invalid fromBeat");
-        if (!cvtTime(animNode, "toBeat", bpm, &e.timeZone.y)) CHART_LOAD_FAILED("dev", "invalid toBeat");
+        if (!cvtTime(animNode, "fromBeat", bpm, &e.timeZone.x)) failed("invalid fromBeat");
+        if (!cvtTime(animNode, "toBeat", bpm, &e.timeZone.y)) failed("invalid toBeat");
 
-        if (!animNode.hasKey("key")) CHART_LOAD_FAILED("dev", "missing key field");
-        if (!animNode["key"].isNumber()) CHART_LOAD_FAILED("dev", "key is not a string");
+        if (!animNode.hasKey("key")) failed("missing key field");
+        if (!animNode["key"].isNumber()) failed("key is not a string");
         e.type = MilEventTypeHelper::FromInt(animNode["key"].getNumber());
 
         if (e.type == EnumMilEventType::Color) {
             Color fv, tv;
-            if (!cvtColorAnimVal(animNode, "fv", &fv)) CHART_LOAD_FAILED("dev", "invalid fv");
-            if (!cvtColorAnimVal(animNode, "tv", &tv)) CHART_LOAD_FAILED("dev", "invalid tv");
+            if (!cvtColorAnimVal(animNode, "fv", &fv)) failed("invalid fv");
+            if (!cvtColorAnimVal(animNode, "tv", &tv)) failed("invalid tv");
             e.valueZone = chart.storyboardAssets.requestColorPair(fv, tv);
         } else {
-            if (!cvtAnimVal(animNode, "fv", &e.valueZone.x)) CHART_LOAD_FAILED("dev", "invalid fv");
-            if (!cvtAnimVal(animNode, "tv", &e.valueZone.y)) CHART_LOAD_FAILED("dev", "invalid tv");
+            if (!cvtAnimVal(animNode, "fv", &e.valueZone.x)) failed("invalid fv");
+            if (!cvtAnimVal(animNode, "tv", &e.valueZone.y)) failed("invalid tv");
         }
 
-        if (!animNode.hasKey("data")) CHART_LOAD_FAILED("dev", "missing data field");
-        if (!animNode["data"].isNumber()) CHART_LOAD_FAILED("dev", "data is not a number");
+        if (!animNode.hasKey("data")) failed("missing data field");
+        if (!animNode["data"].isNumber()) failed("data is not a number");
         auto objType = MilObjectTypeHelper::FromInt(animNode["data"].getNumber());
 
-        if (!animNode.hasKey("i1")) CHART_LOAD_FAILED("dev", "missing i1 field");
-        if (!animNode["i1"].isNumber()) CHART_LOAD_FAILED("dev", "i1 is not a number");
+        if (!animNode.hasKey("i1")) failed("missing i1 field");
+        if (!animNode["i1"].isNumber()) failed("i1 is not a number");
         ep_u64 objIndex = animNode["i1"].getNumber();
 
-        if (!animNode.hasKey("ease")) CHART_LOAD_FAILED("dev", "missing ease field");
-        if (!animNode["ease"].isNumber()) CHART_LOAD_FAILED("dev", "ease is not a number");
+        if (!animNode.hasKey("ease")) failed("missing ease field");
+        if (!animNode["ease"].isNumber()) failed("ease is not a number");
         ep_u64 ease = animNode["ease"].getNumber();
 
-        if (!animNode.hasKey("press")) CHART_LOAD_FAILED("dev", "missing press field");
-        if (!animNode["press"].isNumber()) CHART_LOAD_FAILED("dev", "press is not a number");
+        if (!animNode.hasKey("press")) failed("missing press field");
+        if (!animNode["press"].isNumber()) failed("press is not a number");
         ep_u64 press = animNode["press"].getNumber();
 
         if (press != 0) {
@@ -10707,29 +10651,23 @@ MilChartLoadResult loadMilChartFromDevJson(const Data& data) {
     }
 
     chart.rawHash = data.getHash();
-
-    return MilChartLoadResult {
-        .success = true,
-        .chart = chart
-    };
+    return chart;
 }
 
-MilChartLoadResult loadMilChartFromData(const Data& data) {
-    MilChartLoadResult result {};
-    result.success = false;
+MilChart loadMilChartFromData(const Data& data) {
+    std::vector<std::string> msgs;
 
-    #define TRY_LOAD_FUNC(func) \
-        { \
-            auto res = func(data); \
-            if (res.success) return res; \
-            result.errors.insert(result.errors.end(), res.errors.begin(), res.errors.end()); \
-        }
+    #define try_(func) \
+        try { return func(data); } \
+        catch (const std::exception& err) { msgs.push_back(err.what()); }
     
-    TRY_LOAD_FUNC(loadMilChartFromDevJson);
+    try_(loadMilChartFromDevJson);
 
-    return result;
+    std::string msg = "failures: \n";
+    for (auto& m : msgs) msg += m + "\n";
+    return {};
     
-    #undef TRY_LOAD_FUNC
+    #undef try_
 }
 
 struct MilCalculateFrameConfig {
@@ -11255,6 +11193,20 @@ DecodedRGBATexture spwanMilProgressbar() {
 }
 
 struct MilTakeOverer {
+    /* !docs
+    Following functions are necessary to be set:
+
+    - lineHeadTextureLoader
+    - noteTextureDataLoader
+    - hitsoundDataLoader
+    - pauseButtonTextureDataLoader
+    - glCtx
+    - sharedComp.textureDecoder
+    - textManager.renderer
+    - audioManager.decoder
+    - audioManager.engine
+    */
+
     MilTakeOverer() = default;
     MilTakeOverer(const MilTakeOverer&) = delete;
     MilTakeOverer& operator=(const MilTakeOverer&) = delete;
@@ -11265,11 +11217,6 @@ struct MilTakeOverer {
         auto* tor = new MilTakeOverer();
         return ep_sp<MilTakeOverer>(tor);
     }
-
-    ep_sp<GL::GL33Context> glCtx;
-    TakeOvererComponents::SharedComp sharedComp;
-    GL::TextManager textManager;
-    TakeOvererComponents::AudioManager audioManager;
     
     struct LineHeadTextureLoaderResult {
         Data encoded;
@@ -11296,6 +11243,11 @@ struct MilTakeOverer {
     
     using PauseButtonTextureDataLoader = std::function<Data()>;
     PauseButtonTextureDataLoader pauseButtonTextureDataLoader;
+
+    ep_sp<GL::GL33Context> glCtx;
+    TakeOvererComponents::SharedComp sharedComp;
+    GL::TextManager textManager;
+    TakeOvererComponents::AudioManager audioManager;
 
     MilCalculateFrameConfig calcConfig;
     MilChart chart;
@@ -11359,16 +11311,16 @@ struct MilTakeOverer {
 
         {
             Timer timer;
-            auto loadResult = loadMilChartFromData(data);
-            resultInfo.createObjectTook = timer.elapsed();
 
-            if (!loadResult.success) {
+            try {
+                chart = loadMilChartFromData(data);
+            } catch (const std::exception& e) {
                 resultInfo.success = false;
-                resultInfo.errors = std::move(loadResult.errors);
+                resultInfo.error = e.what();
                 return resultInfo;
             }
 
-            chart = std::move(loadResult.chart);
+            resultInfo.createObjectTook = timer.elapsed();
         }
 
         {
@@ -11706,7 +11658,7 @@ void main() {
     }
 };
 
-#undef CHART_LOAD_FAILED
+#undef failed
 
 } // namespace easy_phi
 
