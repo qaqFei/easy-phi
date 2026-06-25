@@ -254,8 +254,8 @@ struct Settings {
 
 int main() {
     PhiWindow backendWin {};
-    backendWin.base.hidden = true;
     backendWin.init();
+    backendWin.base.setHidden(true);
 
     std::string chartRoot = "",
                 chartPath = "",

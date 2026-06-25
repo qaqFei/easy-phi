@@ -5323,6 +5323,8 @@ struct DecodedAudio {
     }
 
     void resample(ep_u64 channels, ep_u64 sampleRate) {
+        if (channels == this->channels && sampleRate == this->sampleRate) return;
+        
         std::vector<ep_i16> data;
         ep_u64 sampleCount = getSampleCount(sampleRate);
         data.resize(sampleCount * channels);
@@ -5651,7 +5653,7 @@ namespace TakeOvererComponents {
         const ep_sp<GL::GL33Context>& glCtx,
         GL::GL33Canvas& cvs,
         GL::TextManager& textManager
-    ) {
+    ) noexcept {
         using namespace SharedCalculatedObjects;
         using namespace GL;
 
@@ -5919,7 +5921,6 @@ struct PhiAnimLayer {
     std::vector<PhiEvent> events[(ep_u64)EnumPhiEventType::MAX];
 
     void addEvent(const PhiEvent& e) { events[(ep_u64)e.type].push_back(e); }
-    std::vector<PhiEvent>& getEvents(EnumPhiEventType type) noexcept { return events[(ep_u64)type]; }
 
     void init() {
         /* !docs
@@ -5939,16 +5940,13 @@ struct PhiAnimLayer {
     }
 
     void updateType(ep_u64 type, ep_f64 t) noexcept {
-        auto& typedEvents = getEvents((EnumPhiEventType)type);
+        auto& typedEvents = events[type];
         if (typedEvents.empty()) return;
 
         if (lastUpdatedTimes[type] == t) return;
-        if (lastUpdatedTimes[type] > t) currentIndexs[type] = 0;
+        if (lastUpdatedTimes[type] > t) rewindTo(type, t);
 
-        while (
-            currentIndexs[type] < typedEvents.size() - 1
-            && typedEvents[currentIndexs[type] + 1].timeZone.x <= t
-        ) currentIndexs[type]++;
+        while (shouldAdvanceToNext(type, t)) currentIndexs[type]++;
 
         auto& e = typedEvents[currentIndexs[type]];
 
@@ -5982,7 +5980,7 @@ struct PhiAnimLayer {
         Get a fixed value of a event type if it is exists.
         */
 
-        auto& typedEvents = getEvents(type);
+        auto& typedEvents = events[(ep_u64)type];
         if (typedEvents.empty()) return PhiEvent::getDefaultValue(type);
 
         if (type == EnumPhiEventType::Speed) {
@@ -6018,7 +6016,7 @@ struct PhiAnimLayer {
     std::optional<Vec2> currentValueZones[(ep_u64)EnumPhiEventType::MAX];
 
     void initSpeedCumul() {
-        auto& speedEvents = getEvents(EnumPhiEventType::Speed);
+        auto& speedEvents = events[(ep_u64)EnumPhiEventType::Speed];
         ep_f64 cumulativeValue = 0.0;
 
         for (ep_u64 i = 0; i < speedEvents.size(); i++) {
@@ -6028,6 +6026,19 @@ struct PhiAnimLayer {
             if (i < speedEvents.size() - 1) {
                 cumulativeValue += e.getIntegralValue(speedEvents[i + 1].timeZone.x);
             }
+        }
+    }
+
+    bool shouldAdvanceToNext(ep_u64 type, ep_f64 t) const noexcept {
+        return (
+            currentIndexs[type] < events[type].size() - 1
+            && events[type][currentIndexs[type] + 1].timeZone.x <= t
+        );
+    }
+
+    void rewindTo(ep_u64 type, ep_f64 t) noexcept {
+        while (!shouldAdvanceToNext(type, t) && currentIndexs[type] > 0) {
+            currentIndexs[type]--;
         }
     }
 };
@@ -8333,10 +8344,9 @@ PhiExtra loadPhiExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets)
 }
 
 struct PhiStoryboardHelpers {
-    static std::string textureNameToPath(const std::string& dir, const std::string& name) {
-        return std::filesystem::path(dir + "/" + name)
-            .lexically_normal()
-            .string();
+    static std::string nameToPath(const std::string& dir, const std::string& name) {
+        return std::filesystem::path(std::format("{}/{}", dir, name))
+            .lexically_normal().string();
     }
 
     static void attachTextureLoader(
@@ -8346,7 +8356,7 @@ struct PhiStoryboardHelpers {
         const std::function<void(ep_u64)>& destroyer
     ) {
         assets.clearTextures();
-        assets.textureLoader = [=](std::string name) { return loader(textureNameToPath(dir, name)); };
+        assets.textureLoader = [=](std::string name) { return loader(nameToPath(dir, name)); };
         assets.textureDestroyer = destroyer;
     }
 
@@ -9684,7 +9694,6 @@ struct MilAnimGroup {
     EnumMilObjectType objType;
 
     void addEvent(const MilEvent& e) { events[(ep_u64)e.type].push_back(e); }
-    std::vector<MilEvent>& getEvents(EnumMilEventType type) { return events[(ep_u64)type]; }
 
     void init() {
         std::ranges::fill(lastUpdatedTimes, -std::numeric_limits<ep_f64>::infinity());
@@ -9720,13 +9729,9 @@ struct MilAnimGroup {
         }
 
         if (lastUpdatedTimes[type] == t) return;
-        if (lastUpdatedTimes[type] > t) currentIndexs[type] = 0;
+        if (lastUpdatedTimes[type] > t) rewindTo(type, t);
         
-        while (
-            currentIndexs[type] < typedEvents.size() - 1
-            && typedEvents[currentIndexs[type]].timeZone.y <= t
-            && typedEvents[currentIndexs[type] + 1].timeZone.x <= t
-        ) currentIndexs[type]++;
+        while (shouldAdvanceToNext(type, t)) currentIndexs[type]++;
 
         auto& e = typedEvents[currentIndexs[type]];
 
@@ -9745,7 +9750,7 @@ struct MilAnimGroup {
     }
 
     std::optional<ep_f64> getAlwaysValue(EnumMilEventType type) noexcept {
-        auto& typedEvents = getEvents(type);
+        auto& typedEvents = events[(ep_u64)type];
         if (typedEvents.empty()) return MilEvent::getDefaultValue(objType, type);
 
         if (type == EnumMilEventType::Speed) {
@@ -9789,7 +9794,7 @@ struct MilAnimGroup {
     Vec2 currentValueZones[(ep_u64)EnumMilEventType::MAX];
 
     void initSpeedCumul() {
-        auto& speedEvents = getEvents(EnumMilEventType::Speed);
+        auto& speedEvents = events[(ep_u64)EnumMilEventType::Speed];
         if (speedEvents.empty()) return;
 
         ep_f64 cumulativeValue = speedEvents[0].timeZone.x * speedEvents[0].valueZone.x;
@@ -9801,6 +9806,20 @@ struct MilAnimGroup {
             if (i < speedEvents.size() - 1) {
                 cumulativeValue += e.getIntegralValue(speedEvents[i + 1].timeZone.x);
             }
+        }
+    }
+
+    bool shouldAdvanceToNext(ep_u64 type, ep_f64 t) const noexcept {
+        return (
+            currentIndexs[type] < events[type].size() - 1
+            && events[type][currentIndexs[type]].timeZone.y <= t
+            && events[type][currentIndexs[type] + 1].timeZone.x <= t
+        );
+    }
+
+    void rewindTo(ep_u64 type, ep_f64 t) noexcept {
+        while (!shouldAdvanceToNext(type, t) && currentIndexs[type] > 0) {
+            currentIndexs[type]--;
         }
     }
 };

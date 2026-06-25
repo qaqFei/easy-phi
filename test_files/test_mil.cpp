@@ -49,8 +49,8 @@ int main(int argc, char** argv) {
 
     MilWindow window {};
     window.base.fullscreen = hasArg("--fullscreen");
-    window.base.setVSync(!hasArg("--disable-vsync"));
     window.init();
+    window.base.setVSync(!hasArg("--disable-vsync"));
 
     window.loadChart(chartPath, storyboardAssetsPath);
     window.renderer->loadIllustion(imagePath);

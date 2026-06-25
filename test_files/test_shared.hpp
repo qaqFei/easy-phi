@@ -93,10 +93,8 @@ struct VideoCap {
     }
 
     void writeAudio(ep_sp<DecodedAudio> audio) {
-        if ((int)audio->sampleRate != aCodecCtx->sample_rate || (int)audio->channels != aCodecCtx->ch_layout.nb_channels) {
-            audio = audio->copy();
-            audio->resample(aCodecCtx->ch_layout.nb_channels, aCodecCtx->sample_rate);
-        }
+        audio = audio->copy();
+        audio->resample(aCodecCtx->ch_layout.nb_channels, aCodecCtx->sample_rate);
 
         auto frameSamples = aCodecCtx->frame_size * audio->channels;
 
@@ -163,10 +161,8 @@ struct VideoCap {
 struct WindowBase {
     GLFWwindow* window;
     int width, height;
-    bool hidden;
     double frameBusyWaitPercentage = 0.8;
     bool fullscreen;
-    bool vsync;
     std::string chartDir;
     double mouseX, mouseY;
 
@@ -183,19 +179,18 @@ struct WindowBase {
         return false;
     }
 
-    void setHidden(bool newValue) {
-        hidden = newValue;
-        if (hidden) glfwHideWindow(window);
+    void setHidden(bool value) {
+        if (value) glfwHideWindow(window);
         else glfwShowWindow(window);
     }
 
-    void setVSync(bool enabled) {
-        vsync = enabled;
-        glfwSwapInterval(vsync ? 1 : 0);
+    void setVSync(bool value) {
+        glfwSwapInterval((int)value);
+        vsyncEnabled = value;
     }
 
     void busyWait(double frameSt, bool printInfo) {
-        if (!vsync) return;
+        if (!vsyncEnabled) return;
 
         double waitSt = globalTimer();
         auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
@@ -258,6 +253,9 @@ struct WindowBase {
         glCtx->frameEnded();
         return true;
     }
+
+    private:
+    bool vsyncEnabled = false;
 };
 
 void createGLfwWindow(WindowBase& wbase) {
@@ -266,10 +264,6 @@ void createGLfwWindow(WindowBase& wbase) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES, 4);
-
-    if (wbase.hidden) {
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    }
 
     auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
     wbase.width = vm->width * 0.6;
@@ -308,7 +302,7 @@ void createGLfwWindow(WindowBase& wbase) {
         }
     });
 
-    wbase.setVSync(wbase.vsync);
+    wbase.setVSync(false);
 }
 
 struct PhiWindow {
@@ -329,7 +323,7 @@ struct PhiWindow {
         renderer->hitsoundDataLoader = PhiStaticResourceHelpers::hitsoundDataLoader;
 
         renderer->storyboardDataLoader = [this](const std::string& name) -> Data {
-            auto path = PhiStoryboardHelpers::textureNameToPath(base.chartDir, name);
+            auto path = PhiStoryboardHelpers::nameToPath(base.chartDir, name);
 
             Data data;
             if (!Data::MakeFromFile(data, path)) {
@@ -343,7 +337,7 @@ struct PhiWindow {
             Data shaderText {};
 
             if (!PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
-                if (!Data::MakeFromFile(shaderText, std::filesystem::path(base.chartDir + "/" + name).lexically_normal().string())) {
+                if (!Data::MakeFromFile(shaderText, PhiStoryboardHelpers::nameToPath(base.chartDir, name))) {
                     std::cout << "failed to read shader file: " << name << std::endl;
                 }
             }
@@ -365,6 +359,7 @@ struct PhiWindow {
 
         auto resultInfo = renderer->loadChart(data, [this](auto& chart) {
             Data extraData;
+
             if (Data::MakeFromFile(extraData, base.chartDir + "extra.json")) {
                 try {
                     chart.extra = loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
