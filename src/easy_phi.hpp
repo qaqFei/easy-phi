@@ -288,7 +288,7 @@ struct HashBucket {
         static_assert(std::is_arithmetic_v<T>, "T must be numeric");
         
         if constexpr (std::is_floating_point_v<T>) {
-            if (v == 0) v = 0;
+            if (v == 0) v = std::copysign(0.0, 1.0);
         }
         
         const ep_u8* bytes = reinterpret_cast<const ep_u8*>(&v);
