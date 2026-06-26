@@ -8,7 +8,6 @@
 #include <variant>
 #include <unordered_map>
 #include <cmath>
-#include <stdarg.h>
 #include <iostream>
 #include <fstream>
 #include <algorithm>
@@ -160,7 +159,7 @@ void checkBoolAndThrow(bool condition, const std::string& msg, const std::string
         if (prefix.empty()) {
             throw std::runtime_error(msg);
         } else {
-            throw std::runtime_error(prefix + ": " + msg);
+            throw std::runtime_error(std::format("{}: {}", prefix, msg));
         }
     }
 }
@@ -525,9 +524,7 @@ private:
 };
 
 struct JsonNode {
-    enum class EnumType {
-        String, Number, Bool, Array, Object, Null
-    };
+    enum class EnumType { String, Number, Bool, Array, Object, Null };
 
     EnumType type;
     std::variant<
@@ -732,8 +729,7 @@ struct JsonNode {
 
     static JsonNode Parse(StringReader& reader) {
         /* !docs
-        Parse a JSON string into a JsonNode.
-        The result is a pair of a boolean indicating success and a string containing an error message if failed.
+        It will throw if parsing failed.
         */
 
         auto failed = [&](const std::string& err) {
@@ -11676,8 +11672,6 @@ void main() {
         }
     }
 };
-
-#undef failed
 
 } // namespace easy_phi
 
