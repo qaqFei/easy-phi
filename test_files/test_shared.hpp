@@ -171,6 +171,7 @@ struct WindowBase {
     double mouseX, mouseY;
 
     ep_sp<GL33Context> glCtx;
+    FramerateMeter framerateMeter;
 
     TakeOvererComponents::AudioManager* audioManagerRef;
 
@@ -204,7 +205,7 @@ struct WindowBase {
         }
 
         if (printInfo) {
-            std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << std::endl;
+            std::cout << "wait took " << ((globalTimer() - waitSt) * 1000) << " ms" << '\n';
         }
     }
 
@@ -240,8 +241,8 @@ struct WindowBase {
         callback(resultInfo);
 
         if (!config.isRenderingVideo) {
-            std::cout << "calculate took: " << (resultInfo.base.calculatedTook * 1000) << " ms" << std::endl;
-            std::cout << "gl operations took: " << (resultInfo.base.glOperationsTook * 1000) << " ms" << std::endl;
+            std::cout << "calculate took: " << (resultInfo.base.calculatedTook * 1000) << " ms" << '\n';
+            std::cout << "gl operations took: " << (resultInfo.base.glOperationsTook * 1000) << " ms" << '\n';
 
             glfwPollEvents();
             busyWait(frameSt, !config.isRenderingVideo);
@@ -249,12 +250,16 @@ struct WindowBase {
         }
 
         if (!config.isRenderingVideo) {
-            std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
-            std::cout << "draw calls count: " << glCtx->drawCallsCount << std::endl;
-            std::cout << std::string(80, '-') << std::endl;
+            std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << '\n';
+            std::cout << "draw calls count: " << glCtx->drawCallsCount << '\n';
+            std::cout << "framerate: " << framerateMeter.get() << '\n';
+            std::cout << std::string(80, '-') << '\n';
+            std::cout << std::flush;
         }
 
         glCtx->frameEnded();
+        framerateMeter.frame();
+
         return true;
     }
 
@@ -308,6 +313,7 @@ void createGLfwWindow(WindowBase& wbase) {
     });
 
     wbase.setVSync(false);
+    std::ios::sync_with_stdio(false);
 }
 
 struct PhiWindow {
