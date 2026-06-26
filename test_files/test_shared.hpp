@@ -14,6 +14,10 @@ extern "C" {
 using namespace easy_phi;
 using namespace GL;
 
+GLFWvidmode* glfwVmPrimaryMonitor() {
+    return (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
+}
+
 struct VideoCap {
     AVFormatContext* fmtCtx;
 
@@ -168,7 +172,7 @@ struct WindowBase {
 
     ep_sp<GL33Context> glCtx;
 
-    std::function<void(ep_f64)> audioSeekTo;
+    TakeOvererComponents::AudioManager* audioManagerRef;
 
     bool shouldClose() {
         if (glfwWindowShouldClose(window)) {
@@ -193,9 +197,9 @@ struct WindowBase {
         if (!vsyncEnabled) return;
 
         double waitSt = globalTimer();
-        auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
+
         volatile int* dummy = nullptr;
-        while ((globalTimer() - frameSt) < frameBusyWaitPercentage / vm->refreshRate) {
+        while ((globalTimer() - frameSt) < frameBusyWaitPercentage / glfwVmPrimaryMonitor()->refreshRate) {
             dummy++;
         }
 
@@ -247,7 +251,7 @@ struct WindowBase {
         if (!config.isRenderingVideo) {
             std::cout << "frame took " << ((globalTimer() - frameSt) * 1000) << " ms" << std::endl;
             std::cout << "draw calls count: " << glCtx->drawCallsCount << std::endl;
-            std::cout << std::string(80, '.') << std::endl;
+            std::cout << std::string(80, '-') << std::endl;
         }
 
         glCtx->frameEnded();
@@ -265,23 +269,23 @@ void createGLfwWindow(WindowBase& wbase) {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES, 4);
 
-    auto* vm = (GLFWvidmode*)glfwGetVideoMode(glfwGetPrimaryMonitor());
-    wbase.width = vm->width * 0.6;
-    wbase.height = vm->height * 0.6;
+    auto* vm = glfwVmPrimaryMonitor();
 
     if (wbase.fullscreen) {
-        glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
-        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
-        wbase.width = vm->width; wbase.height = vm->height;
+        wbase.width = vm->width;
+        wbase.height = vm->height;
+    } else {
+        wbase.width = vm->width * 0.6;
+        wbase.height = vm->height * 0.6;
     }
 
     wbase.width += wbase.width % 2;
     wbase.height += wbase.height % 2;
 
     wbase.window = glfwCreateWindow(wbase.width, wbase.height, "", nullptr, nullptr);
-
     glfwMakeContextCurrent(wbase.window);
+
     wbase.glCtx = GL33Context::Make(MakeGL33CoreInterface( [](const char* name) { return (void*)glfwGetProcAddress(name); } ));
 
     glfwSetWindowUserPointer(wbase.window, &wbase);
@@ -297,7 +301,8 @@ void createGLfwWindow(WindowBase& wbase) {
 
         if (action == GLFW_PRESS) {
             if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                wbase->audioSeekTo(wbase->mouseX / wbase->width);
+                auto& audioManager = *wbase->audioManagerRef;
+                audioManager.seekBgm(audioManager.getBgmLength() * wbase->mouseX / wbase->width);
             }
         }
     });
@@ -311,39 +316,14 @@ struct PhiWindow {
     ep_sp<PhiTakeOverer> renderer;
 
     void init() {
-        base.audioSeekTo = [this](ep_f64 p) {
-            renderer->audioManager.seekBgm(renderer->audioManager.getBgmLength() * p);
-        };
-
         createGLfwWindow(base);
 
         renderer = PhiTakeOverer::Make();
         renderer->noteTextureDataLoader = PhiStaticResourceHelpers::noteTextureDataLoader;
         renderer->hitEffectDataLoader = PhiStaticResourceHelpers::hitEffectDataLoader;
         renderer->hitsoundDataLoader = PhiStaticResourceHelpers::hitsoundDataLoader;
-
-        renderer->storyboardDataLoader = [this](const std::string& name) -> Data {
-            auto path = PhiStoryboardHelpers::nameToPath(base.chartDir, name);
-
-            Data data;
-            if (!Data::MakeFromFile(data, path)) {
-                std::cout << "failed to read storyboard file: " << name << std::endl;
-            }
-
-            return data;
-        };
-
-        renderer->shaderDataLoader = [this](const std::string& name) -> std::string {
-            Data shaderText {};
-
-            if (!PhiStaticResourceHelpers::getBuiltinShader(name, shaderText)) {
-                if (!Data::MakeFromFile(shaderText, PhiStoryboardHelpers::nameToPath(base.chartDir, name))) {
-                    std::cout << "failed to read shader file: " << name << std::endl;
-                }
-            }
-
-            return shaderText.toString();
-        };
+        renderer->shaderDataLoader = PhiStaticResourceHelpers::createShaderDataLoaderFromChartDir([this] { return base.chartDir; });
+        renderer->storyboardDataLoader = PhiStaticResourceHelpers::createStoryboardDataLoaderFromChartDir([this] { return base.chartDir; });
 
         renderer->glCtx = base.glCtx;
         renderer->sharedComp.textureDecoder = decodeImage;
@@ -351,24 +331,16 @@ struct PhiWindow {
         renderer->audioManager.decoder = decodeAudioMiniaudio;
         renderer->audioManager.engine = makeAudioEngineMiniaudio();
         renderer->init();
+
+        base.audioManagerRef = &renderer->audioManager;
     }
 
     auto loadChart(const std::string& path, const std::string& chartDir) {
         base.chartDir = chartDir;
-        auto data = Data::MakeFromFile(path);
 
-        auto resultInfo = renderer->loadChart(data, [this](auto& chart) {
-            Data extraData;
-
-            if (Data::MakeFromFile(extraData, base.chartDir + "extra.json")) {
-                try {
-                    chart.extra = loadPhiExtraFromJsonData(extraData, chart.storyboardAssets);
-                } catch (const std::exception& e) {
-                    std::cout << "failed to load extra: " << e.what() << std::endl;
-                }
-            }
-
-            chart.init();
+        auto resultInfo = renderer->loadChart({
+            .data = Data::MakeFromFile(path),
+            .extraData = Data::MakeFromFileOptional(PhiStoryboardHelpers::nameToPath(base.chartDir, "extra.json"))
         });
 
         resultInfo.checkAndThrow();
@@ -390,10 +362,6 @@ struct MilWindow {
     ep_sp<MilTakeOverer> renderer;
 
     void init() {
-        base.audioSeekTo = [this](ep_f64 p) {
-            renderer->audioManager.seekBgm(renderer->audioManager.getBgmLength() * p);
-        };
-
         createGLfwWindow(base);
 
         renderer = MilTakeOverer::Make();
@@ -408,14 +376,18 @@ struct MilWindow {
         renderer->audioManager.decoder = decodeAudioMiniaudio;
         renderer->audioManager.engine = makeAudioEngineMiniaudio();
         renderer->init();
+
+        base.audioManagerRef = &renderer->audioManager;
     }
 
     auto loadChart(const std::string& path, const std::string& chartDir) {
         base.chartDir = chartDir;
-        auto data = Data::MakeFromFile(path);
         
-        auto resultInfo = renderer->loadChart(data);
+        auto resultInfo = renderer->loadChart({
+            .data = Data::MakeFromFile(path)
+        });
         resultInfo.checkAndThrow();
+
         return resultInfo;
     }
 

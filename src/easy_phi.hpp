@@ -360,6 +360,14 @@ struct Data {
         }
     }
 
+    static std::optional<Data> MakeFromFileOptional(const std::string& fn) {
+        try {
+            return MakeFromFile(fn);
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+
     std::string toString() const {
         return std::string((char*)data.data(), data.size());
     }
@@ -9159,17 +9167,20 @@ struct PhiTakeOverer {
 
     using ChartIniter = std::function<void(PhiChart&)>;
 
-    TakeOvererComponents::LoadChartResultInfo loadChart(
-        const Data& data,
-        const ChartIniter& initer = [](PhiChart& chart) { chart.init(); }
-    ) {
+    struct LoadChartConfig {
+        Data data;
+        ChartIniter initer = [](PhiChart& chart) { chart.init(); };
+        std::optional<Data> extraData;
+    };
+
+    TakeOvererComponents::LoadChartResultInfo loadChart(const LoadChartConfig& config) {
         TakeOvererComponents::LoadChartResultInfo resultInfo {};
 
         {
             Timer timer;
 
             try {
-                chart = loadPhiChartFromData(data);
+                chart = loadPhiChartFromData(config.data);
             } catch (const std::exception& e) {
                 resultInfo.success = false;
                 resultInfo.error = e.what();
@@ -9219,9 +9230,13 @@ struct PhiTakeOverer {
         shaders.clear();
         shadersDefaultUniforms.clear();
 
+        if (config.extraData.has_value()) {
+            chart.extra = loadPhiExtraFromJsonData(config.extraData.value(), chart.storyboardAssets);
+        }
+
         {
             Timer timer;
-            initer(chart);
+            config.initer(chart);
             resultInfo.initTook = timer.elapsed();
         }
 
@@ -11318,17 +11333,19 @@ struct MilTakeOverer {
 
     using ChartIniter = std::function<void(MilChart&)>;
 
-    TakeOvererComponents::LoadChartResultInfo loadChart(
-        const Data& data,
-        ChartIniter initer = [](MilChart& chart) { chart.init(); }
-    ) {
+    struct LoadChartConfig {
+        Data data;
+        ChartIniter initer = [](MilChart& chart) { chart.init(); };
+    };
+
+    TakeOvererComponents::LoadChartResultInfo loadChart(const LoadChartConfig& config) {
         TakeOvererComponents::LoadChartResultInfo resultInfo {};
 
         {
             Timer timer;
 
             try {
-                chart = loadMilChartFromData(data);
+                chart = loadMilChartFromData(config.data);
             } catch (const std::exception& e) {
                 resultInfo.success = false;
                 resultInfo.error = e.what();
@@ -11340,7 +11357,7 @@ struct MilTakeOverer {
 
         {
             Timer timer;
-            initer(chart);
+            config.initer(chart);
             resultInfo.initTook = timer.elapsed();
         }
 
@@ -12023,6 +12040,34 @@ namespace easy_phi {
             }
 
             return false;
+        }
+
+        static PhiTakeOverer::ShaderDataLoader createShaderDataLoaderFromChartDir(const std::function<std::string()>& chartDirProvider) {
+            return [=](const std::string& name) -> std::string {
+                Data shaderText;
+
+                if (!getBuiltinShader(name, shaderText)) {
+                    auto path = PhiStoryboardHelpers::nameToPath(chartDirProvider(), name);
+                    if (!Data::MakeFromFile(shaderText, path)) {
+                        throw std::runtime_error(std::format("failed to read shader: {}", path));
+                    }
+                }
+
+                return shaderText.toString();
+            };
+        }
+
+        static PhiTakeOverer::StoryboardDataLoader createStoryboardDataLoaderFromChartDir(const std::function<std::string()>& chartDirProvider) {
+            return [=](const std::string& name) -> Data {
+                auto path = PhiStoryboardHelpers::nameToPath(chartDirProvider(), name);
+                
+                Data data;
+                if (!Data::MakeFromFile(data, path)) {
+                    throw std::runtime_error(std::format("failed to read storyboard: {}", path));
+                }
+
+                return data;
+            };
         }
 
         static Data getFontData() {
