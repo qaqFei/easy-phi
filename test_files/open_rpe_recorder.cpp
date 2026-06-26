@@ -577,6 +577,7 @@ int main() {
 
         backendWin.base.width = settings.recordWidth;
         backendWin.base.height = settings.recordHeight;
+        backendWin.base.setVSync(false);
 
         pd.setLine(1, L"加载...");
         if (!load()) return;
