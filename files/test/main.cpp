@@ -288,6 +288,14 @@ namespace test_main {
 
     #if defined(APP_TYPE_OPEN_RPE_RECORDER)
     void entrypoint() {
+        int argc; char** argv;
+        grain::get_args(&argc, &argv);
+        
+        std::vector<std::string> args(argv, argv + argc);
+        auto hasArg = [&](const std::string& arg) {
+            return std::find(args.begin(), args.end(), arg) != args.end();
+        };
+
         PhiWindow backendWin {};
         backendWin.init();
         backendWin.base.window->setHidden(true);
@@ -551,7 +559,7 @@ namespace test_main {
             WinHiddenGuard whguard(win.get());
 
             backendWin.base.window->setHidden(false);
-            backendWin.base.window->setSwapInterval(1);
+            backendWin.base.window->setSwapInterval(hasArg("--disable-vsync") ? 0 : 1);
             backendWin.renderer->audioManager.startBgm();
 
             backendWin.renderer->audioManager.setBgmVolume(settings.musicVol);
