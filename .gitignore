@@ -1,7 +1,3 @@
-/build
-/docs
-/test_files/mil
+.grain
 
-dev.flag
-
-need-ignore-*
+/milcharts

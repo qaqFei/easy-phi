@@ -2,13 +2,15 @@
 
 <h4 align="center">
 
-![easy-phi](https://socialify.git.ci/qaqFei/easy-phi/image?description=1&descriptionEditable=A%20simple,%20high-performance,%20and%20cross-platform%20library%20for%20rendering%20rhythm%20charts.&font=Jost&forks=1&issues=1&name=1&owner=1&pattern=Charlie%20Brown&pulls=1&stargazers=1&theme=Auto)
+![easy-phi](https://socialify.git.ci/qaqFei/easy-phi/image?description=1&descriptionEditable=A%20simple%20and%20high-performance%20library%20for%20rendering%20rhythm%20charts.&font=Jost&forks=1&issues=1&name=1&owner=1&pattern=Charlie%20Brown&pulls=1&stargazers=1&theme=Auto)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Language](https://img.shields.io/badge/language-C++-blue.svg)
 </h4>
 
-easy-phi is a library written in C++ to rendering rhythm chart with no dependencies and all the platforms are supported.
+easy-phi is a library written in C++ to rendering rhythm chart.
+
+It is based on [grain](https://github.com/qaqFei/grain), a C++ package manager.
 
 ## Games Supported
 
@@ -19,66 +21,37 @@ easy-phi is a library written in C++ to rendering rhythm chart with no dependenc
 
 - **High Performance**: Optimized for performance, suitable for real-time rendering.
 - **Simple API**: Easy to use and understand.
-- **Cross Platform**: Works on any platform that supports C++.
-- **Zero Dependencies**: No external libraries are required.
 - **Game Utilities**: Support for handling game-related data or resources.
 
 ## Working On
-
-- **Takeover**: The library assumes full control over the rendering pipeline, handling all complex operations internally so that you do not need to manage any low-level details.
-
-- **Documentation**: We're working on comprehensive documentation to help you get started with easy-phi quickly and easily.
 
 - **Making it Easier**: We're making it easier to use easy-phi by clear and convient API design.
 
 - **Supporting More Games**: We're working on supporting more rhythm games, such as [Rizline](https://store.steampowered.com/app/2272590/Rizline/).
 
-## Benchmark
-
-### Runtime Info
-
-- OS: Windows 10.0.19042
-- CPU:  Definitely worse than yours ;)
-- Commit: [click here](https://github.com/qaqFei/easy-phi/tree/08d2c8a414658a14c548153b62b82cdcf6386d00)
-- Build: Release
-- Phigros Chart: [click here](https://www.bilibili.com/video/BV1TN4y1x7rp)
-
-### Result
-
-![Phigros Benchmark Result](./benchmark-phigros.png)
-
 ## Building
 
-**Note**: This library requires **C++20 or later**.
+You should install the grain package manager:
 
-### Library
+```bash
+pip install git+https://github.com/qaqFei/grain.git
+grain info # init config
 
-Just include the [`easy_phi.hpp`](./src/easy_phi.hpp) header file in your project and you're ready to go!
-
-If you want to use some extra features, you can define the following macros ([`helpers`](./src/helpers/) module is required):
-
-- `EASY_PHI_TEXT_RENDERER`: Enable internal text renderer, using [`stb_truetype`](https://github.com/nothings/stb/blob/master/stb_truetype.h).
-
-- `EASY_PHI_IMAGE_DECODER`: Enable internal image decoder, using [`stb_image`](https://github.com/nothings/stb/blob/master/stb_image.h).
-
-- `EASY_PHI_MINIAUDIO_AUDIO_ENGINE`: Enable internal audio engine, using [`miniaudio`](https://github.com/mackron/miniaudio).
-
-- `EASY_PHI_PHI_RESOURCE`: Enable internal phigros resource.
-
-- `EASY_PHI_MIL_RESOURCE`: Enable internal milthm resource.
+# if you are in China, you can use ghproxy
+grain config set use_ghproxy True
+```
 
 ### Tests
-
-Tests only supports Windows, and you need to install [python](https://www.python.org/downloads/) and  [mingw-w64](https://mingw-w64.org/doku.php/download) that supports C++20 or later to build the test programs.
 
 You can run the main test program by the following command:
 
 ```bash
-python ./build_test.py --source open_rpe_recorder.cpp --run --debug
+grain package clean
+grain package run-test . --macro APP_TYPE_OPEN_RPE_RECORDER
 ```
 
 ## Other
 
-The files in `src/helpers/resources` are **maybe not owned** by this project, please contact for removal if there is any copyright infringement.
+The files in `files/resources` are **maybe not owned** by this project, please contact for removal if there is any copyright infringement.
 
 **We do not guarantee that the api is stable between versions.**

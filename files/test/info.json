@@ -1,0 +1,33 @@
+{
+    "requirements": {
+        "externals": [
+            "geasy_phi==0",
+            "gglfw3==0",
+            "gsp==0",
+            "gnumeric==0",
+            "gopengl==0",
+            "gframerate_meter==0",
+            "gtime==0",
+            "gimage==0",
+            "gminiaudio==0",
+            "gkeeping_cwd==0",
+            "gregapi==0",
+            "gwin32ui==0",
+            "gdata==0",
+            "gwin_progress_dialog==0",
+            "gthread_safe_queue==0",
+            "gvideoenc==0"
+        ],
+        "standards": [
+            "string",
+            "iostream",
+            "optional",
+            "functional",
+            "windows.h"
+        ],
+        "platform_links": [],
+        "embeds": {}
+    },
+    "type": "application",
+    "name": "test"
+}
