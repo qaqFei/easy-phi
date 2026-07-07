@@ -29,7 +29,7 @@ It is based on [grain](https://github.com/qaqFei/grain), a C++ package manager.
 
 - **Supporting More Games**: We're working on supporting more rhythm games, such as [Rizline](https://store.steampowered.com/app/2272590/Rizline/).
 
-## Building
+## Usage
 
 You should install the grain package manager:
 
@@ -40,6 +40,10 @@ grain info # init config
 # if you are in China, you can use ghproxy
 grain config set use_ghproxy True
 ```
+
+### Use it in your project
+
+See the documentation [here](https://github.com/qaqFei/grain/blob/main/docs/using_in_cmake.md).
 
 ### Tests
 
