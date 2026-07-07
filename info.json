@@ -18,8 +18,7 @@
             "geasing==0",
             "gskvcache==0",
             "gtime==0",
-            "gtime_based_anim==0",
-            "gtext_renderer==0"
+            "gtime_based_anim==0"
         ],
         "standards": [
             "algorithm",

@@ -7,6 +7,15 @@ namespace test_main {
     using namespace gopengl::GL;
     using namespace geasy_phi;
     using namespace gwin32ui;
+    using namespace gtext_renderer;
+
+    TextManager::Renderer createTextRendererFromData(const Data& data) {
+        auto tr = TextRenderer::Make();
+        tr->loadFont(data);
+        return [tr](const std::string& text, uint64 fontSize) {
+            return tr->render(text, fontSize);
+        };
+    }
 
     struct WindowBase {
         gsp<gglfw3::Window> window;
@@ -134,7 +143,7 @@ namespace test_main {
 
             renderer->glCtx = base.glCtx;
             renderer->sharedComp.textureDecoder = gimage::decode;
-            renderer->textManager.renderer = PhiStaticResourceHelpers::createTextRenderer();
+            renderer->textManager.renderer = createTextRendererFromData(PhiStaticResourceHelpers::getFontData());
             renderer->audioManager.decoder = gminiaudio::decode;
             renderer->audioManager.engine = gminiaudio::makeAudioEngine();
             renderer->init();
@@ -179,7 +188,7 @@ namespace test_main {
             
             renderer->glCtx = base.glCtx;
             renderer->sharedComp.textureDecoder = gimage::decode;
-            renderer->textManager.renderer = MilStaticResourceHelpers::createTextRenderer();
+            renderer->textManager.renderer = createTextRendererFromData(MilStaticResourceHelpers::getFontData());
             renderer->audioManager.decoder = gminiaudio::decode;
             renderer->audioManager.engine = gminiaudio::makeAudioEngine();
             renderer->init();
@@ -317,7 +326,7 @@ namespace test_main {
         });
 
         win->registerWidget(Widgets::Button({ .text = L"↗Github", .onClick = [&]() {
-            ShellExecute(nullptr, "open", "https://github.com/qaqFei/grain_libraries/tree/main/geasy_phi", nullptr, nullptr, SW_SHOWNORMAL);
+            ShellExecute(nullptr, "open", "https://github.com/qaqFei/easy-phi", nullptr, nullptr, SW_SHOWNORMAL);
         } }));
         win->nextRow();
 

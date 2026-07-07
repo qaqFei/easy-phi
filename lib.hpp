@@ -15,7 +15,6 @@ namespace geasy_phi {
     using namespace geasing;
     using namespace gskvcache;
     using namespace gtime_based_anim;
-    using namespace gtext_renderer;
 
     namespace SharedCalculatedObjects {
         struct CalculatedText {
@@ -6106,14 +6105,6 @@ void main() {
         }
     };
 
-    static GL::TextManager::Renderer createTextRendererFromData(const gdata::Data& data) {
-        auto tr = TextRenderer::Make();
-        tr->loadFont(data);
-        return [tr](const std::string& text, uint64 fontSize) -> DecodedRGBATexture {
-            return tr->render(text, fontSize);
-        };
-    }
-
     struct PhiStaticResourceHelpers {
         static PhiTakeOverer::NoteTextureDataLoaderResult noteTextureDataLoader(const PhiTakeOverer::NoteTextureDataLoaderConfig& config) {
             std::unordered_map<EnumPhiNoteType, std::string> nameMap = {
@@ -6207,10 +6198,6 @@ void main() {
         static Data getFontData() {
             return Data::MakeFromGrain("geasy_phi/phigros/font.ttf");
         }
-
-        static GL::TextManager::Renderer createTextRenderer() {
-            return createTextRendererFromData(getFontData());
-        }
     };
     
     struct MilStaticResourceHelpers {
@@ -6262,10 +6249,6 @@ void main() {
 
         static Data getFontData() {
             return Data::MakeFromGrain("geasy_phi/milthm/font.ttf");
-        }
-
-        static GL::TextManager::Renderer createTextRenderer() {
-            return createTextRendererFromData(getFontData());
         }
 
         static Data pauseButtonTextureDataLoader() {

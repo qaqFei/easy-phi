@@ -16,7 +16,8 @@
             "gdata==0",
             "gwin_progress_dialog==0",
             "gthread_safe_queue==0",
-            "gvideoenc==0"
+            "gvideoenc==0",
+            "gtext_renderer==0"
         ],
         "standards": [
             "string",
