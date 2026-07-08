@@ -3353,7 +3353,7 @@ namespace geasy_phi {
                 for (auto& [uniformName, layer] : effect.uniforms) {
                     layer.updateType(EnumPhiEventType::PhiShaderUniform, time);
                     auto uniformIndex = layer.get(EnumPhiEventType::PhiShaderUniform);
-                    auto uniformIndexZone = layer.get_zone(EnumPhiEventType::PhiShaderUniform).value_or({});
+                    auto uniformIndexZone = layer.get_zone(EnumPhiEventType::PhiShaderUniform).value_or(Vec2 {});
                     auto uniformValue = chart.storyboardAssets.getShaderUniform(uniformIndex, PhiShaderUniform(), uniformIndexZone);
                     shader.uniforms[uniformName] = uniformValue;
                 }
