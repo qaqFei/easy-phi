@@ -154,7 +154,7 @@ namespace geasy_phi {
                 return bgmAudio ? bgmAudio->getLengthInSeconds() : 0.0;
             }
 
-            void playSfx(const gsp<DecodedAudio>& audio) {
+            void playSfx(const gsp<DecodedAudio>& audio, uint64 count) {
                 if (!maxSfxPlaying) return;
 
                 while (playingSfxs.size() >= maxSfxPlaying) {
@@ -164,7 +164,7 @@ namespace geasy_phi {
                 }
 
                 auto task = engine->createTask(audio);
-                task->volume = sfxVolume;
+                task->volume = sfxVolume * count;
             }
 
             private:
@@ -2968,7 +2968,7 @@ namespace geasy_phi {
         float64 unsafeAreaDim, backgroundDim;
         Rect objectsClipRect;
         std::vector<CalculatedObject> objects;
-        std::vector<EnumPhiNoteType> hitsounds;
+        std::unordered_map<EnumPhiNoteType, uint64> hitsounds;
 
         void culling(std::vector<CalculatedObject>& objects, const Rect& screenRect) noexcept {
             if (SharedCalculatedObjects::sharedCulling(objects, screenRect)) return;
@@ -3218,7 +3218,7 @@ namespace geasy_phi {
 
                     if (frameInfo.isArrived && note.state.onPlayHitsound()) {
                         if (!note.isFake) {
-                            frame.hitsounds.push_back(note.type);
+                            frame.hitsounds[note.type]++;
                         }
                     }
 
@@ -3700,16 +3700,16 @@ void main() {
 
             using namespace GL;
 
-            glCtx->setViewport(calcConfig.screenSize.x, calcConfig.screenSize.y);
-            glCtx->gl.glClearColor(0.0, 0.0, 0.0, 0.0);
-            glCtx->gl.glClear(GL_COLOR_BUFFER_BIT);
-
             auto illuTex = bluredIllustionCache.get(calculatedFrame.backgroundImageBlurRadius, [&](float64 radius) {
                 auto tex = glCtx->createTexture();
                 glCtx->copyTexture(sharedComp.illustionTexture.get(), tex.get());
                 glCtx->gaussianBlurToTexture(tex.get(), radius);
                 return tex;
             });
+
+            glCtx->setViewport(calcConfig.screenSize.x, calcConfig.screenSize.y);
+            glCtx->gl.glClearColor(0.0, 0.0, 0.0, 0.0);
+            glCtx->gl.glClear(GL_COLOR_BUFFER_BIT);
 
             auto cvs = GL33Canvas::Make(glCtx.get());
 
@@ -3830,8 +3830,8 @@ void main() {
             renderResultInfoCache.base.glOperationsTook = glOpsTimer.elapsed();
 
             if (!renderConfig.base.disableHitsound) {
-                for (uint64 i = std::max<int64>(0, calculatedFrame.hitsounds.size() - audioManager.maxSfxPlaying); i < calculatedFrame.hitsounds.size(); ++i) {
-                    audioManager.playSfx(hitsoundAudios.at(calculatedFrame.hitsounds[i]));
+                for (auto& [type, count] : calculatedFrame.hitsounds) {
+                    audioManager.playSfx(hitsoundAudios.at(type), count);
                 }
             }
 
@@ -5203,7 +5203,7 @@ void main() {
         Rect backgroundRect;
         Rect progressbarRect;
         std::vector<CalculatedObject> objects;
-        std::vector<EnumMilNoteType> hitsounds;
+        std::unordered_map<EnumMilNoteType, uint64> hitsounds;
 
         void culling(std::vector<CalculatedObject>& objects, const Rect& screenRect) noexcept {
             if (SharedCalculatedObjects::sharedCulling(objects, screenRect)) return;
@@ -5419,7 +5419,7 @@ void main() {
 
                     if (frameInfo.isArrived && note.state.onPlayHitsound()) {
                         if (!note.isFake) {
-                            frame.hitsounds.push_back(note.type);
+                            frame.hitsounds[note.type]++;
                         }
                     }
 
@@ -5933,8 +5933,8 @@ void main() {
             renderResultInfoCache.base.glOperationsTook = glOpsTimer.elapsed();
 
             if (!renderConfig.base.disableHitsound) {
-                for (uint64 i = std::max<int64>(0, calculatedFrame.hitsounds.size() - audioManager.maxSfxPlaying); i < calculatedFrame.hitsounds.size(); ++i) {
-                    audioManager.playSfx(hitsoundAudios.at(calculatedFrame.hitsounds[i]));
+                for (auto& [type, count] : calculatedFrame.hitsounds) {
+                    audioManager.playSfx(hitsoundAudios.at(type), count);
                 }
             }
 
