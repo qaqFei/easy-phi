@@ -1,4 +1,4 @@
-# version 100
+#version 100
 // Adapted from https://www.shadertoy.com/view/lsdXDH
 precision mediump float;
 
