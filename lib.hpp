@@ -2780,17 +2780,6 @@ namespace geasy_phi {
                 .lexically_normal().string();
         }
 
-        static void attachTextureLoader(
-            PhiStoryboardAssets& assets,
-            const std::string& dir,
-            const std::function<std::optional<std::pair<uint64, Vec2>>(std::string)>& loader,
-            const std::function<void(uint64)>& destroyer
-        ) {
-            assets.clearTextures();
-            assets.textureLoader = [=](std::string name) { return loader(nameToPath(dir, name)); };
-            assets.textureDestroyer = destroyer;
-        }
-
         static std::unordered_map<std::string, PhiShaderUniform> parseDefaultShaderUniforms(
             const std::string& code
         ) {
@@ -3513,6 +3502,11 @@ namespace geasy_phi {
         GL::TextManager textManager;
         TakeOvererComponents::AudioManager audioManager;
 
+        // 这个放在后面会因为析构顺序相反崩溃, 即先析构这个再析构 chart, chart 回来再用这个就炸了
+        private:
+        std::unordered_map<uint64, gsp<GL::TextureInfo>> storyboardTextures;
+        public:
+
         PhiCalculateFrameConfig calcConfig;
         PhiChart chart;
         PhiCalculatedFrame calculatedFrame;
@@ -3843,7 +3837,6 @@ void main() {
         std::unordered_map<EnumPhiNoteType, std::pair<gsp<GL::TextureInfo>, gsp<GL::TextureInfo>>> noteTextures;
         std::vector<gsp<GL::TextureInfo>> hitEffectTextures;
         std::unordered_map<EnumPhiNoteType, gsp<DecodedAudio>> hitsoundAudios;
-        std::unordered_map<uint64, gsp<GL::TextureInfo>> storyboardTextures;
         RenderResultInfo renderResultInfoCache;
         std::unordered_map<uint64, gsp<GL::ProgramInfo>> shaders;
         std::unordered_map<uint64, std::unordered_map<std::string, PhiShaderUniform>> shadersDefaultUniforms;
