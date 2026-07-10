@@ -1880,6 +1880,19 @@ namespace geasy_phi {
                     }
 
                     chart.animator.addEvent(line, e);
+
+                    if (&eventNode == &arr.front()) {
+                        if (type != EnumPhiEventType::Text && type != EnumPhiEventType::Color) {
+                            if (start != end) {
+                                PhiEvent e {};
+                                e.timeZone = { -INF_TIME, startTime };
+                                e.valueZone = { start - (end - start) * (startTime + INF_TIME), start };
+                                e.type = type;
+                                e.layerIndex = PhiEventLayerIndexs::LINE_DEFAULT + eventLayerIndex;
+                                chart.animator.addEvent(line, e);
+                            }
+                        }
+                    }
                 }
 
                 if (type == EnumPhiEventType::Text) {
