@@ -50,6 +50,15 @@ namespace geasy_phi {
             }
         };
 
+        #define UsingSharedCalculatedObjects \
+            using CalculatedText = SharedCalculatedObjects::CalculatedText; \
+            using CalculatedRect = SharedCalculatedObjects::CalculatedRect; \
+            using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly; \
+            static_assert(true, "")
+        
+        #define ListSharedCalculatedObjects \
+            CalculatedText, CalculatedRect, CalculatedPoly
+
         template <typename T>
         bool sharedCulling(std::vector<T>& objects, const Rect& screenRect) noexcept {
             auto& obj = objects.back();
@@ -2923,9 +2932,7 @@ namespace geasy_phi {
     };
 
     struct PhiCalculatedFrame {
-        using CalculatedText = SharedCalculatedObjects::CalculatedText;
-        using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
-        using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
+        UsingSharedCalculatedObjects;
 
         struct CalculatedNote {
             Vec2 position;
@@ -2955,9 +2962,7 @@ namespace geasy_phi {
         };
 
         using CalculatedObject = std::variant<
-            CalculatedText,
-            CalculatedRect,
-            CalculatedPoly,
+            ListSharedCalculatedObjects,
 
             CalculatedNote,
             CalculatedStoryboardTexture,
@@ -3017,7 +3022,6 @@ namespace geasy_phi {
         };
 
         Cache cache;
-        Vec2 frameTimeRange;
     };
 
     void calculatePhiFrame(
@@ -3028,8 +3032,6 @@ namespace geasy_phi {
         frame.objects.clear();
         frame.hitsounds.clear();
         frame.cache.clear();
-
-        frame.frameTimeRange = { frame.frameTimeRange.y, time };
 
         float64 screenRatio = config.screenSize.x / config.screenSize.y;
         Rect safeArea = screenRatio > chart.meta.maxViewRatio ? getCoveredOrContainRect(
@@ -5152,9 +5154,7 @@ void main() {
     };
 
     struct MilCalculatedFrame {
-        using CalculatedText = SharedCalculatedObjects::CalculatedText;
-        using CalculatedRect = SharedCalculatedObjects::CalculatedRect;
-        using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly;
+        UsingSharedCalculatedObjects;
 
         struct CalculatedLineHead {
             Vec2 position, scale;
@@ -5195,9 +5195,7 @@ void main() {
         };
 
         using CalculatedObject = std::variant<
-            CalculatedText,
-            CalculatedRect,
-            CalculatedPoly,
+            ListSharedCalculatedObjects,
 
             CalculatedLineHead,
             CalculatedNote,
@@ -5252,7 +5250,6 @@ void main() {
         };
 
         Cache cache;
-        Vec2 frameTimeRange;
     };
 
     void calculateMilFrame(
@@ -5263,8 +5260,6 @@ void main() {
         frame.objects.clear();
         frame.hitsounds.clear();
         frame.cache.clear();
-
-        frame.frameTimeRange = { frame.frameTimeRange.y, time };
 
         frame.backgroundRect = getCoveredOrContainRect(
             { 0.0, 0.0, config.screenSize.x, config.screenSize.y },
@@ -6110,6 +6105,288 @@ void main() {
             }
         }
     };
+
+    enum class EnumRizNoteType {
+        Tap,
+        Drag,
+        Hold
+    };
+
+    struct RizTheme {
+        Color bgColor;
+        Color noteColor;
+        Color uiColor;
+    };
+
+    struct RizChallengeTime {
+        float64 checkPoint;
+        Vec2 timeZone;
+        float64 transTime;
+    };
+
+    struct RizEase {
+        float64 (* func)(void*, float64);
+        float64 (* intFunc)(void*, float64);
+        void* context;
+    };
+
+    struct RizBpmEvent {
+        float64 time, bpm;
+        RizEase ease;
+    };
+
+    struct RizLinePoint {
+        float64 time;
+        float64 xPosition;
+        Color color;
+        RizEase ease;
+        uint64 canvasIndex;
+    };
+
+    struct RizNote {
+        EnumRizNoteType type;
+        Vec2 timeZone;
+        uint64 tailCanvasIndex;
+    };
+
+    struct RizColorPoint {
+        float64 time;
+        Color start, end;
+    };
+
+    struct RizKeyPoint {
+        float64 time, value;
+        RizEase ease;
+    };
+
+    struct RizCanvasMove {
+        uint64 index;
+        std::vector<RizKeyPoint> xPositions;
+        std::vector<RizKeyPoint> speeds;
+    };
+
+    struct RizCameraMove {
+        std::vector<RizKeyPoint> scales;
+        std::vector<RizKeyPoint> xPositions;
+    };
+
+    struct RizLine {
+        std::vector<RizLinePoint> linePoints;
+        std::vector<RizNote> notes;
+        std::vector<RizColorPoint> ringColors;
+        std::vector<RizColorPoint> lineColors;
+    };
+
+    struct RizChart {
+        struct UserOptions {
+            float64 lineRingY = 0.68;
+        };
+
+        float64 offset;
+        std::vector<RizTheme> themes;
+        std::vector<RizChallengeTime> challengeTimes;
+        std::vector<RizBpmEvent> bpmEvents;
+        std::vector<RizCanvasMove> canvasMoves;
+        std::vector<RizLine> lines;
+        RizCameraMove cameraMove;
+
+        UserOptions options;
+
+        void init() {
+
+        }
+    };
+
+    RizChart loadRizChartFromOfficialJson(const Data& data) {
+        auto failed = [](const std::string& msg) {
+            throw std::runtime_error(std::format("official: {}", msg));
+        };
+
+        auto jsonRoot = JsonNode::Parse(data);
+
+        RizChart chart {};
+
+        return chart;
+    }
+
+    RizChart loadRizChartFromData(const Data& data) {
+        std::vector<std::string> msgs;
+
+        #define try_(func) \
+            try { return func(data); } \
+            catch (const std::exception& err) { msgs.push_back(err.what()); }
+        
+        try_(loadRizChartFromOfficialJson);
+
+        std::string msg = "failures: \n";
+        for (auto& m : msgs) msg += m + "\n";
+        return {};
+        
+        #undef try_
+    }
+
+    struct RizCalculateFrameConfig {
+        Vec2 screenSize;
+    };
+
+    struct RizCalculatedFrame {
+        UsingSharedCalculatedObjects;
+
+        using CalculatedObject = std::variant<
+            ListSharedCalculatedObjects
+        >;
+
+        std::vector<CalculatedObject> objects;
+    };
+
+    void calculateRizFrame(
+        RizChart& chart, float64 time,
+        const RizCalculateFrameConfig& config,
+        RizCalculatedFrame& frame
+    ) {
+        frame.objects.clear();
+    }
+
+    struct RizTakeOverer {
+        RizTakeOverer() = default;
+        RizTakeOverer(const RizTakeOverer&) = delete;
+        RizTakeOverer& operator=(const RizTakeOverer&) = delete;
+        RizTakeOverer(RizTakeOverer&&) = default;
+        RizTakeOverer& operator=(RizTakeOverer&&) = default;
+
+        static gsp<RizTakeOverer> Make() {
+            auto* tor = new RizTakeOverer();
+            return gsp<RizTakeOverer>(tor);
+        }
+
+        gsp<GL::GL33Context> glCtx;
+        TakeOvererComponents::SharedComp sharedComp;
+        GL::TextManager textManager;
+        TakeOvererComponents::AudioManager audioManager;
+
+        RizCalculateFrameConfig calcConfig;
+        RizChart chart;
+        RizCalculatedFrame calculatedFrame;
+
+        void init() {
+            gassert::assert(!!glCtx, "MilTakeOverer: glCtx is not set");
+
+            textManager.glCtx = glCtx;
+
+            sharedComp.check();
+            textManager.check();
+            audioManager.check();
+
+            loadResources();
+        }
+
+        void loadIllustion(const Data& data) {
+            auto decoded = sharedComp.textureDecoder(data);
+            sharedComp.illustionTexture = glCtx->createTextureFromDecoded(decoded);
+        }
+
+        void loadIllustion(const std::string& path) { loadIllustion(Data::MakeFromFile(path)); }
+
+        struct MixBgmConfig {
+            float64 musicVol = 1.0, sfxVol = 1.0;
+        };
+
+        gsp<DecodedAudio> mixFinalBgm(const RizChart& chart, const MixBgmConfig& config) {
+            if (!audioManager.bgmAudio) throw std::runtime_error("bgm is not loaded");
+
+            auto result = audioManager.bgmAudio->copy();
+            result->applyVolume(config.musicVol);
+            
+            // ...
+
+            return result;
+        }
+
+        using ChartIniter = std::function<void(RizChart&)>;
+
+        struct LoadChartConfig {
+            Data data;
+            ChartIniter initer = [](RizChart& chart) { chart.init(); };
+        };
+
+        TakeOvererComponents::LoadChartResultInfo loadChart(const LoadChartConfig& config) {
+            TakeOvererComponents::LoadChartResultInfo resultInfo {};
+
+            {
+                gtime::Timer timer;
+
+                try {
+                    chart = loadRizChartFromData(config.data);
+                } catch (const std::exception& e) {
+                    resultInfo.success = false;
+                    resultInfo.error = e.what();
+                    return resultInfo;
+                }
+
+                resultInfo.createObjectTook = timer.elapsed();
+            }
+
+            {
+                gtime::Timer timer;
+                config.initer(chart);
+                resultInfo.initTook = timer.elapsed();
+            }
+
+            return resultInfo;
+        }
+
+        struct RenderConfig {
+            TakeOvererComponents::RenderConfigBase base;
+        };
+
+        struct RenderResultInfo {
+            TakeOvererComponents::RenderResultInfoBase base;
+        };
+
+        RenderResultInfo& render(const RenderConfig& renderConfig) {
+            auto t = renderConfig.base.getTime(audioManager);
+
+            {
+                gtime::Timer timer;
+                calculateRizFrame(chart, t, calcConfig, calculatedFrame);
+                renderResultInfoCache.base.calculatedTook = timer.elapsed();
+            }
+            
+            gtime::Timer glOpsTimer;
+
+            using namespace GL;
+
+            glCtx->setViewport(calcConfig.screenSize.x, calcConfig.screenSize.y);
+            glCtx->gl.glClearColor(0.0, 0.0, 0.0, 0.0);
+            glCtx->gl.glClear(GL_COLOR_BUFFER_BIT);
+
+            auto cvs = GL33Canvas::Make(glCtx.get());
+
+            if (renderConfig.base.flushGl) {
+                glCtx->gl.glFlush();
+            }
+
+            renderResultInfoCache.base.glOperationsTook = glOpsTimer.elapsed();
+
+            if (!renderConfig.base.disableHitsound) {
+                // for (auto& [type, count] : calculatedFrame.hitsounds) {
+                //     audioManager.playSfx(hitsoundAudios.at(type), count);
+                // }
+            }
+
+            return renderResultInfoCache;
+        }
+
+        private:
+        RenderResultInfo renderResultInfoCache;
+
+        void loadResources() {
+            using namespace GL;
+        }
+    };
+
+    #undef UsingSharedCalculatedObjects
+    #undef ListSharedCalculatedObjects
 
     struct PhiStaticResourceHelpers {
         static PhiTakeOverer::NoteTextureDataLoaderResult noteTextureDataLoader(const PhiTakeOverer::NoteTextureDataLoaderConfig& config) {

@@ -20,7 +20,7 @@ namespace test_main {
     struct WindowBase {
         gsp<gglfw3::Window> window;
         float64 frameBusyWaitPercentage = 0.8;
-        bool fullscreen;
+        bool fullscreen, isPortrait;
         std::pair<uint64, uint64> surfaceSize;
         std::string chartDir;
 
@@ -107,7 +107,14 @@ namespace test_main {
         wbase.window = gglfw3::Window::Make();
         wbase.window->hint330Core()->hintMsaa(4);
         if (wbase.fullscreen) wbase.window->setFullscreen();
-        else wbase.window->setSizeOfMonitor(0.6);
+        else {
+            wbase.window->setSizeOfMonitor(0.6);
+
+            if (wbase.isPortrait) {
+                auto height = wbase.window->getSize().second;
+                wbase.window->setSize(height * 9 / 16, height);
+            }
+        }
 
         wbase.window->create();
         wbase.glCtx = GL33Context::Make(MakeGL33CoreInterface(gglfw3::getProcAddress));
@@ -216,12 +223,53 @@ namespace test_main {
         }
     };
 
+    struct RizWindow {
+        WindowBase base;
+
+        gsp<RizTakeOverer> renderer;
+
+        void init() {
+            createGLfwWindow(base);
+
+            renderer = RizTakeOverer::Make();
+            
+            renderer->glCtx = base.glCtx;
+            renderer->sharedComp.textureDecoder = gimage::decode;
+            renderer->textManager.renderer = createTextRendererFromData(MilStaticResourceHelpers::getFontData());
+            renderer->audioManager.decoder = gminiaudio::decode;
+            renderer->audioManager.engine = gminiaudio::makeAudioEngine();
+            renderer->init();
+
+            base.audioManagerRef = &renderer->audioManager;
+        }
+
+        auto loadChart(const std::string& path, const std::string& chartDir) {
+            base.chartDir = chartDir;
+            
+            auto resultInfo = renderer->loadChart({
+                .data = Data::MakeFromFile(path)
+            });
+            resultInfo.checkAndThrow();
+
+            return resultInfo;
+        }
+
+        struct MainloopConfig {
+            WindowBase::MainloopConfigBase base;
+        };
+        
+        bool mainloopFrame(const MainloopConfig& config) {
+            return base.mainloopFrame<decltype(renderer)>(config.base, renderer);
+        }
+    };
+
     std::string getDirectory(const std::string& path) {
         auto pos = path.find_last_of("\\/");
         if (pos == std::string::npos) return {};
         return path.substr(0, pos);
     }
 
+    #if defined(APP_TYPE_OPEN_RPE_RECORDER)
     struct Settings {
         static constexpr const wchar_t* appKey = L"Open-RPE-Recorder";
         static constexpr DWORD currentVersion = 0;
@@ -295,7 +343,6 @@ namespace test_main {
         }
     };
 
-    #if defined(APP_TYPE_OPEN_RPE_RECORDER)
     void entrypoint() {
         int argc; char** argv;
         grain::get_args(&argc, &argv);
@@ -696,7 +743,6 @@ namespace test_main {
             return std::find(args.begin(), args.end(), arg) != args.end();
         };
 
-        std::string chartPath, imagePath, audioPath, storyboardAssetsPath;
         std::vector<std::string> chartNames = {
             "Dum! Dum!! Dum!!! - Tatsunoshin",
             "Fly To Meteor (Milthm Edit) - ShooTinGStaR + xzadudu179 + Cyberspace",
@@ -733,10 +779,10 @@ namespace test_main {
         }
 
         std::string prefix = "./milcharts/";
-        chartPath = prefix + chartNames[choice] + "/.json";
-        imagePath = prefix + chartNames[choice] + "/.png";
-        audioPath = prefix + chartNames[choice] + "/.wav";
-        storyboardAssetsPath = prefix + chartNames[choice];
+        std::string chartPath = prefix + chartNames[choice] + "/.json"
+                  , imagePath = prefix + chartNames[choice] + "/.png"
+                  , audioPath = prefix + chartNames[choice] + "/.wav"
+                  , storyboardAssetsPath = prefix + chartNames[choice] + "/";
 
         MilWindow window {};
         window.base.fullscreen = hasArg("--fullscreen");
@@ -744,6 +790,62 @@ namespace test_main {
         window.base.window->setSwapInterval(hasArg("--disable-vsync") ? 0 : 1);
 
         window.loadChart(chartPath, storyboardAssetsPath);
+        window.renderer->loadIllustion(imagePath);
+        window.renderer->audioManager.load(audioPath);
+
+        window.renderer->audioManager.startBgm();
+
+        while (!window.renderer->audioManager.getBpmIsEnded()) {
+            if (!window.mainloopFrame({})) {
+                break;
+            }
+        }
+    }
+    #elif defined(APP_TYPE_TEST_RIZ)
+    void entrypoint() {
+        int argc; char** argv;
+        grain::get_args(&argc, &argv);
+        
+        std::vector<std::string> args(argv, argv + argc);
+        auto hasArg = [&](const std::string& arg) {
+            return std::find(args.begin(), args.end(), arg) != args.end();
+        };
+
+        std::vector<std::string> chartNames = {
+            "PastelLines"
+        };
+        
+        SetConsoleOutputCP(CP_UTF8);
+        SetConsoleCP(CP_UTF8);
+
+        for (uint64 i = 0; i < (uint64)chartNames.size(); ++i) {
+            std::cout << (i + 1) << ". " << chartNames[i] << std::endl;
+        }
+
+        uint64 choice;
+        std::cout << ">> ";
+        std::cin >> choice;
+        choice -= 1;
+
+        if (choice < 0 || choice >= (uint64)chartNames.size()) {
+            std::cout << "Invalid choice" << std::endl;
+            return;
+        }
+
+        std::string prefix = "./rizcharts/";
+        std::string chartPath = prefix + chartNames[choice] + "/.json"
+                  , imagePath = prefix + chartNames[choice] + "/.png"
+                  , audioPath = prefix + chartNames[choice] + "/.wav"
+                  , chartDir = prefix + chartNames[choice] + "/";
+
+        RizWindow window {};
+
+        window.base.isPortrait = true;
+        window.base.fullscreen = hasArg("--fullscreen");
+        window.init();
+        window.base.window->setSwapInterval(hasArg("--disable-vsync") ? 0 : 1);
+
+        window.loadChart(chartPath, chartDir);
         window.renderer->loadIllustion(imagePath);
         window.renderer->audioManager.load(audioPath);
 
