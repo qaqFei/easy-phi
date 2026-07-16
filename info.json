@@ -138,7 +138,9 @@
             "phigros/shaders/pixel.glsl": "/resources/phigros/shaders/pixel.glsl",
             "phigros/shaders/radialBlur.glsl": "/resources/phigros/shaders/radialBlur.glsl",
             "phigros/shaders/shockwave.glsl": "/resources/phigros/shaders/shockwave.glsl",
-            "phigros/shaders/vignette.glsl": "/resources/phigros/shaders/vignette.glsl"
+            "phigros/shaders/vignette.glsl": "/resources/phigros/shaders/vignette.glsl",
+            "rizline/hitsounds/hit.wav": "/resources/rizline/hitsounds/hit.wav",
+            "rizline/hitsounds/drag.wav": "/resources/rizline/hitsounds/drag.wav"
         }
     },
     "type": "library",

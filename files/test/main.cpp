@@ -232,6 +232,7 @@ namespace test_main {
             createGLfwWindow(base);
 
             renderer = RizTakeOverer::Make();
+            renderer->hitsoundDataLoader = RizStaticResourceHelpers::hitsoundDataLoader;
             
             renderer->glCtx = base.glCtx;
             renderer->sharedComp.textureDecoder = gimage::decode;
@@ -812,7 +813,10 @@ namespace test_main {
         };
 
         std::vector<std::string> chartNames = {
-            "PastelLines"
+            "PastelLines",
+            "LAIGN",
+            "HeadBONKache",
+            "DotLinefeatななひら"
         };
         
         SetConsoleOutputCP(CP_UTF8);

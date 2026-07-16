@@ -50,14 +50,55 @@ namespace geasy_phi {
             }
         };
 
+        struct CalculatedCapRoundedLineSet {
+            struct Item {
+                Vec2 position;
+                Color color;
+                bool connectToNext;
+            };
+
+            Item* items;
+            uint64 count;
+            float64 width;
+
+            uint64 segCount;
+
+            void check() const {
+                #ifdef GRAIN_IS_RELEASE
+                return;
+                #endif
+
+                uint64 segCount = 0;
+
+                if (count) {
+                    for (uint64 i = 0; i < count - 1; i++) {
+                        auto& p = items[i];
+                        auto& np = items[i + 1];
+                        if (p.connectToNext) segCount++;
+
+                        gassert::assert(p.connectToNext || np.connectToNext, "connectToNext is false for both points");
+                    }
+
+                    gassert::assert(items[0].connectToNext, "connectToNext is false for first point");
+                    gassert::assert(!items[count - 1].connectToNext, "connectToNext is true for last point");
+                }
+
+                gassert::assert(segCount == this->segCount, "segCount is not correct");
+            }
+        };
+
         #define UsingSharedCalculatedObjects \
             using CalculatedText = SharedCalculatedObjects::CalculatedText; \
             using CalculatedRect = SharedCalculatedObjects::CalculatedRect; \
             using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly; \
+            using CalculatedCapRoundedLineSet = SharedCalculatedObjects::CalculatedCapRoundedLineSet; \
             static_assert(true, "")
         
         #define ListSharedCalculatedObjects \
-            CalculatedText, CalculatedRect, CalculatedPoly
+            CalculatedText, \
+            CalculatedRect, \
+            CalculatedPoly, \
+            CalculatedCapRoundedLineSet
 
         template <typename T>
         bool sharedCulling(std::vector<T>& objects, const Rect& screenRect) noexcept {
@@ -76,7 +117,8 @@ namespace geasy_phi {
                 if (!quadStrictlyIntersectRect((Vec2[4]) {
                     poly.p1, poly.p2, poly.p3, poly.p4
                 }, screenRect)) objects.pop_back();
-            } else return false;
+            } else if (std::holds_alternative<CalculatedCapRoundedLineSet>(obj)) { }
+            else return false;
 
             return true;
         }
@@ -258,6 +300,106 @@ namespace geasy_phi {
                 *mesh.vnext() = { poly.p4 }; *mesh.vnext() = { poly.p3 }; *mesh.vnext() = { poly.p2 };
                 mesh.color = poly.color;
                 cvs.drawMesh(mesh);
+            } else if (std::holds_alternative<CalculatedCapRoundedLineSet>(obj)) {
+                auto& lineSet = std::get<CalculatedCapRoundedLineSet>(obj);
+                lineSet.check();
+
+                if (!lineSet.segCount || lineSet.width < 0.0) return true;
+
+                auto halfWidth = lineSet.width / 2.0;
+                const uint64 capSeg = 6;
+                const uint64 capVertexCount = 3 * capSeg;
+
+                static_assert(capSeg > 1, "capSeg must be greater than 1");
+
+                thread_local float64 sinCosTable[capSeg - 1][2];
+                thread_local bool sinCosTableInitialized = false;
+
+                if (!sinCosTableInitialized) {
+                    for (uint64 i = 1; i < capSeg; i++) {
+                        auto a = std::numbers::pi * i / capSeg;
+                        sinCosTable[i - 1][0] = std::sin(a);
+                        sinCosTable[i - 1][1] = std::cos(a);
+                    }
+
+                    sinCosTableInitialized = true;
+                }
+
+                auto mesh = glCtx->requestMesh((6 + 2 * capVertexCount) * lineSet.segCount);
+                mesh.color = GLvec4::White();
+
+                for (uint64 i = 0; i < lineSet.count - 1; i++) {
+                    auto& it1 = lineSet.items[i];
+                    if (!it1.connectToNext) continue;
+
+                    auto& it2 = lineSet.items[i + 1];
+
+                    auto dir = it2.position - it1.position;
+                    auto len = dir.length() / halfWidth;
+                    if (len != 0.0) dir /= len;
+                    dir = { -dir.y, dir.x };
+
+                    GLvec2 p1 = it1.position + dir;
+                    GLvec2 p2 = it1.position - dir;
+                    GLvec2 p3 = it2.position - dir;
+                    GLvec2 p4 = it2.position + dir;
+
+                    *mesh.vnext() = { p1, { 0.5, 0.5 }, it1.color };
+                    *mesh.vnext() = { p2, { 0.5, 0.5 }, it1.color };
+                    *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
+
+                    *mesh.vnext() = { p1, { 0.5, 0.5 }, it1.color };
+                    *mesh.vnext() = { p4, { 0.5, 0.5 }, it2.color };
+                    *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
+
+                    if (i == 0 || !lineSet.items[i - 1].connectToNext) { // start
+                        GLvec2 v = p1;
+
+                        for (uint64 j = 1; j < capSeg; j++) {
+                            auto s = sinCosTable[j - 1][0], c = sinCosTable[j - 1][1];
+
+                            GLvec2 nv = it1.position + Vec2 {
+                                dir.x * c - dir.y * s,
+                                dir.x * s + dir.y * c
+                            };
+
+                            *mesh.vnext() = { it1.position, { 0.5, 0.5 }, it1.color };
+                            *mesh.vnext() = { v, { 0.5, 0.5 }, it1.color };
+                            *mesh.vnext() = { nv, { 0.5, 0.5 }, it1.color };
+
+                            v = nv;
+                        }
+
+                        *mesh.vnext() = { it1.position, { 0.5, 0.5 }, it1.color };
+                        *mesh.vnext() = { v, { 0.5, 0.5 }, it1.color };
+                        *mesh.vnext() = { p2, { 0.5, 0.5 }, it1.color };
+                    }
+
+                    if (!it2.connectToNext) { // end
+                        GLvec2 v = p4;
+
+                        for (uint64 j = 1; j < capSeg; j++) {
+                            auto s = sinCosTable[j - 1][0], c = sinCosTable[j - 1][1];
+
+                            GLvec2 nv = it2.position + Vec2 {
+                                dir.x * c + dir.y * s,
+                                -dir.x * s + dir.y * c
+                            };
+
+                            *mesh.vnext() = { it2.position, { 0.5, 0.5 }, it2.color };
+                            *mesh.vnext() = { v, { 0.5, 0.5 }, it2.color };
+                            *mesh.vnext() = { nv, { 0.5, 0.5 }, it2.color };
+
+                            v = nv;
+                        }
+
+                        *mesh.vnext() = { it2.position, { 0.5, 0.5 }, it2.color };
+                        *mesh.vnext() = { v, { 0.5, 0.5 }, it2.color };
+                        *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
+                    }
+                }
+
+                cvs.drawMesh(mesh);
             } else return false;
 
             return true;
@@ -366,7 +508,7 @@ namespace geasy_phi {
         float64 bpm;
 
         static void SortBpmEvents(std::vector<PhiBPMEvent>& events) {
-            std::sort(events.begin(), events.end(), [](const auto& a, const auto& b) {
+            std::stable_sort(events.begin(), events.end(), [](const auto& a, const auto& b) {
                 return a.time < b.time;
             });
         }
@@ -396,13 +538,13 @@ namespace geasy_phi {
 
         float64 cumulativeValueAtStart;
 
-        float64 getProgressAtTime(float64 t) noexcept {
+        float64 getProgress(float64 t) noexcept {
             // if (t < timeZone.x) return 0.0;
             return std::clamp((t - timeZone.x) / (timeZone.y - timeZone.x), 0.0, 1.0);
         }
 
         float64 valueAtTime(float64 t) noexcept {
-            auto p = getProgressAtTime(t);
+            auto p = getProgress(t);
             
             if (hasValueEasing()) {
                 if (easingZone == Vec2 { 0.0, 1.0 }) {
@@ -426,7 +568,7 @@ namespace geasy_phi {
         }
 
         float64 getIntegralValue(float64 t) noexcept {
-            auto p = getProgressAtTime(t);
+            auto p = getProgress(t);
             float64 iv = p * p / 2.0;
 
             if (hasAllEasing()) {
@@ -461,7 +603,7 @@ namespace geasy_phi {
             std::ranges::fill(lastUpdatedTimes, -std::numeric_limits<float64>::infinity());
 
             for (auto& typedEvents : events) {
-                std::sort(typedEvents.begin(), typedEvents.end(), [](const auto& a, const auto& b) {
+                std::stable_sort(typedEvents.begin(), typedEvents.end(), [](const auto& a, const auto& b) {
                     return a.timeZone.x < b.timeZone.x;
                 });
             }
@@ -539,6 +681,8 @@ namespace geasy_phi {
 
         void initSpeedCumul() {
             auto& speedEvents = events[(uint64)EnumPhiEventType::Speed];
+            if (speedEvents.empty()) return;
+
             float64 cumulativeValue = 0.0;
 
             for (uint64 i = 0; i < speedEvents.size(); i++) {
@@ -1460,7 +1604,7 @@ namespace geasy_phi {
     };
 
     PhiChart loadPhiChartFromOfficialJson(const Data& data) {
-        auto failed = [](const std::string& msg) {
+        auto err = [](const std::string& msg) {
             throw std::runtime_error(std::format("official: {}", msg));
         };
 
@@ -1468,10 +1612,10 @@ namespace geasy_phi {
 
         PhiChart chart {};
 
-        if (!jsonRoot.isObject()) failed("root is not an object");
+        if (!jsonRoot.isObject()) err("root is not an object");
 
-        if (!jsonRoot.hasKey("formatVersion")) failed("missing formatVersion field");
-        if (!jsonRoot["formatVersion"].isNumber()) failed("formatVersion is not a number");
+        if (!jsonRoot.hasKey("formatVersion")) err("missing formatVersion");
+        if (!jsonRoot["formatVersion"].isNumber()) err("formatVersion is not a number");
         uint64 formatVersion = jsonRoot["formatVersion"].getNumber();
 
         chart.meta.isHoldCoverAtHead = true;
@@ -1484,30 +1628,30 @@ namespace geasy_phi {
         chart.meta.worldViewport = { 1.0, -1.0 };
 
         if (1 <= formatVersion && formatVersion <= 3) {
-            if (!jsonRoot.hasKey("offset")) failed("missing offset field");
-            if (!jsonRoot["offset"].isNumber()) failed("offset is not a number");
+            if (!jsonRoot.hasKey("offset")) err("missing offset");
+            if (!jsonRoot["offset"].isNumber()) err("offset is not a number");
             chart.meta.offset = jsonRoot["offset"].getNumber();
 
-            if (!jsonRoot.hasKey("judgeLineList")) failed("missing judgeLineList field");
-            if (!jsonRoot["judgeLineList"].isArray()) failed("judgeLineList is not an array");
+            if (!jsonRoot.hasKey("judgeLineList")) err("missing judgeLineList");
+            if (!jsonRoot["judgeLineList"].isArray()) err("judgeLineList is not an array");
             auto& judgeLineListNode = jsonRoot["judgeLineList"];
 
             for (auto& judgeLineNode : judgeLineListNode.getArray()) {
-                if (!judgeLineNode.isObject()) failed("judgeLineList item is not an object");
+                if (!judgeLineNode.isObject()) err("judgeLineList item is not an object");
                 
                 auto& line = chart.lines.emplace_back();
                 line.enableCover = true;
 
-                if (!judgeLineNode.hasKey("bpm")) failed("missing bpm field");
-                if (!judgeLineNode["bpm"].isNumber()) failed("bpm is not a number");
+                if (!judgeLineNode.hasKey("bpm")) err("missing bpm");
+                if (!judgeLineNode["bpm"].isNumber()) err("bpm is not a number");
                 float64 bpm = judgeLineNode["bpm"].getNumber();
                 float64 timeFactor = 1.875 / bpm;
                 line.bpms = { { 0, bpm } };
 
-                if (!judgeLineNode.hasKey("notesAbove")) failed("missing notesAbove field");
-                if (!judgeLineNode["notesAbove"].isArray()) failed("notesAbove is not an array");
-                if (!judgeLineNode.hasKey("notesBelow")) failed("missing notesBelow field");
-                if (!judgeLineNode["notesBelow"].isArray()) failed("notesBelow is not an array");
+                if (!judgeLineNode.hasKey("notesAbove")) err("missing notesAbove");
+                if (!judgeLineNode["notesAbove"].isArray()) err("notesAbove is not an array");
+                if (!judgeLineNode.hasKey("notesBelow")) err("missing notesBelow");
+                if (!judgeLineNode["notesBelow"].isArray()) err("notesBelow is not an array");
 
                 auto& notesAboveNode = judgeLineNode["notesAbove"];
                 auto& notesBelowNode = judgeLineNode["notesBelow"];
@@ -1520,27 +1664,27 @@ namespace geasy_phi {
                     auto& notesNode = *notesNodePtr;
 
                     for (auto& noteNode : notesNode.getArray()) {
-                        if (!noteNode.isObject()) failed("notesAbove/notesBelow item is not an object");
+                        if (!noteNode.isObject()) err("notesAbove/notesBelow item is not an object");
 
-                        if (!noteNode.hasKey("type")) failed("missing type field");
-                        if (!noteNode["type"].isNumber()) failed("type is not a number");
+                        if (!noteNode.hasKey("type")) err("missing type");
+                        if (!noteNode["type"].isNumber()) err("type is not a number");
                         auto type = PhiNoteTypeHelper::FromOfficial(noteNode["type"].getNumber());
 
-                        if (!noteNode.hasKey("time")) failed("missing time field");
-                        if (!noteNode["time"].isNumber()) failed("time is not a number");
+                        if (!noteNode.hasKey("time")) err("missing time");
+                        if (!noteNode["time"].isNumber()) err("time is not a number");
                         auto time = noteNode["time"].getNumber() * timeFactor;
 
-                        if (!noteNode.hasKey("holdTime")) failed("missing holdTime field");
-                        if (!noteNode["holdTime"].isNumber()) failed("holdTime is not a number");
+                        if (!noteNode.hasKey("holdTime")) err("missing holdTime");
+                        if (!noteNode["holdTime"].isNumber()) err("holdTime is not a number");
                         auto holdTime = noteNode["holdTime"].getNumber() * timeFactor;
 
-                        if (!noteNode.hasKey("positionX")) failed("missing positionX field");
-                        if (!noteNode["positionX"].isNumber()) failed("positionX is not a number");
+                        if (!noteNode.hasKey("positionX")) err("missing positionX");
+                        if (!noteNode["positionX"].isNumber()) err("positionX is not a number");
                         auto positionX = noteNode["positionX"].getNumber() * 0.05625;
 
                         std::string speedKey = "speed";
-                        if (!noteNode.hasKey(speedKey)) failed(std::string("missing ") + speedKey + " field");
-                        if (!noteNode[speedKey].isNumber()) failed(speedKey + " is not a number");
+                        if (!noteNode.hasKey(speedKey)) err(std::string("missing ") + speedKey + "");
+                        if (!noteNode[speedKey].isNumber()) err(speedKey + " is not a number");
                         auto speed = noteNode[speedKey].getNumber();
 
                         auto& note = line.notes.emplace_back();
@@ -1589,14 +1733,14 @@ namespace geasy_phi {
                     }
                 }
 
-                if (!judgeLineNode.hasKey("speedEvents")) failed("missing speedEvents field");
-                if (!judgeLineNode["speedEvents"].isArray()) failed("speedEvents is not an array");
-                if (!judgeLineNode.hasKey("judgeLineMoveEvents")) failed("missing judgeLineMoveEvents field");
-                if (!judgeLineNode["judgeLineMoveEvents"].isArray()) failed("judgeLineMoveEvents is not an array");
-                if (!judgeLineNode.hasKey("judgeLineRotateEvents")) failed("missing judgeLineRotateEvents field");
-                if (!judgeLineNode["judgeLineRotateEvents"].isArray()) failed("judgeLineRotateEvents is not an array");
-                if (!judgeLineNode.hasKey("judgeLineDisappearEvents")) failed("missing judgeLineDisappearEvents field");
-                if (!judgeLineNode["judgeLineDisappearEvents"].isArray()) failed("judgeLineDisappearEvents is not an array");
+                if (!judgeLineNode.hasKey("speedEvents")) err("missing speedEvents");
+                if (!judgeLineNode["speedEvents"].isArray()) err("speedEvents is not an array");
+                if (!judgeLineNode.hasKey("judgeLineMoveEvents")) err("missing judgeLineMoveEvents");
+                if (!judgeLineNode["judgeLineMoveEvents"].isArray()) err("judgeLineMoveEvents is not an array");
+                if (!judgeLineNode.hasKey("judgeLineRotateEvents")) err("missing judgeLineRotateEvents");
+                if (!judgeLineNode["judgeLineRotateEvents"].isArray()) err("judgeLineRotateEvents is not an array");
+                if (!judgeLineNode.hasKey("judgeLineDisappearEvents")) err("missing judgeLineDisappearEvents");
+                if (!judgeLineNode["judgeLineDisappearEvents"].isArray()) err("judgeLineDisappearEvents is not an array");
 
                 auto& speedEventsNode = judgeLineNode["speedEvents"];
                 auto& judgeLineMoveEventsNode = judgeLineNode["judgeLineMoveEvents"];
@@ -1625,25 +1769,25 @@ namespace geasy_phi {
                 }
 
                 for (auto& [eventsNode, startKey, endKey, easeTypeKey, type, converter] : eventGroups) {
-                    if (!eventsNode->isArray()) failed("XXXEvents is not an array");
+                    if (!eventsNode->isArray()) err("XXXEvents is not an array");
 
                     for (auto& eventNode : eventsNode->getArray()) {
-                        if (!eventNode.isObject()) failed("XXXEvents item is not an object");
+                        if (!eventNode.isObject()) err("XXXEvents item is not an object");
 
-                        if (!eventNode.hasKey("startTime")) failed("missing startTime field");
-                        if (!eventNode["startTime"].isNumber()) failed("startTime is not a number");
+                        if (!eventNode.hasKey("startTime")) err("missing startTime");
+                        if (!eventNode["startTime"].isNumber()) err("startTime is not a number");
                         auto startTime = eventNode["startTime"].getNumber() * timeFactor;
 
-                        if (!eventNode.hasKey("endTime")) failed("missing endTime field");
-                        if (!eventNode["endTime"].isNumber()) failed("endTime is not a number");
+                        if (!eventNode.hasKey("endTime")) err("missing endTime");
+                        if (!eventNode["endTime"].isNumber()) err("endTime is not a number");
                         auto endTime = eventNode["endTime"].getNumber() * timeFactor;
 
-                        if (!eventNode.hasKey(startKey)) failed(std::string("missing ") + startKey + " field");
-                        if (!eventNode[startKey].isNumber()) failed(std::string(startKey) + " is not a number");
+                        if (!eventNode.hasKey(startKey)) err(std::string("missing ") + startKey + "");
+                        if (!eventNode[startKey].isNumber()) err(std::string(startKey) + " is not a number");
                         auto startValue = converter(eventNode[startKey].getNumber());
 
-                        if (!eventNode.hasKey(endKey)) failed(std::string("missing ") + endKey + " field");
-                        if (!eventNode[endKey].isNumber()) failed(std::string(endKey) + " is not a number");
+                        if (!eventNode.hasKey(endKey)) err(std::string("missing ") + endKey + "");
+                        if (!eventNode[endKey].isNumber()) err(std::string(endKey) + " is not a number");
                         auto endValue = converter(eventNode[endKey].getNumber());
 
                         chart.animator.addEvent(line, PhiEvent {
@@ -1656,7 +1800,7 @@ namespace geasy_phi {
                 }
             }
         } else {
-            failed(std::string("unsupported formatVersion: ") + std::to_string(formatVersion));
+            err(std::string("unsupported formatVersion: ") + std::to_string(formatVersion));
         }
 
         chart.rawHash = data.getHash();
@@ -1664,7 +1808,7 @@ namespace geasy_phi {
     }
 
     PhiChart loadPhiChartFromRpeJson(const Data& data) {
-        auto failed = [](const std::string& msg) {
+        auto err = [](const std::string& msg) {
             throw std::runtime_error(std::format("rpe: {}", msg));
         };
 
@@ -1682,34 +1826,34 @@ namespace geasy_phi {
         chart.meta.worldViewport = { 1350, -900 };
         chart.meta.speedUnit = 120.0;
 
-        if (!jsonRoot.isObject()) failed("root is not an object");
+        if (!jsonRoot.isObject()) err("root is not an object");
 
-        if (!jsonRoot.hasKey("META")) failed("missing META field");
-        if (!jsonRoot["META"].isObject()) failed("META is not an object");
+        if (!jsonRoot.hasKey("META")) err("missing META");
+        if (!jsonRoot["META"].isObject()) err("META is not an object");
         auto& metaNode = jsonRoot["META"];
 
-        if (!metaNode.hasKey("RPEVersion")) failed("missing RPEVersion field");
-        if (!metaNode["RPEVersion"].isNumber()) failed("RPEVersion is not a number");
+        if (!metaNode.hasKey("RPEVersion")) err("missing RPEVersion");
+        if (!metaNode["RPEVersion"].isNumber()) err("RPEVersion is not a number");
         chart.meta.rpeVersion = metaNode["RPEVersion"].getNumber();
 
-        if (!metaNode.hasKey("charter")) failed("missing charter field");
-        if (!metaNode["charter"].isString()) failed("charter is not a string");
+        if (!metaNode.hasKey("charter")) err("missing charter");
+        if (!metaNode["charter"].isString()) err("charter is not a string");
         chart.meta.charter = metaNode["charter"].getString();
 
-        if (!metaNode.hasKey("composer")) failed("missing composer field");
-        if (!metaNode["composer"].isString()) failed("composer is not a string");
+        if (!metaNode.hasKey("composer")) err("missing composer");
+        if (!metaNode["composer"].isString()) err("composer is not a string");
         chart.meta.composer = metaNode["composer"].getString();
 
-        if (!metaNode.hasKey("name")) failed("missing name field");
-        if (!metaNode["name"].isString()) failed("name is not a string");
+        if (!metaNode.hasKey("name")) err("missing name");
+        if (!metaNode["name"].isString()) err("name is not a string");
         chart.meta.title = metaNode["name"].getString();
 
-        if (!metaNode.hasKey("level")) failed("missing level field");
-        if (!metaNode["level"].isString()) failed("level is not a string");
+        if (!metaNode.hasKey("level")) err("missing level");
+        if (!metaNode["level"].isString()) err("level is not a string");
         chart.meta.difficulty = metaNode["level"].getString();
 
-        if (!metaNode.hasKey("offset")) failed("missing offset field");
-        if (!metaNode["offset"].isNumber()) failed("offset is not a number");
+        if (!metaNode.hasKey("offset")) err("missing offset");
+        if (!metaNode["offset"].isNumber()) err("offset is not a number");
         chart.meta.offset = metaNode["offset"].getNumber() / 1000;
 
         auto parseTimeTuple = [](const JsonNode& node, float64* dst) {
@@ -1731,19 +1875,19 @@ namespace geasy_phi {
 
         std::vector<PhiBPMEvent> sharedBpmEvents;
         
-        if (!jsonRoot.hasKey("BPMList")) failed("missing BPMList field");
-        if (!jsonRoot["BPMList"].isArray()) failed("BPMList is not an array");
+        if (!jsonRoot.hasKey("BPMList")) err("missing BPMList");
+        if (!jsonRoot["BPMList"].isArray()) err("BPMList is not an array");
         auto& bpmListNode = jsonRoot["BPMList"];
 
         for (auto& bpmEventNode : bpmListNode.getArray()) {
-            if (!bpmEventNode.isObject()) failed("BPMList item is not an object");
+            if (!bpmEventNode.isObject()) err("BPMList item is not an object");
 
-            if (!bpmEventNode.hasKey("startTime")) failed("missing startTime field");
+            if (!bpmEventNode.hasKey("startTime")) err("missing startTime");
             float64 startTime;
-            if (!parseTimeTuple(bpmEventNode["startTime"], &startTime)) failed("startTime is not a valid time tuple");
+            if (!parseTimeTuple(bpmEventNode["startTime"], &startTime)) err("startTime is not a valid time tuple");
 
-            if (!bpmEventNode.hasKey("bpm")) failed("missing bpm field");
-            if (!bpmEventNode["bpm"].isNumber()) failed("bpm is not a number");
+            if (!bpmEventNode.hasKey("bpm")) err("missing bpm");
+            if (!bpmEventNode["bpm"].isNumber()) err("bpm is not a number");
             float64 bpm = bpmEventNode["bpm"].getNumber();
 
             sharedBpmEvents.push_back({
@@ -1754,18 +1898,18 @@ namespace geasy_phi {
 
         PhiBPMEvent::SortBpmEvents(sharedBpmEvents);
 
-        if (!jsonRoot.hasKey("judgeLineList")) failed("missing judgeLineList field");
-        if (!jsonRoot["judgeLineList"].isArray()) failed("judgeLineList is not an array");
+        if (!jsonRoot.hasKey("judgeLineList")) err("missing judgeLineList");
+        if (!jsonRoot["judgeLineList"].isArray()) err("judgeLineList is not an array");
         auto& judgeLineListNode = jsonRoot["judgeLineList"];
 
         for (auto& judgeLineNode : judgeLineListNode.getArray()) {
-            if (!judgeLineNode.isObject()) failed("judgeLineList item is not an object");
+            if (!judgeLineNode.isObject()) err("judgeLineList item is not an object");
 
             auto& line = chart.lines.emplace_back();
             line.bpms = sharedBpmEvents;
 
             if (judgeLineNode.hasKey("bpmfactor")) {
-                if (!judgeLineNode["bpmfactor"].isNumber()) failed("bpmfactor is not a number");
+                if (!judgeLineNode["bpmfactor"].isNumber()) err("bpmfactor is not a number");
                 auto factor = judgeLineNode["bpmfactor"].getNumber();
 
                 for (auto& e : line.bpms) {
@@ -1773,8 +1917,8 @@ namespace geasy_phi {
                 }
             }
 
-            if (!judgeLineNode.hasKey("eventLayers")) failed("missing eventLayers field");
-            if (!judgeLineNode["eventLayers"].isArray()) failed("eventLayers is not an array");
+            if (!judgeLineNode.hasKey("eventLayers")) err("missing eventLayers");
+            if (!judgeLineNode["eventLayers"].isArray()) err("eventLayers is not an array");
             auto& eventLayersNode = judgeLineNode["eventLayers"];
 
             uint64 eventLayerIndex = 0;
@@ -1793,18 +1937,18 @@ namespace geasy_phi {
                 for (auto& eventNode : arr) {
                     if (!eventNode.isObject()) return { false, "XXXEvents item is not an object" };
 
-                    if (!eventNode.hasKey("startTime")) return { false, "missing startTime field" };
+                    if (!eventNode.hasKey("startTime")) return { false, "missing startTime" };
                     float64 startTime;
                     if (!parseTimeTuple(eventNode["startTime"], &startTime)) return { false, "startTime is not a valid time tuple" };
 
-                    if (!eventNode.hasKey("endTime")) return { false, "missing endTime field" };
+                    if (!eventNode.hasKey("endTime")) return { false, "missing endTime" };
                     float64 endTime;
                     if (!parseTimeTuple(eventNode["endTime"], &endTime)) return { false, "endTime is not a valid time tuple" };
 
                     float64 start, end;
 
-                    if (!eventNode.hasKey("start")) return { false, "missing start field" };
-                    if (!eventNode.hasKey("end")) return { false, "missing end field" };
+                    if (!eventNode.hasKey("start")) return { false, "missing start" };
+                    if (!eventNode.hasKey("end")) return { false, "missing end" };
 
                     if (type == EnumPhiEventType::Text) {
                         if (!eventNode["start"].isString()) return { false, "start is not a string" };
@@ -1918,7 +2062,7 @@ namespace geasy_phi {
 
             for (auto& eventLayerNode : eventLayersNode.getArray()) {
                 if (eventLayerNode.isNull()) continue;
-                if (!eventLayerNode.isObject()) failed("eventLayers item is not an object");
+                if (!eventLayerNode.isObject()) err("eventLayers item is not an object");
 
                 std::vector<EventGroupType> groups;
 
@@ -1930,7 +2074,7 @@ namespace geasy_phi {
 
                 for (auto& group : groups) {
                     auto [success, msg] = progressEventGroup(group);
-                    if (!success) failed(msg);
+                    if (!success) err(msg);
                 }
 
                 eventLayerIndex++;
@@ -1938,7 +2082,7 @@ namespace geasy_phi {
 
             if (judgeLineNode.hasKey("extended")) {
                 auto& extendedNode = judgeLineNode["extended"];
-                if (!extendedNode.isObject()) failed("extended is not an object");
+                if (!extendedNode.isObject()) err("extended is not an object");
 
                 std::vector<EventGroupType> groups;
 
@@ -1949,7 +2093,7 @@ namespace geasy_phi {
 
                 for (auto& group : groups) {
                     auto [success, msg] = progressEventGroup(group);
-                    if (!success) failed(msg);
+                    if (!success) err(msg);
                 }
 
                 eventLayerIndex++;
@@ -1957,50 +2101,50 @@ namespace geasy_phi {
 
             if (judgeLineNode.hasKey("notes")) {
                 auto& notesNode = judgeLineNode["notes"];
-                if (!notesNode.isArray()) failed("notes is not an array");
+                if (!notesNode.isArray()) err("notes is not an array");
 
                 for (auto& noteNode : notesNode.getArray()) {
-                    if (!noteNode.isObject()) failed("notes item is not an object");
+                    if (!noteNode.isObject()) err("notes item is not an object");
 
                     auto& note = line.notes.emplace_back();
 
-                    if (!noteNode.hasKey("startTime")) failed("missing startTime field");
+                    if (!noteNode.hasKey("startTime")) err("missing startTime");
                     float64 startTime;
-                    if (!parseTimeTuple(noteNode["startTime"], &startTime)) failed("startTime is not a valid time tuple");
+                    if (!parseTimeTuple(noteNode["startTime"], &startTime)) err("startTime is not a valid time tuple");
 
-                    if (!noteNode.hasKey("endTime")) failed("missing endTime field");
+                    if (!noteNode.hasKey("endTime")) err("missing endTime");
                     float64 endTime;
-                    if (!parseTimeTuple(noteNode["endTime"], &endTime)) failed("endTime is not a valid time tuple");
+                    if (!parseTimeTuple(noteNode["endTime"], &endTime)) err("endTime is not a valid time tuple");
 
                     startTime = line.beat2sec(startTime);
                     endTime = line.beat2sec(endTime);
 
-                    if (!noteNode.hasKey("above")) failed("missing above field");
+                    if (!noteNode.hasKey("above")) err("missing above");
                     bool isAbove;
                     if (noteNode["above"].isBool()) isAbove = noteNode["above"].getBool();
                     else if (noteNode["above"].isNumber()) isAbove = noteNode["above"].getNumber() == 1;
-                    else failed("above is not a boolean or number");
+                    else err("above is not a boolean or number");
 
-                    if (!noteNode.hasKey("type")) failed("missing type field");
-                    if (!noteNode["type"].isNumber()) failed("type is not a number");
+                    if (!noteNode.hasKey("type")) err("missing type");
+                    if (!noteNode["type"].isNumber()) err("type is not a number");
                     auto type = PhiNoteTypeHelper::FromRPE(noteNode["type"].getNumber());
 
-                    if (!noteNode.hasKey("speed")) failed("missing speed field");
-                    if (!noteNode["speed"].isNumber()) failed("speed is not a number");
+                    if (!noteNode.hasKey("speed")) err("missing speed");
+                    if (!noteNode["speed"].isNumber()) err("speed is not a number");
                     float64 speed = noteNode["speed"].getNumber();
 
-                    if (!noteNode.hasKey("isFake")) failed("missing isFake field");
+                    if (!noteNode.hasKey("isFake")) err("missing isFake");
                     bool isFake;
                     if (noteNode["isFake"].isBool()) isFake = noteNode["isFake"].getBool();
                     else if (noteNode["isFake"].isNumber()) isFake = noteNode["isFake"].getNumber() == 1;
-                    else failed("isFake is not a boolean or number");
+                    else err("isFake is not a boolean or number");
 
-                    if (!noteNode.hasKey("positionX")) failed("missing positionX field");
-                    if (!noteNode["positionX"].isNumber()) failed("positionX is not a number");
+                    if (!noteNode.hasKey("positionX")) err("missing positionX");
+                    if (!noteNode["positionX"].isNumber()) err("positionX is not a number");
                     float64 positionX = noteNode["positionX"].getNumber();
                     
                     if (noteNode.hasKey("yOffset")) {
-                        if (!noteNode["yOffset"].isNumber()) failed("yOffset is not a number");
+                        if (!noteNode["yOffset"].isNumber()) err("yOffset is not a number");
                         auto yOffset = noteNode["yOffset"].getNumber() * speed;
                         if (!isAbove) yOffset *= -1;
                         
@@ -2015,7 +2159,7 @@ namespace geasy_phi {
                     }
 
                     if (noteNode.hasKey("visibleTime")) {
-                        if (!noteNode["visibleTime"].isNumber()) failed("visibleTime is not a number");
+                        if (!noteNode["visibleTime"].isNumber()) err("visibleTime is not a number");
                         auto visibleTime = noteNode["visibleTime"].getNumber();
 
                         if (visibleTime < 999999.0) {
@@ -2036,7 +2180,7 @@ namespace geasy_phi {
                     }
 
                     if (noteNode.hasKey("size")) {
-                        if (!noteNode["size"].isNumber()) failed("size is not a number");
+                        if (!noteNode["size"].isNumber()) err("size is not a number");
                         auto size = noteNode["size"].getNumber();
 
                         if (size != 1.0) {
@@ -2050,7 +2194,7 @@ namespace geasy_phi {
                     }
 
                     if (noteNode.hasKey("alpha")) {
-                        if (!noteNode["alpha"].isNumber()) failed("alpha is not a number");
+                        if (!noteNode["alpha"].isNumber()) err("alpha is not a number");
                         auto alpha = noteNode["alpha"].getNumber() / 255;
 
                         if (alpha != 1.0) {
@@ -2064,18 +2208,18 @@ namespace geasy_phi {
                     }
 
                     if (noteNode.hasKey("tint")) {
-                        if (!noteNode["tint"].isArray()) failed("tint is not an array");
+                        if (!noteNode["tint"].isArray()) err("tint is not an array");
 
                         auto& arr = noteNode["tint"].getArray();
-                        if (arr.size() < 3) failed("tint array is too small");
+                        if (arr.size() < 3) err("tint array is too small");
 
                         auto& n1 = arr[0];
                         auto& n2 = arr[1];
                         auto& n3 = arr[2];
 
-                        if (!n1.isNumber()) failed("tint[0] is not a number");
-                        if (!n2.isNumber()) failed("tint[1] is not a number");
-                        if (!n3.isNumber()) failed("tint[2] is not a number");
+                        if (!n1.isNumber()) err("tint[0] is not a number");
+                        if (!n2.isNumber()) err("tint[1] is not a number");
+                        if (!n3.isNumber()) err("tint[2] is not a number");
 
                         auto color = Color {
                             n1.getNumber() / 255,
@@ -2134,12 +2278,12 @@ namespace geasy_phi {
             }
 
             if (judgeLineNode.hasKey("attachUI")) {
-                if (!judgeLineNode["attachUI"].isString()) failed("attachUI is not a string");
+                if (!judgeLineNode["attachUI"].isString()) err("attachUI is not a string");
                 line.attachUI = PhiLineAttachUIHelper::FromString(judgeLineNode["attachUI"].getString());
             }
 
             if (judgeLineNode.hasKey("Texture")) {
-                if (!judgeLineNode["Texture"].isString()) failed("Texture is not a string");
+                if (!judgeLineNode["Texture"].isString()) err("Texture is not a string");
                 auto textureName = judgeLineNode["Texture"].getString();
 
                 if (textureName != "line.png") {
@@ -2148,7 +2292,7 @@ namespace geasy_phi {
             }
 
             if (judgeLineNode.hasKey("father")) {
-                if (!judgeLineNode["father"].isNumber()) failed("father is not a number");
+                if (!judgeLineNode["father"].isNumber()) err("father is not a number");
                 int64 fatherLineIndex = judgeLineNode["father"].getNumber();
                 if (fatherLineIndex >= 0) {
                     line.fatherLineIndex = fatherLineIndex;
@@ -2159,22 +2303,22 @@ namespace geasy_phi {
             if (judgeLineNode.hasKey("isCover")) {
                 if (judgeLineNode["isCover"].isNumber()) enableCover = judgeLineNode["isCover"].getNumber() == 1;
                 else if (judgeLineNode["isCover"].isBool()) enableCover = judgeLineNode["isCover"].getBool();
-                else failed("isCover is not a boolean or number");
+                else err("isCover is not a boolean or number");
             }
             line.enableCover = enableCover;
 
             if (judgeLineNode.hasKey("zOrder")) {
-                if (!judgeLineNode["zOrder"].isNumber()) failed("zOrder is not a number");
+                if (!judgeLineNode["zOrder"].isNumber()) err("zOrder is not a number");
                 line.zOrder = judgeLineNode["zOrder"].getNumber();
             }
 
             if (judgeLineNode.hasKey("anchor")) {
-                if (!judgeLineNode["anchor"].isArray()) failed("anchor is not an array");
+                if (!judgeLineNode["anchor"].isArray()) err("anchor is not an array");
 
                 auto& anchorArr = judgeLineNode["anchor"].getArray();
-                if (anchorArr.size() < 2) failed("anchor array size is less than 2");
+                if (anchorArr.size() < 2) err("anchor array size is less than 2");
 
-                if (!anchorArr[0].isNumber() || !anchorArr[1].isNumber()) failed("anchor array element is not a number");
+                if (!anchorArr[0].isNumber() || !anchorArr[1].isNumber()) err("anchor array element is not a number");
                 line.anchor = { anchorArr[0].getNumber(), anchorArr[1].getNumber() };
             }
         }
@@ -2184,7 +2328,7 @@ namespace geasy_phi {
     }
 
     PhiChart loadPhiChartFromPec(const Data& data) {
-        auto failed = [](const std::string& msg) {
+        auto err = [](const std::string& msg) {
             throw std::runtime_error(std::format("pec: {}", msg));
         };
 
@@ -2248,7 +2392,7 @@ namespace geasy_phi {
         chart.meta.speedUnit = 120.0;
 
         float64 offset;
-        if (!readNumber(&offset)) failed("failed to read offset");
+        if (!readNumber(&offset)) err("failed to read offset");
         chart.meta.offset = (offset - 150.0) / 1000.0;
 
         struct Commands {
@@ -2278,8 +2422,8 @@ namespace geasy_phi {
         while (reader.nextToken(token)) {
             if (token == "bp") {
                 float64 startTime, bpm;
-                if (!readNumber(&startTime)) failed("failed to read startTime (bp)");
-                if (!readNumber(&bpm)) failed("failed to read bpm (bp)");
+                if (!readNumber(&startTime)) err("failed to read startTime (bp)");
+                if (!readNumber(&bpm)) err("failed to read bpm (bp)");
 
                 bpmCommands.push_back({
                     .startTime = startTime,
@@ -2289,20 +2433,20 @@ namespace geasy_phi {
                 auto type = PhiNoteTypeHelper::FromPEC(token);
 
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (nx)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (nx)");
 
                 float64 startTime, endTime;
-                if (!readNumber(&startTime)) failed("failed to read startTime (nx)");
+                if (!readNumber(&startTime)) err("failed to read startTime (nx)");
                 if (type == EnumPhiNoteType::Hold) {
-                    if (!readNumber(&endTime)) failed("failed to read endTime (nx)");
+                    if (!readNumber(&endTime)) err("failed to read endTime (nx)");
                 } else endTime = startTime;
 
                 float64 positionX;
                 bool isAbove, isFake;
 
-                if (!readNumber(&positionX)) failed("failed to read positionX (nx)");
-                if (!readBool(&isAbove)) failed("failed to read isAbove (nx)");
-                if (!readBool(&isFake)) failed("failed to read isFake (nx)");
+                if (!readNumber(&positionX)) err("failed to read positionX (nx)");
+                if (!readBool(&isAbove)) err("failed to read isAbove (nx)");
+                if (!readBool(&isFake)) err("failed to read isFake (nx)");
 
                 noteCommands.push_back(Commands::Note {
                     .lineIndex = (int64)lineIndex,
@@ -2317,22 +2461,22 @@ namespace geasy_phi {
                 });
             } else if (token == "#") {
                 float64 speed;
-                if (!readNumber(&speed)) failed("failed to read speed (#)");
+                if (!readNumber(&speed)) err("failed to read speed (#)");
                 if (!noteCommands.empty()) noteCommands.back().speed = speed;
             } else if (token == "&") {
                 float64 size;
-                if (!readNumber(&size)) failed("failed to read size (&)");
+                if (!readNumber(&size)) err("failed to read size (&)");
                 if (!noteCommands.empty()) noteCommands.back().size = size;
             } else if (token == "cp") {
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cp)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (cp)");
 
                 float64 time;
-                if (!readNumber(&time)) failed("failed to read time (cp)");
+                if (!readNumber(&time)) err("failed to read time (cp)");
 
                 float64 x, y;
-                if (!readNumber(&x)) failed("failed to read x (cp)");
-                if (!readNumber(&y)) failed("failed to read y (cp)");
+                if (!readNumber(&x)) err("failed to read x (cp)");
+                if (!readNumber(&y)) err("failed to read y (cp)");
 
                 eventCommands[lineIndex][EnumPhiEventType::PositionX].push_back(Commands::Event {
                     .timeZone = { time, time }, .value = x
@@ -2343,57 +2487,57 @@ namespace geasy_phi {
                 });
             } else if (token == "cd") {
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cd)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (cd)");
 
                 float64 time;
-                if (!readNumber(&time)) failed("failed to read time (cd)");
+                if (!readNumber(&time)) err("failed to read time (cd)");
 
                 float64 r;
-                if (!readNumber(&r)) failed("failed to read y (cd)");
+                if (!readNumber(&r)) err("failed to read y (cd)");
 
                 eventCommands[lineIndex][EnumPhiEventType::SelfRotation].push_back(Commands::Event {
                     .timeZone = { time, time }, .value = r
                 });
             } else if (token == "ca") {
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (ca)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (ca)");
 
                 float64 time;
-                if (!readNumber(&time)) failed("failed to read time (ca)");
+                if (!readNumber(&time)) err("failed to read time (ca)");
 
                 float64 a;
-                if (!readNumber(&a)) failed("failed to read a (ca)");
+                if (!readNumber(&a)) err("failed to read a (ca)");
 
                 eventCommands[lineIndex][EnumPhiEventType::AdditiveAlpha].push_back(Commands::Event {
                     .timeZone = { time, time }, .value = a
                 });
             } else if (token == "cv") {
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cv)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (cv)");
 
                 float64 time;
-                if (!readNumber(&time)) failed("failed to read time (cv)");
+                if (!readNumber(&time)) err("failed to read time (cv)");
 
                 float64 v;
-                if (!readNumber(&v)) failed("failed to read v (cv)");
+                if (!readNumber(&v)) err("failed to read v (cv)");
 
                 eventCommands[lineIndex][EnumPhiEventType::Speed].push_back(Commands::Event {
                     .timeZone = { time, time }, .value = v
                 });
             } else if (token == "cm") {
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cm)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (cm)");
 
                 float64 startTime, endTime;
-                if (!readNumber(&startTime)) failed("failed to read startTime (cm)");
-                if (!readNumber(&endTime)) failed("failed to read endTime (cm)");
+                if (!readNumber(&startTime)) err("failed to read startTime (cm)");
+                if (!readNumber(&endTime)) err("failed to read endTime (cm)");
 
                 float64 x, y;
-                if (!readNumber(&x)) failed("failed to read x (cm)");
-                if (!readNumber(&y)) failed("failed to read y (cm)");
+                if (!readNumber(&x)) err("failed to read x (cm)");
+                if (!readNumber(&y)) err("failed to read y (cm)");
 
                 float64 easingType;
-                if (!readNumber(&easingType)) failed("failed to read easingType (cm)");
+                if (!readNumber(&easingType)) err("failed to read easingType (cm)");
 
                 eventCommands[lineIndex][EnumPhiEventType::PositionX].push_back(Commands::Event {
                     .timeZone = { startTime, endTime }, .value = x,
@@ -2406,17 +2550,17 @@ namespace geasy_phi {
                 });
             } else if (token == "cr") {
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cr)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (cr)");
 
                 float64 startTime, endTime;
-                if (!readNumber(&startTime)) failed("failed to read startTime (cr)");
-                if (!readNumber(&endTime)) failed("failed to read endTime (cr)");
+                if (!readNumber(&startTime)) err("failed to read startTime (cr)");
+                if (!readNumber(&endTime)) err("failed to read endTime (cr)");
 
                 float64 r;
-                if (!readNumber(&r)) failed("failed to read r (cr)");
+                if (!readNumber(&r)) err("failed to read r (cr)");
 
                 float64 easingType;
-                if (!readNumber(&easingType)) failed("failed to read easingType (cr)");
+                if (!readNumber(&easingType)) err("failed to read easingType (cr)");
 
                 eventCommands[lineIndex][EnumPhiEventType::SelfRotation].push_back(Commands::Event {
                     .timeZone = { startTime, endTime }, .value = r,
@@ -2424,14 +2568,14 @@ namespace geasy_phi {
                 });
             } else if (token == "cf") {
                 float64 lineIndex;
-                if (!readNumber(&lineIndex)) failed("failed to read lineIndex (cf)");
+                if (!readNumber(&lineIndex)) err("failed to read lineIndex (cf)");
 
                 float64 startTime, endTime;
-                if (!readNumber(&startTime)) failed("failed to read startTime (cf)");
-                if (!readNumber(&endTime)) failed("failed to read endTime (cf)");
+                if (!readNumber(&startTime)) err("failed to read startTime (cf)");
+                if (!readNumber(&endTime)) err("failed to read endTime (cf)");
 
                 float64 a;
-                if (!readNumber(&a)) failed("failed to read a (cf)");
+                if (!readNumber(&a)) err("failed to read a (cf)");
 
                 eventCommands[lineIndex][EnumPhiEventType::AdditiveAlpha].push_back(Commands::Event {
                     .timeZone = { startTime, endTime }, .value = a,
@@ -2440,7 +2584,7 @@ namespace geasy_phi {
             }
         }
 
-        std::sort(bpmCommands.begin(), bpmCommands.end(), [](const auto& a, const auto& b) { return a.startTime < b.startTime; });
+        std::stable_sort(bpmCommands.begin(), bpmCommands.end(), [](const auto& a, const auto& b) { return a.startTime < b.startTime; });
         std::vector<PhiBPMEvent> sharedBpmEvents;
         for (auto& cmd : bpmCommands) {
             sharedBpmEvents.push_back(PhiBPMEvent {
@@ -2521,7 +2665,7 @@ namespace geasy_phi {
 
         for (auto& [lineIndex, events] : eventCommands) {
             for (auto& [type, typedEvents] : events) {
-                std::sort(typedEvents.begin(), typedEvents.end(), [](const auto& a, const auto& b) {
+                std::stable_sort(typedEvents.begin(), typedEvents.end(), [](const auto& a, const auto& b) {
                     if (a.timeZone.x != b.timeZone.x) return a.timeZone.x < b.timeZone.x;
                     if (a.timeZone.y != b.timeZone.y) return a.timeZone.y < b.timeZone.y;
                     return b.useFront;
@@ -2583,19 +2727,20 @@ namespace geasy_phi {
 
         std::string msg = "failures: \n";
         for (auto& m : msgs) msg += m + "\n";
+        throw std::runtime_error(msg);
         return {};
 
         #undef try
     }
 
     PhiExtra loadPhiExtraFromJsonData(const Data& data, PhiStoryboardAssets& assets) {
-        auto failed = [](const std::string& msg) {
+        auto err = [](const std::string& msg) {
             throw std::runtime_error(msg);
         };
 
         auto jsonRoot = JsonNode::Parse(data);
 
-        if (!jsonRoot.isObject()) failed("root is not an object");
+        if (!jsonRoot.isObject()) err("root is not an object");
 
         PhiExtra extra {};
         
@@ -2618,19 +2763,19 @@ namespace geasy_phi {
 
         std::vector<PhiBPMEvent> bpmEvents;
 
-        if (!jsonRoot.hasKey("bpm")) failed("missing bpm field");
-        if (!jsonRoot["bpm"].isArray()) failed("bpm is not an array");
+        if (!jsonRoot.hasKey("bpm")) err("missing bpm");
+        if (!jsonRoot["bpm"].isArray()) err("bpm is not an array");
 
         auto& bpmArr = jsonRoot["bpm"].getArray();
         for (auto& bpmEventNode : bpmArr) {
-            if (!bpmEventNode.isObject()) failed("bpm item is not an object");
+            if (!bpmEventNode.isObject()) err("bpm item is not an object");
 
-            if (!bpmEventNode.hasKey("time")) failed("missing time field");
+            if (!bpmEventNode.hasKey("time")) err("missing time");
             float64 time;
-            if (!parseTimeTuple(bpmEventNode["time"], &time)) failed("time is not a valid time tuple");
+            if (!parseTimeTuple(bpmEventNode["time"], &time)) err("time is not a valid time tuple");
 
-            if (!bpmEventNode.hasKey("bpm")) failed("missing bpm field");
-            if (!bpmEventNode["bpm"].isNumber()) failed("bpm is not a number");
+            if (!bpmEventNode.hasKey("bpm")) err("missing bpm");
+            if (!bpmEventNode["bpm"].isNumber()) err("bpm is not a number");
             float64 bpm = bpmEventNode["bpm"].getNumber();
 
             bpmEvents.push_back({
@@ -2669,40 +2814,40 @@ namespace geasy_phi {
             return true;
         };
 
-        if (!jsonRoot.hasKey("effects")) failed("missing effects field");
-        if (!jsonRoot["effects"].isArray()) failed("effects is not an array");
+        if (!jsonRoot.hasKey("effects")) err("missing effects");
+        if (!jsonRoot["effects"].isArray()) err("effects is not an array");
         auto& effectsNode = jsonRoot["effects"].getArray();
 
         for (auto& effectNode : effectsNode) {
-            if (!effectNode.isObject()) failed("effects item is not an object");
+            if (!effectNode.isObject()) err("effects item is not an object");
 
-            if (!effectNode.hasKey("start")) failed("missing start field");
-            if (!effectNode.hasKey("end")) failed("missing end field");
+            if (!effectNode.hasKey("start")) err("missing start");
+            if (!effectNode.hasKey("end")) err("missing end");
             
             float64 startTime, endTime;
-            if (!parseTimeTupleToSecond(effectNode["start"], &startTime)) failed("start is not a valid time tuple");
-            if (!parseTimeTupleToSecond(effectNode["end"], &endTime)) failed("end is not a valid time tuple");
+            if (!parseTimeTupleToSecond(effectNode["start"], &startTime)) err("start is not a valid time tuple");
+            if (!parseTimeTupleToSecond(effectNode["end"], &endTime)) err("end is not a valid time tuple");
 
             bool isGlobal = false;
             if (effectNode.hasKey("global")) {
-                if (!effectNode["global"].isBool()) failed("global is not a bool");
+                if (!effectNode["global"].isBool()) err("global is not a bool");
                 isGlobal = effectNode["global"].getBool();
             }
 
             std::optional<uint64> targetLine;
             if (effectNode.hasKey("line")) {
-                if (!effectNode["line"].isNumber()) failed("line is not a number");
+                if (!effectNode["line"].isNumber()) err("line is not a number");
                 targetLine = effectNode["line"].getNumber();
             }
 
             uint64 order = 0;
             if (effectNode.hasKey("order")) {
-                if (!effectNode["order"].isNumber()) failed("order is not a number");
+                if (!effectNode["order"].isNumber()) err("order is not a number");
                 order = effectNode["order"].getNumber();
             }
 
-            if (!effectNode.hasKey("shader")) failed("missing shader field");
-            if (!effectNode["shader"].isString()) failed("shader is not a string");
+            if (!effectNode.hasKey("shader")) err("missing shader");
+            if (!effectNode["shader"].isString()) err("shader is not a string");
             auto shaderName = effectNode["shader"].getString();
 
             auto& item = extra.effects.emplace_back();
@@ -2713,7 +2858,7 @@ namespace geasy_phi {
             item.shaderName = shaderName;
 
             if (effectNode.hasKey("vars")) {
-                if (!effectNode["vars"].isObject()) failed("vars is not an object");
+                if (!effectNode["vars"].isObject()) err("vars is not an object");
                 auto& varsNode = effectNode["vars"].getObject();
 
                 for (auto& [uniformName, eventsNode] : varsNode) {
@@ -2721,25 +2866,25 @@ namespace geasy_phi {
 
                     if (eventsNode.isArray()) {
                         auto& eventsArr = eventsNode.getArray();
-                        if (eventsArr.empty()) failed("events array is empty");
+                        if (eventsArr.empty()) err("events array is empty");
 
                         JsonNode::EnumType eventItemNodeType = eventsArr[0].type;
                         for (auto& node : eventsArr) {
-                            if (node.type != eventItemNodeType) failed("events array contains different types of nodes");
+                            if (node.type != eventItemNodeType) err("events array contains different types of nodes");
                         }
 
                         if (eventItemNodeType == JsonNode::EnumType::Object) {
                             for (auto& eventNode : eventsArr) {
-                                if (!eventNode.hasKey("startTime")) failed("missing startTime field");
-                                if (!eventNode.hasKey("endTime")) failed("missing endTime field");
+                                if (!eventNode.hasKey("startTime")) err("missing startTime");
+                                if (!eventNode.hasKey("endTime")) err("missing endTime");
 
                                 float64 startTime, endTime;
-                                if (!parseTimeTupleToSecond(eventNode["startTime"], &startTime)) failed("startTime is not a valid time tuple");
-                                if (!parseTimeTupleToSecond(eventNode["endTime"], &endTime)) failed("endTime is not a valid time tuple");
+                                if (!parseTimeTupleToSecond(eventNode["startTime"], &startTime)) err("startTime is not a valid time tuple");
+                                if (!parseTimeTupleToSecond(eventNode["endTime"], &endTime)) err("endTime is not a valid time tuple");
 
-                                if (!eventNode.hasKey("start")) failed("missing start field");
-                                if (!eventNode.hasKey("end")) failed("missing end field");
-                                if (eventNode["start"].type != eventNode["end"].type) failed("start and end are not the same type");
+                                if (!eventNode.hasKey("start")) err("missing start");
+                                if (!eventNode.hasKey("end")) err("missing end");
+                                if (eventNode["start"].type != eventNode["end"].type) err("start and end are not the same type");
 
                                 Vec2 valueZone;
                                 
@@ -2747,14 +2892,14 @@ namespace geasy_phi {
                                     valueZone = assets.requestShaderUniformPair(eventNode["start"].getNumber(), eventNode["end"].getNumber());
                                 } else if (eventNode["start"].isArray()) {
                                     PhiShaderUniform startUniform, endUniform;
-                                    if (!parseVectorUniform(eventNode["start"], &startUniform)) failed("start is not a valid vector uniform");
-                                    if (!parseVectorUniform(eventNode["end"], &endUniform)) failed("end is not a valid vector uniform");
+                                    if (!parseVectorUniform(eventNode["start"], &startUniform)) err("start is not a valid vector uniform");
+                                    if (!parseVectorUniform(eventNode["end"], &endUniform)) err("end is not a valid vector uniform");
                                     valueZone = assets.requestShaderUniformPair(startUniform, endUniform);
-                                } else failed("start and end are not a number or array");
+                                } else err("start and end are not a number or array");
 
                                 uint64 easingType = 1;
                                 if (eventNode.hasKey("easingType")) {
-                                    if (!eventNode["easingType"].isNumber()) failed("easingType is not a number");
+                                    if (!eventNode["easingType"].isNumber()) err("easingType is not a number");
                                     easingType = eventNode["easingType"].getNumber();
                                 }
 
@@ -2773,14 +2918,14 @@ namespace geasy_phi {
                             }
                         } else if (eventItemNodeType == JsonNode::EnumType::Number) {
                             PhiShaderUniform uniform;
-                            if (!parseVectorUniform(eventsNode, &uniform)) failed("events item is not a valid vector uniform");
+                            if (!parseVectorUniform(eventsNode, &uniform)) err("events item is not a valid vector uniform");
                             layer.addEvent({
                                 .timeZone = INF_TZ,
                                 .valueZone = assets.requestShaderUniformPair(uniform, uniform),
                                 .type = EnumPhiEventType::PhiShaderUniform,
                                 .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
                             });
-                        } else failed("events array item is not an object or number");
+                        } else err("events array item is not an object or number");
                     } else if (eventsNode.isNumber()) {
                         layer.addEvent({
                             .timeZone = INF_TZ,
@@ -2788,7 +2933,7 @@ namespace geasy_phi {
                             .type = EnumPhiEventType::PhiShaderUniform,
                             .layerIndex = PhiEventLayerIndexs::SHADER_UNIFORM_DEFAULT
                         });
-                    } else failed("event(s) is not an array or number");
+                    } else err("event(s) is not an array or number");
                 }
             }
         }
@@ -2963,7 +3108,6 @@ namespace geasy_phi {
 
         using CalculatedObject = std::variant<
             ListSharedCalculatedObjects,
-
             CalculatedNote,
             CalculatedStoryboardTexture,
             CalculatedHitEffectTexture,
@@ -4103,13 +4247,13 @@ void main() {
             return defaultValues[objType][eventType];
         }
 
-        float64 getProgressAtTime(float64 t) noexcept {
+        float64 getProgress(float64 t) const noexcept {
             if (timeZone.isZeroZone()) return 1.0;
             return std::clamp((t - timeZone.x) / (timeZone.y - timeZone.x), 0.0, 1.0);
         }
 
-        float64 valueAtTime(float64 t) noexcept {
-            auto p = getProgressAtTime(t);
+        float64 valueAtTime(float64 t) const noexcept {
+            auto p = getProgress(t);
 
             if (hasValueEasing()) {
                 p = easingFunc(easingFuncContext, p);
@@ -4118,8 +4262,8 @@ void main() {
             return valueZone.x + p * (valueZone.y - valueZone.x);
         }
 
-        float64 getIntegralValue(float64 t) noexcept {
-            auto p = getProgressAtTime(t);
+        float64 getIntegralValue(float64 t) const noexcept {
+            auto p = getProgress(t);
             float64 iv = p * p / 2.0;
 
             if (hasIntEasing()) {
@@ -4857,7 +5001,7 @@ void main() {
     };
 
     MilChart loadMilChartFromDevJson(const Data& data) {
-        auto failed = [](const std::string& msg) {
+        auto err = [](const std::string& msg) {
             throw std::runtime_error(std::format("dev: {}", msg));
         };
 
@@ -4869,51 +5013,51 @@ void main() {
         chart.meta.worldViewport = { 1920, -1080 };
         chart.meta.speedUnit = 108.0;
 
-        if (!jsonRoot.isObject()) failed("root is not an object");
+        if (!jsonRoot.isObject()) err("root is not an object");
 
-        if (!jsonRoot.hasKey("meta")) failed("missing meta field");
-        if (!jsonRoot["meta"].isObject()) failed("meta is not an object");
+        if (!jsonRoot.hasKey("meta")) err("missing meta");
+        if (!jsonRoot["meta"].isObject()) err("meta is not an object");
 
         auto& metaNode = jsonRoot["meta"];
 
-        if (!metaNode.hasKey("Title")) failed("missing Title field");
-        if (!metaNode["Title"].isString()) failed("Title is not a string");
+        if (!metaNode.hasKey("Title")) err("missing Title");
+        if (!metaNode["Title"].isString()) err("Title is not a string");
         chart.meta.title = metaNode["Title"].getString();
 
-        if (!metaNode.hasKey("Composer")) failed("missing Composer field");
-        if (!metaNode["Composer"].isString()) failed("Composer is not a string");
+        if (!metaNode.hasKey("Composer")) err("missing Composer");
+        if (!metaNode["Composer"].isString()) err("Composer is not a string");
         chart.meta.composer = metaNode["Composer"].getString();
 
-        if (!metaNode.hasKey("Illustrator")) failed("missing Illustrator field");
-        if (!metaNode["Illustrator"].isString()) failed("Illustrator is not a string");
+        if (!metaNode.hasKey("Illustrator")) err("missing Illustrator");
+        if (!metaNode["Illustrator"].isString()) err("Illustrator is not a string");
         chart.meta.artist = metaNode["Illustrator"].getString();
 
-        if (!metaNode.hasKey("Beatmapper")) failed("missing Beatmapper field");
-        if (!metaNode["Beatmapper"].isString()) failed("Beatmapper is not a string");
+        if (!metaNode.hasKey("Beatmapper")) err("missing Beatmapper");
+        if (!metaNode["Beatmapper"].isString()) err("Beatmapper is not a string");
         chart.meta.charter = metaNode["Beatmapper"].getString();
 
-        if (!metaNode.hasKey("Difficulty")) failed("missing Difficulty field");
-        if (!metaNode["Difficulty"].isString()) failed("Difficulty is not a string");
+        if (!metaNode.hasKey("Difficulty")) err("missing Difficulty");
+        if (!metaNode["Difficulty"].isString()) err("Difficulty is not a string");
         chart.meta.difficultyName = metaNode["Difficulty"].getString();
 
-        if (!metaNode.hasKey("DifficultyValue")) failed("missing DifficultyValue field");
-        if (!metaNode["DifficultyValue"].isNumber()) failed("DifficultyValue is not a number");
+        if (!metaNode.hasKey("DifficultyValue")) err("missing DifficultyValue");
+        if (!metaNode["DifficultyValue"].isNumber()) err("DifficultyValue is not a number");
         chart.meta.difficultyValue = metaNode["DifficultyValue"].getNumber();
 
         std::vector<MilBPMEvent> bpms;
 
-        if (!jsonRoot.hasKey("bpms")) failed("missing bpms field");
-        if (!jsonRoot["bpms"].isArray()) failed("bpms is not an array");
+        if (!jsonRoot.hasKey("bpms")) err("missing bpms");
+        if (!jsonRoot["bpms"].isArray()) err("bpms is not an array");
 
         for (auto& bpmNode : jsonRoot["bpms"].getArray()) {
-            if (!bpmNode.isObject()) failed("bpm is not an object");
+            if (!bpmNode.isObject()) err("bpm is not an object");
 
-            if (!bpmNode.hasKey("start")) failed("missing start field");
-            if (!bpmNode["start"].isNumber()) failed("start is not a number");
+            if (!bpmNode.hasKey("start")) err("missing start");
+            if (!bpmNode["start"].isNumber()) err("start is not a number");
             float64 start = bpmNode["start"].getNumber();
 
-            if (!bpmNode.hasKey("bpm")) failed("missing bpm field");
-            if (!bpmNode["bpm"].isNumber()) failed("bpm is not a number");
+            if (!bpmNode.hasKey("bpm")) err("missing bpm");
+            if (!bpmNode["bpm"].isNumber()) err("bpm is not a number");
             float64 bpm = bpmNode["bpm"].getNumber();
 
             bpms.push_back({ .time = start, .bpm = bpm });
@@ -4947,71 +5091,71 @@ void main() {
             return false;
         };
 
-        if (!jsonRoot.hasKey("lines")) failed("missing lines field");
-        if (!jsonRoot["lines"].isArray()) failed("lines is not an array");
+        if (!jsonRoot.hasKey("lines")) err("missing lines");
+        if (!jsonRoot["lines"].isArray()) err("lines is not an array");
 
         uint64 lineIndex = 0;
         for (auto& lineNode : jsonRoot["lines"].getArray()) {
-            if (!lineNode.isObject()) failed("line is not an object");
+            if (!lineNode.isObject()) err("line is not an object");
 
             auto& line = chart.lines.emplace_back();
             line.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Line, lineIndex++ }));
 
-            if (!lineNode.hasKey("notes")) failed("missing notes field");
-            if (!lineNode["notes"].isArray()) failed("notes is not an array");
+            if (!lineNode.hasKey("notes")) err("missing notes");
+            if (!lineNode["notes"].isArray()) err("notes is not an array");
 
             for (auto& noteNode : lineNode["notes"].getArray()) {
-                if (!noteNode.isObject()) failed("note is not an object");
+                if (!noteNode.isObject()) err("note is not an object");
 
                 auto& note = line.notes.emplace_back();
 
-                if (!noteNode.hasKey("bpm")) failed("missing bpm field");
-                if (!noteNode["bpm"].isNumber()) failed("bpm is not a number");
+                if (!noteNode.hasKey("bpm")) err("missing bpm");
+                if (!noteNode["bpm"].isNumber()) err("bpm is not a number");
                 uint64 bpm = noteNode["bpm"].getNumber();
 
-                if (!cvtTime(noteNode, "startTime", bpm, &note.timeZone.x)) failed("invalid startTime");
-                if (!cvtTime(noteNode, "endTime", bpm, &note.timeZone.y)) failed("invalid endTime");
+                if (!cvtTime(noteNode, "startTime", bpm, &note.timeZone.x)) err("invalid startTime");
+                if (!cvtTime(noteNode, "endTime", bpm, &note.timeZone.y)) err("invalid endTime");
 
-                if (!noteNode.hasKey("type")) failed("missing type field");
-                if (!noteNode["type"].isNumber()) failed("type is not a number");
+                if (!noteNode.hasKey("type")) err("missing type");
+                if (!noteNode["type"].isNumber()) err("type is not a number");
                 note.type = MilNoteTypeHelper::FromInt(noteNode["type"].getNumber());
 
-                if (!noteNode.hasKey("isFake")) failed("missing isFake field");
-                if (!noteNode["isFake"].isBool()) failed("isFake is not a bool");
+                if (!noteNode.hasKey("isFake")) err("missing isFake");
+                if (!noteNode["isFake"].isBool()) err("isFake is not a bool");
                 note.isFake = noteNode["isFake"].getBool();
 
-                if (!noteNode.hasKey("isAlwaysPerfect")) failed("missing isAlwaysPerfect field");
-                if (!noteNode["isAlwaysPerfect"].isBool()) failed("isAlwaysPerfect is not a bool");
+                if (!noteNode.hasKey("isAlwaysPerfect")) err("missing isAlwaysPerfect");
+                if (!noteNode["isAlwaysPerfect"].isBool()) err("isAlwaysPerfect is not a bool");
                 note.isAlwaysPerfect = noteNode["isAlwaysPerfect"].getBool();
 
-                if (!noteNode.hasKey("index")) failed("missing index field");
-                if (!noteNode["index"].isNumber()) failed("index is not a number");
+                if (!noteNode.hasKey("index")) err("missing index");
+                if (!noteNode["index"].isNumber()) err("index is not a number");
                 uint64 noteIndex = noteNode["index"].getNumber();
 
                 note.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Note, noteIndex }));
             }
         }
 
-        if (!jsonRoot.hasKey("storyboardObjects")) failed("missing storyboardObjects field");
-        if (!jsonRoot["storyboardObjects"].isArray()) failed("storyboardObjects is not an array");
+        if (!jsonRoot.hasKey("storyboardObjects")) err("missing storyboardObjects");
+        if (!jsonRoot["storyboardObjects"].isArray()) err("storyboardObjects is not an array");
 
         uint64 sbIndex = 0;
         for (auto& sbNode : jsonRoot["storyboardObjects"].getArray()) {
-            if (!sbNode.isObject()) failed("storyboardObject is not an object");
+            if (!sbNode.isObject()) err("storyboardObject is not an object");
 
             auto& sb = chart.storyboardObjects.emplace_back();
             sb.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Storyboard, sbIndex++ }));
 
-            if (!sbNode.hasKey("type")) failed("missing type field");
-            if (!sbNode["type"].isNumber()) failed("type is not a number");
+            if (!sbNode.hasKey("type")) err("missing type");
+            if (!sbNode["type"].isNumber()) err("type is not a number");
             sb.type = MilStoryboardTypeHelper::FromInt(sbNode["type"].getNumber());
 
-            if (!sbNode.hasKey("data")) failed("missing data field");
-            if (!sbNode["data"].isString()) failed("data is not an object");
+            if (!sbNode.hasKey("data")) err("missing data");
+            if (!sbNode["data"].isString()) err("data is not an object");
             sb.data = sbNode["data"].getString();
 
-            if (!sbNode.hasKey("layer")) failed("missing layer field");
-            if (!sbNode["layer"].isNumber()) failed("layer is not a number");
+            if (!sbNode.hasKey("layer")) err("missing layer");
+            if (!sbNode["layer"].isNumber()) err("layer is not a number");
             sb.layer = MilStoryboardLayerHelper::FromInt(sbNode["layer"].getNumber());
         }
 
@@ -5053,51 +5197,51 @@ void main() {
             return false;
         };
 
-        if (!jsonRoot.hasKey("animations")) failed("missing animations field");
-        if (!jsonRoot["animations"].isArray()) failed("animations is not an array");
+        if (!jsonRoot.hasKey("animations")) err("missing animations");
+        if (!jsonRoot["animations"].isArray()) err("animations is not an array");
 
         uint64 eventIndex = 0;
         for (auto& animNode : jsonRoot["animations"].getArray()) {
-            if (!animNode.isObject()) failed("animation is not an object");
+            if (!animNode.isObject()) err("animation is not an object");
 
             MilEvent e {};
             e.index = eventIndex++;
 
-            if (!animNode.hasKey("bpmId")) failed("missing bpmId field");
-            if (!animNode["bpmId"].isNumber()) failed("bpmId is not a number");
+            if (!animNode.hasKey("bpmId")) err("missing bpmId");
+            if (!animNode["bpmId"].isNumber()) err("bpmId is not a number");
             uint64 bpm = animNode["bpmId"].getNumber();
 
-            if (!cvtTime(animNode, "fromBeat", bpm, &e.timeZone.x)) failed("invalid fromBeat");
-            if (!cvtTime(animNode, "toBeat", bpm, &e.timeZone.y)) failed("invalid toBeat");
+            if (!cvtTime(animNode, "fromBeat", bpm, &e.timeZone.x)) err("invalid fromBeat");
+            if (!cvtTime(animNode, "toBeat", bpm, &e.timeZone.y)) err("invalid toBeat");
 
-            if (!animNode.hasKey("key")) failed("missing key field");
-            if (!animNode["key"].isNumber()) failed("key is not a string");
+            if (!animNode.hasKey("key")) err("missing key");
+            if (!animNode["key"].isNumber()) err("key is not a string");
             e.type = MilEventTypeHelper::FromInt(animNode["key"].getNumber());
 
             if (e.type == EnumMilEventType::Color) {
                 Color fv, tv;
-                if (!cvtColorAnimVal(animNode, "fv", &fv)) failed("invalid fv");
-                if (!cvtColorAnimVal(animNode, "tv", &tv)) failed("invalid tv");
+                if (!cvtColorAnimVal(animNode, "fv", &fv)) err("invalid fv");
+                if (!cvtColorAnimVal(animNode, "tv", &tv)) err("invalid tv");
                 e.valueZone = chart.storyboardAssets.requestColorPair(fv, tv);
             } else {
-                if (!cvtAnimVal(animNode, "fv", &e.valueZone.x)) failed("invalid fv");
-                if (!cvtAnimVal(animNode, "tv", &e.valueZone.y)) failed("invalid tv");
+                if (!cvtAnimVal(animNode, "fv", &e.valueZone.x)) err("invalid fv");
+                if (!cvtAnimVal(animNode, "tv", &e.valueZone.y)) err("invalid tv");
             }
 
-            if (!animNode.hasKey("data")) failed("missing data field");
-            if (!animNode["data"].isNumber()) failed("data is not a number");
+            if (!animNode.hasKey("data")) err("missing data");
+            if (!animNode["data"].isNumber()) err("data is not a number");
             auto objType = MilObjectTypeHelper::FromInt(animNode["data"].getNumber());
 
-            if (!animNode.hasKey("i1")) failed("missing i1 field");
-            if (!animNode["i1"].isNumber()) failed("i1 is not a number");
+            if (!animNode.hasKey("i1")) err("missing i1");
+            if (!animNode["i1"].isNumber()) err("i1 is not a number");
             uint64 objIndex = animNode["i1"].getNumber();
 
-            if (!animNode.hasKey("ease")) failed("missing ease field");
-            if (!animNode["ease"].isNumber()) failed("ease is not a number");
+            if (!animNode.hasKey("ease")) err("missing ease");
+            if (!animNode["ease"].isNumber()) err("ease is not a number");
             uint64 ease = animNode["ease"].getNumber();
 
-            if (!animNode.hasKey("press")) failed("missing press field");
-            if (!animNode["press"].isNumber()) failed("press is not a number");
+            if (!animNode.hasKey("press")) err("missing press");
+            if (!animNode["press"].isNumber()) err("press is not a number");
             uint64 press = animNode["press"].getNumber();
 
             if (press != 0) {
@@ -5132,6 +5276,7 @@ void main() {
 
         std::string msg = "failures: \n";
         for (auto& m : msgs) msg += m + "\n";
+        throw std::runtime_error(msg);
         return {};
         
         #undef try_
@@ -5185,7 +5330,8 @@ void main() {
                 Color color;
             };
 
-            std::vector<Item> items;
+            Item* items;
+            uint64 count;
         };
 
         struct CalculatedHitEffectTexture {
@@ -5196,7 +5342,6 @@ void main() {
 
         using CalculatedObject = std::variant<
             ListSharedCalculatedObjects,
-
             CalculatedLineHead,
             CalculatedNote,
             CalculatedPauseButton,
@@ -5555,7 +5700,8 @@ void main() {
         }
 
         frame.objects.push_back(MilCalculatedFrame::CalculatedParticles {
-            .items = frame.cache.hitEffectParticles
+            .items = frame.cache.hitEffectParticles.data(),
+            .count = frame.cache.hitEffectParticles.size()
         });
 
         calculateStoryboards(EnumMilStoryboardLayer::Foreground);
@@ -5891,11 +6037,17 @@ void main() {
                 } else if (std::holds_alternative<MilCalculatedFrame::CalculatedParticles>(obj)) {
                     auto& particles = std::get<MilCalculatedFrame::CalculatedParticles>(obj);
 
-                    auto mesh = glCtx->requestMesh(6 * particles.items.size());
+                    auto mesh = glCtx->requestMesh(6 * particles.count);
                     mesh.program = glCtx->preloadedPrograms.circle.get();
                     mesh.color = GLvec4::White();
 
-                    for (auto& it : particles.items) {
+                    {
+                        auto guard = mesh.program->use();
+                        mesh.program->getUniformLocation("uRingRadius").setf(0.0);
+                    }
+
+                    for (uint64 i = 0; i < particles.count; i++) {
+                        auto& it = particles.items[i];
                         Transform2D transform;
                         transform.translate(it.position);
                         transform.rotateDegrees(it.rotation);
@@ -6106,10 +6258,19 @@ void main() {
         }
     };
 
-    enum class EnumRizNoteType {
+    enum class EnumRizNoteType : uint64 {
         Tap,
         Drag,
         Hold
+    };
+
+    struct RizNoteTypeHelper {
+        static EnumRizNoteType FromInt(uint64 type) {
+            if (type == 0) return EnumRizNoteType::Tap;
+            if (type == 1) return EnumRizNoteType::Drag;
+            if (type == 2) return EnumRizNoteType::Hold;
+            return EnumRizNoteType::Tap;
+        }
     };
 
     struct RizTheme {
@@ -6128,11 +6289,203 @@ void main() {
         float64 (* func)(void*, float64);
         float64 (* intFunc)(void*, float64);
         void* context;
+        bool isLinear = true;
+
+        void loadFromType(uint64 type) {
+            if (type <= 0 || type > 14) return;
+            
+            context = (void*)type;
+            func = [](void* ctx, float64 p) { return EaseSet::Rizline::Official::easing((uint64)ctx, p); };
+            intFunc = [](void* ctx, float64 p) { return EaseSet::Rizline::Official::easing_int((uint64)ctx, p); };
+
+            if (type != 13 && type != 14) {
+                isLinear = false;
+            }
+        }
+
+        float64 applyValue(float64 p) const noexcept {
+            return func ? func(context, p) : p;
+        }
+
+        float64 applyInt(float64 p) const noexcept {
+            return intFunc ? intFunc(context, p) : (p * p / 2.0);
+        }
     };
 
-    struct RizBpmEvent {
-        float64 time, bpm;
+    struct RizColorPoint {
+        float64 time;
+        Color start, end;
+
+        float64 getProgress(float64 nowTime, const RizColorPoint* nextPoint) const noexcept {
+            if (!nextPoint) return 0.0;
+            if (time == nextPoint->time) return 1.0;
+            return std::clamp((nowTime - time) / (nextPoint->time - time), 0.0, 1.0);
+        };
+
+        Color valueAtTime(float64 nowTime, const RizColorPoint* nextPoint) const noexcept {
+            auto p = getProgress(nowTime, nextPoint);
+            return start + (end - start) * p;
+        }
+    };
+
+    struct RizColorPointGroup {
+        std::vector<RizColorPoint> points;
+
+        auto& create() noexcept { return points.emplace_back(); }
+
+        void init() {
+            lastUpdatedTime = -std::numeric_limits<float64>::infinity();
+            std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) { return a.time < b.time; });
+        }
+
+        Color get(float64 nowTime) noexcept {
+            update(nowTime);
+            return currentValue;
+        }
+
+        private:
+        uint64 currentIndex;
+        Color currentValue;
+        float64 lastUpdatedTime;
+
+        void update(float64 nowTime) noexcept {
+            if (points.empty()) return;
+
+            if (lastUpdatedTime == nowTime) return;
+            if (lastUpdatedTime > nowTime) rewindTo(nowTime);
+
+            while (shouldAdvanceToNext(nowTime)) currentIndex++;
+
+            auto& p = points[currentIndex];
+            auto* np = currentIndex < points.size() - 1 ? &points[currentIndex + 1] : nullptr;
+            currentValue = p.valueAtTime(nowTime, np);
+
+            lastUpdatedTime = nowTime;
+        }
+
+        bool shouldAdvanceToNext(float64 nowTime) const noexcept {
+            return (
+                currentIndex < points.size() - 1
+                && points[currentIndex + 1].time <= nowTime
+            );
+        }
+
+        void rewindTo(float64 nowTime) noexcept {
+            while (!shouldAdvanceToNext(nowTime) && currentIndex > 0) {
+                currentIndex--;
+            }
+        }
+    };
+
+    struct RizKeyPoint {
+        float64 time, value;
         RizEase ease;
+
+        float64 cumulativeValueAtStart;
+
+        float64 getProgress(float64 nowTime, const RizKeyPoint* nextPoint) const noexcept {
+            if (!nextPoint) return 0.0;
+            if (time == nextPoint->time) return 1.0;
+            return std::clamp((nowTime - time) / (nextPoint->time - time), 0.0, 1.0);
+        }
+
+        float64 getProgressEased(float64 nowTime, const RizKeyPoint* nextPoint) const noexcept {
+            return ease.applyValue(getProgress(nowTime, nextPoint));
+        }
+
+        float64 valueAtTime(float64 nowTime, const RizKeyPoint* nextPoint) const noexcept {
+            if (!nextPoint) return value;
+            auto p = getProgressEased(nowTime, nextPoint);
+            return value + (nextPoint->value - value) * p;
+        }
+
+        float64 getIntegralValue(float64 nowTime) const noexcept {
+            return (nowTime - time) * value;
+        }
+    };
+
+    struct RizKeyPointGroup {
+        std::vector<RizKeyPoint> points;
+        bool isSpeed;
+
+        auto& create() noexcept { return points.emplace_back(); }
+
+        void init() {
+            lastUpdatedTime = -std::numeric_limits<float64>::infinity();
+            std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) { return a.time < b.time; });
+
+            initSpeedCumul();
+        }
+
+        float64 get(float64 nowTime) noexcept {
+            update(nowTime);
+            return currentValue;
+        }
+
+        private:
+        uint64 currentIndex;
+        float64 currentValue;
+        float64 lastUpdatedTime;
+
+        void initSpeedCumul() {
+            if (!isSpeed || points.empty()) return;
+
+            float64 cumulativeValue = 0.0;
+
+            for (uint64 i = 0; i < points.size(); i++) {
+                auto& p = points[i];
+                p.cumulativeValueAtStart = cumulativeValue;
+
+                if (i < points.size() - 1) {
+                    auto& np = points[i + 1];
+                    cumulativeValue += p.getIntegralValue(np.time);
+                }
+            }
+        }
+
+        void update(float64 nowTime) noexcept {
+            if (points.empty()) return;
+
+            if (lastUpdatedTime == nowTime) return;
+            if (lastUpdatedTime > nowTime) rewindTo(nowTime);
+
+            while (shouldAdvanceToNext(nowTime)) currentIndex++;
+
+            auto& p = points[currentIndex];
+            auto* np = currentIndex < points.size() - 1 ? &points[currentIndex + 1] : nullptr;
+
+            if (isSpeed) {
+                currentValue = p.cumulativeValueAtStart + p.getIntegralValue(nowTime);
+            } else {
+                currentValue = p.valueAtTime(nowTime, np);
+            }
+
+            lastUpdatedTime = nowTime;
+        }
+
+        bool shouldAdvanceToNext(float64 nowTime) const noexcept {
+            return (
+                currentIndex < points.size() - 1
+                && points[currentIndex + 1].time <= nowTime
+            );
+        }
+
+        void rewindTo(float64 nowTime) noexcept {
+            while (!shouldAdvanceToNext(nowTime) && currentIndex > 0) {
+                currentIndex--;
+            }
+        }
+    };
+
+    struct RizCanvasMove {
+        int64 index;
+        RizKeyPointGroup xPositions;
+        RizKeyPointGroup speeds;
+    };
+
+    struct RizCameraMove {
+        RizKeyPointGroup xPositions;
+        RizKeyPointGroup scales;
     };
 
     struct RizLinePoint {
@@ -6141,70 +6494,522 @@ void main() {
         Color color;
         RizEase ease;
         uint64 canvasIndex;
+
+        float64 floorPosition;
+
+        float64 getProgress(float64 nowTime, const RizLinePoint* nextPoint) const noexcept {
+            if (!nextPoint) return 0.0;
+            if (time == nextPoint->time) return 1.0;
+            return std::clamp((nowTime - time) / (nextPoint->time - time), 0.0, 1.0);
+        }
+
+        float64 getProgressEased(float64 nowTime, const RizLinePoint* nextPoint) const noexcept {
+            return ease.applyValue(getProgress(nowTime, nextPoint));
+        }
+
+        // .x 是本身的, .y 是 canvas 的
+        Vec2 getXPosition(float64 nowTime, std::vector<RizCanvasMove>& canvasMoves, const RizLinePoint* nextPoint) const noexcept {
+            auto cvX = canvasMoves[canvasIndex].xPositions.get(nowTime);
+            if (!nextPoint) return { xPosition, cvX };
+
+            auto p = getProgressEased(nowTime, nextPoint);
+            auto ncvX = canvasMoves[nextPoint->canvasIndex].xPositions.get(nowTime);
+
+            return {
+                xPosition + (nextPoint->xPosition - xPosition) * p,
+                cvX + (ncvX - cvX) * p
+            };
+        }
+    };
+
+    struct RizLinePointGroup {
+        std::vector<RizLinePoint> points;
+
+        auto& create() noexcept { return points.emplace_back(); }
+
+        void init() {
+            lastUpdatedTime = -std::numeric_limits<float64>::infinity();
+            std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) { return a.time < b.time; });
+        }
+
+        Vec2 getXPosition(float64 nowTime, std::vector<RizCanvasMove>& canvasMoves) noexcept {
+            update(nowTime, canvasMoves);
+            return currentXPosition;
+        }
+
+        uint64 getPointIndex(float64 nowTime, std::vector<RizCanvasMove>& canvasMoves) noexcept {
+            update(nowTime, canvasMoves);
+            return currentIndex;
+        }
+
+        bool getRingVisible(float64 nowTime) const noexcept {
+            return !points.empty() && points.front().time <= nowTime && nowTime <= points.back().time;
+        }
+
+        private:
+        uint64 currentIndex;
+        Vec2 currentXPosition;
+        float64 lastUpdatedTime;
+
+        void update(float64 nowTime, std::vector<RizCanvasMove>& canvasMoves) noexcept {
+            if (points.empty()) return;
+
+            if (lastUpdatedTime == nowTime) return;
+            if (lastUpdatedTime > nowTime) rewindTo(nowTime);
+
+            while (shouldAdvanceToNext(nowTime)) currentIndex++;
+
+            auto& p = points[currentIndex];
+            auto* np = currentIndex < points.size() - 1 ? &points[currentIndex + 1] : nullptr;
+
+            currentXPosition = p.getXPosition(nowTime, canvasMoves, np);
+
+            lastUpdatedTime = nowTime;
+        }
+
+        bool shouldAdvanceToNext(float64 nowTime) const noexcept {
+            return (
+                currentIndex < points.size() - 1
+                && points[currentIndex + 1].time <= nowTime
+            );
+        }
+
+        void rewindTo(float64 nowTime) noexcept {
+            while (!shouldAdvanceToNext(nowTime) && currentIndex > 0) {
+                currentIndex--;
+            }
+        }
     };
 
     struct RizNote {
+        struct State {
+            float64 lastUpdateTime;
+            bool playedHitsound;
+
+            void timeUpdated(const RizNote& note, float64 t) noexcept {
+                if (lastUpdateTime > t) {
+                    playedHitsound = note.timeZone.x < t;
+                }
+
+                lastUpdateTime = t;
+            }
+
+            bool onPlayHitsound() noexcept {
+                if (!playedHitsound) {
+                    playedHitsound = true;
+                    return true;
+                }
+
+                return false;
+            }
+        };
+
         EnumRizNoteType type;
         Vec2 timeZone;
         uint64 tailCanvasIndex;
-    };
 
-    struct RizColorPoint {
-        float64 time;
-        Color start, end;
-    };
+        uint64 linePointIndex;
+        Vec2 floorPosition;
 
-    struct RizKeyPoint {
-        float64 time, value;
-        RizEase ease;
-    };
-
-    struct RizCanvasMove {
-        uint64 index;
-        std::vector<RizKeyPoint> xPositions;
-        std::vector<RizKeyPoint> speeds;
-    };
-
-    struct RizCameraMove {
-        std::vector<RizKeyPoint> scales;
-        std::vector<RizKeyPoint> xPositions;
+        State state;
     };
 
     struct RizLine {
-        std::vector<RizLinePoint> linePoints;
+        RizLinePointGroup points;
         std::vector<RizNote> notes;
-        std::vector<RizColorPoint> ringColors;
-        std::vector<RizColorPoint> lineColors;
+        RizColorPointGroup ringColors;
+        RizColorPointGroup lineColors;
     };
 
     struct RizChart {
         struct UserOptions {
-            float64 lineRingY = 0.68;
+            float64 lineRingY = 0.7407;
+            float64 lineRingSize = 0.032;
+
+            float64 holdDisappearTime = 0.25;
         };
 
-        float64 offset;
         std::vector<RizTheme> themes;
         std::vector<RizChallengeTime> challengeTimes;
-        std::vector<RizBpmEvent> bpmEvents;
         std::vector<RizCanvasMove> canvasMoves;
-        std::vector<RizLine> lines;
         RizCameraMove cameraMove;
+        std::vector<RizLine> lines;
 
         UserOptions options;
 
         void init() {
+            for (auto& move : canvasMoves) {
+                move.speeds.isSpeed = true;
+                move.xPositions.init();
+                move.speeds.init();
+            }
 
+            cameraMove.xPositions.init();
+            cameraMove.scales.init();
+
+            for (auto& line : lines) {
+                for (auto& p : line.points.points) {
+                    p.floorPosition = getPointFloorPosition(p, p.time);
+                }
+
+                line.points.init();
+
+                std::stable_sort(line.notes.begin(), line.notes.end(), [](const auto& a, const auto& b) { return a.timeZone.x < b.timeZone.x; });
+
+                for (auto& note : line.notes) {
+                    note.linePointIndex = line.points.getPointIndex(note.timeZone.x, canvasMoves);
+                    note.floorPosition = getNoteFloorPosition(note, line, note.timeZone);
+                }
+
+                line.ringColors.init();
+                line.lineColors.init();
+            }
+        }
+
+        float64 getPointFloorPosition(const RizLinePoint& point, float64 time) noexcept {
+            return canvasMoves[point.canvasIndex].speeds.get(time);
+        }
+
+        float64 getPointPositionX(const RizLinePoint& point, float64 time) noexcept {
+            auto cvx = canvasMoves[point.canvasIndex].xPositions.get(time);
+            return point.xPosition + cvx;
+        }
+
+        float64 getNoteHeadFloorPosition(const RizNote& note, RizLine& line, float64 time) noexcept {
+            if (line.points.points.empty()) return 0.0;
+
+            auto& pt = getNoteLinePoint(note, line);
+            auto fp = getPointFloorPosition(pt, time);
+            return fp; // 这里不用插值, 不知道为什么。
+
+            auto* npt = getNoteLinePointNext(note, line);
+            if (!npt) return fp;
+
+            auto nfp = getPointFloorPosition(*npt, time);
+            return fp + (nfp - fp) * pt.getProgress(time, npt);
+        }
+
+        float64 getNoteTailFloorPosition(const RizNote& note, float64 time) noexcept {
+            return canvasMoves[note.tailCanvasIndex].speeds.get(time);
+        }
+
+        Vec2 getNoteFloorPosition(const RizNote& note, RizLine& line, const Vec2& time) noexcept {
+            auto headFloorPosition = getNoteHeadFloorPosition(note, line, time.x);
+            auto tailFloorPosition = note.type == EnumRizNoteType::Hold ? getNoteTailFloorPosition(note, time.y) : headFloorPosition;
+            return { headFloorPosition, tailFloorPosition };
+        }
+
+        RizLinePoint& getNoteLinePoint(const RizNote& note, RizLine& line) const noexcept {
+            return line.points.points[note.linePointIndex];
+        }
+
+        RizLinePoint* getNoteLinePointNext(const RizNote& note, RizLine& line) const noexcept {
+            if (note.linePointIndex + 1 >= line.points.points.size()) return nullptr;
+            return &line.points.points[note.linePointIndex + 1];
+        }
+
+        float64 getNoteXPosition(const RizNote& note, RizLine& line, float64 time) noexcept {
+            if (line.points.points.empty()) return 0.0;
+
+            auto& pt = getNoteLinePoint(note, line);
+            auto x = getPointPositionX(pt, time);
+
+            auto* npt = getNoteLinePointNext(note, line);
+            if (!npt) return x;
+
+            auto nx = getPointPositionX(*npt, time);
+            return x + (nx - x) * pt.getProgressEased(note.timeZone.x, npt);
         }
     };
 
     RizChart loadRizChartFromOfficialJson(const Data& data) {
-        auto failed = [](const std::string& msg) {
+        auto err = [](const std::string& msg) {
             throw std::runtime_error(std::format("official: {}", msg));
+        };
+
+        auto loadColor = [&](const JsonNode& node, Color* dst) {
+            if (!node.isObject()) err("color is not object");
+
+            if (!node.hasKey("r")) err("missing r");
+            if (!node["r"].isNumber()) err("r is not number");
+            dst->r = node["r"].getNumber();
+
+            if (!node.hasKey("g")) err("missing g");
+            if (!node["g"].isNumber()) err("g is not number");
+            dst->g = node["g"].getNumber();
+
+            if (!node.hasKey("b")) err("missing b");
+            if (!node["b"].isNumber()) err("b is not number");
+            dst->b = node["b"].getNumber();
+
+            if (!node.hasKey("a")) err("missing a");
+            if (!node["a"].isNumber()) err("a is not number");
+            dst->a = node["a"].getNumber();
+
+            *dst /= 255.0;
         };
 
         auto jsonRoot = JsonNode::Parse(data);
 
         RizChart chart {};
+
+        if (!jsonRoot.isObject()) err("root is not object");
+
+        if (!jsonRoot.hasKey("themes")) err("missing themes");
+        if (!jsonRoot["themes"].isArray()) err("themes is not array");
+        auto& themesNode = jsonRoot["themes"];
+
+        for (auto& themeNode : themesNode.getArray()) {
+            if (!themeNode.isObject()) err("themes item is not an object");
+
+            if (!themeNode.hasKey("colorsList")) err("missing colorsList");
+            if (!themeNode["colorsList"].isArray()) err("colorsList is not array");
+            auto& colorsListNode = themeNode["colorsList"];
+            auto& colorsArr = colorsListNode.getArray();
+
+            if (colorsArr.size() < 3) err("colorsList is too short");
+
+            auto& theme = chart.themes.emplace_back();
+            loadColor(colorsArr[0], &theme.bgColor);
+            loadColor(colorsArr[1], &theme.noteColor);
+            loadColor(colorsArr[2], &theme.uiColor);
+        }
+
+        struct BpmEvent {
+            float64 time, bpm;
+        };
+
+        std::vector<BpmEvent> bpms;
+
+        if (!jsonRoot.hasKey("bPM")) err("missing bPM");
+        if (!jsonRoot["bPM"].isNumber()) err("bPM is not a number");
+        auto baseBpm = jsonRoot["bPM"].getNumber();
+
+        if (!jsonRoot.hasKey("bpmShifts")) err("missing bpmShifts");
+        if (!jsonRoot["bpmShifts"].isArray()) err("bpmShifts is not array");
+        auto& bpmShiftsNode = jsonRoot["bpmShifts"];
+
+        for (auto& bpmShiftNode : bpmShiftsNode.getArray()) {
+            if (!bpmShiftNode.isObject()) err("bpmShifts item is not an object");
+
+            auto& e = bpms.emplace_back();
+            
+            if (!bpmShiftNode.hasKey("time")) err("missing time");
+            if (!bpmShiftNode["time"].isNumber()) err("time is not a number");
+            e.time = bpmShiftNode["time"].getNumber();
+
+            if (!bpmShiftNode.hasKey("value")) err("missing value");
+            if (!bpmShiftNode["value"].isNumber()) err("value is not a number");
+            e.bpm = baseBpm * bpmShiftNode["value"].getNumber();
+        }
+
+        if (!bpms.empty() && bpms.front().time > 0.0) {
+            bpms.insert(bpms.begin(), { .time = 0.0, .bpm = baseBpm });
+        }
+
+        auto tick2sec = [&](float64 tick) {
+            if (bpms.empty()) return tick * (60 / baseBpm);
+
+            float64 sec = 0.0;
+
+            for (uint64 i = 0; i < bpms.size(); i++) {
+                auto& e = bpms[i];
+
+                if (i != bpms.size() - 1) {
+                    float64 dur = bpms[i + 1].time - e.time;
+
+                    if (tick >= dur) {
+                        sec += dur * (60.0 / e.bpm);
+                        tick -= dur;
+                    } else {
+                        sec += tick * (60.0 / e.bpm);
+                        break;
+                    }
+                } else {
+                    sec += tick * (60.0 / e.bpm);
+                }
+            }
+
+            return sec;
+        };
+
+        auto loadKeyPoints = [&](const JsonNode& node, RizKeyPointGroup* dst) {
+            if (!node.isArray()) err("keyPoints is not array");
+
+            for (auto& keyPointNode : node.getArray()) {
+                if (!keyPointNode.isObject()) err("keyPoints item is not an object");
+
+                auto& keyPoint = dst->create();
+
+                if (!keyPointNode.hasKey("time")) err("missing time");
+                if (!keyPointNode["time"].isNumber()) err("time is not number");
+                keyPoint.time = tick2sec(keyPointNode["time"].getNumber());
+
+                if (!keyPointNode.hasKey("value")) err("missing value");
+                if (!keyPointNode["value"].isNumber()) err("value is not number");
+                keyPoint.value = keyPointNode["value"].getNumber();
+
+                if (!keyPointNode.hasKey("easeType")) err("missing easeType");
+                if (!keyPointNode["easeType"].isNumber()) err("easeType is not number");
+                keyPoint.ease.loadFromType(keyPointNode["easeType"].getNumber());
+            }
+        };
+
+        auto loadColorPoints = [&](const JsonNode& node, RizColorPointGroup* dst) {
+            if (!node.isArray()) err("colorPoints is not array");
+
+            for (auto& colorPointNode : node.getArray()) {
+                if (!colorPointNode.isObject()) err("colorPoints item is not an object");
+
+                auto& colorPoint = dst->create();
+
+                if (!colorPointNode.hasKey("time")) err("missing time");
+                if (!colorPointNode["time"].isNumber()) err("time is not number");
+                colorPoint.time = tick2sec(colorPointNode["time"].getNumber());
+
+                if (!colorPointNode.hasKey("startColor")) err("missing startColor");
+                loadColor(colorPointNode["startColor"], &colorPoint.start);
+
+                if (!colorPointNode.hasKey("endColor")) err("missing endColor");
+                loadColor(colorPointNode["endColor"], &colorPoint.end);
+            }
+        };
+
+        if (!jsonRoot.hasKey("challengeTimes")) err("missing challengeTimes");
+        if (!jsonRoot["challengeTimes"].isArray()) err("challengeTimes is not array");
+        auto& chTimesNode = jsonRoot["challengeTimes"];
+
+        for (auto& chTimeNode : chTimesNode.getArray()) {
+            if (!chTimeNode.isObject()) err("challengeTimes item is not an object");
+
+            auto& chTime = chart.challengeTimes.emplace_back();
+
+            if (!chTimeNode.hasKey("checkPoint")) err("missing checkPoint");
+            if (!chTimeNode["checkPoint"].isNumber()) err("checkPoint is not a number");
+            chTime.checkPoint = chTimeNode["checkPoint"].getNumber();
+
+            if (!chTimeNode.hasKey("start")) err("missing start");
+            if (!chTimeNode["start"].isNumber()) err("start is not a number");
+            chTime.timeZone.x = tick2sec(chTimeNode["start"].getNumber());
+
+            if (!chTimeNode.hasKey("end")) err("missing end");
+            if (!chTimeNode["end"].isNumber()) err("end is not a number");
+            chTime.timeZone.y = tick2sec(chTimeNode["end"].getNumber());
+
+            if (!chTimeNode.hasKey("transTime")) err("missing transTime");
+            if (!chTimeNode["transTime"].isNumber()) err("transTime is not a number");
+            chTime.transTime = chTimeNode["transTime"].getNumber();
+        }
+
+        if (!jsonRoot.hasKey("canvasMoves")) err("missing canvasMoves");
+        if (!jsonRoot["canvasMoves"].isArray()) err("canvasMoves is not array");
+        auto& canvasMovesNode = jsonRoot["canvasMoves"];
+
+        std::unordered_map<int64, uint64> canvasIndexMap;
+
+        for (auto& canvasMoveNode : canvasMovesNode.getArray()) {
+            if (!canvasMoveNode.isObject()) err("canvasMoves item is not an object");
+
+            auto& cvMove = chart.canvasMoves.emplace_back();
+
+            if (!canvasMoveNode.hasKey("index")) err("missing index");
+            if (!canvasMoveNode["index"].isNumber()) err("index is not a number");
+            canvasIndexMap[canvasMoveNode["index"].getNumber()] = chart.canvasMoves.size() - 1;
+
+            if (!canvasMoveNode.hasKey("xPositionKeyPoints")) err("missing xPositionKeyPoints");
+            loadKeyPoints(canvasMoveNode["xPositionKeyPoints"], &cvMove.xPositions);
+
+            if (!canvasMoveNode.hasKey("speedKeyPoints")) err("missing speedKeyPoints");
+            loadKeyPoints(canvasMoveNode["speedKeyPoints"], &cvMove.speeds);
+        }
+
+        if (!jsonRoot.hasKey("cameraMove")) err("missing cameraMove");
+        if (!jsonRoot["cameraMove"].isObject()) err("cameraMove is not object");
+        auto& cameraMoveNode = jsonRoot["cameraMove"];
+
+        if (!cameraMoveNode.hasKey("xPositionKeyPoints")) err("missing xPositionKeyPoints");
+        loadKeyPoints(cameraMoveNode["xPositionKeyPoints"], &chart.cameraMove.xPositions);
+
+        if (!cameraMoveNode.hasKey("scaleKeyPoints")) err("missing scaleKeyPoints");
+        loadKeyPoints(cameraMoveNode["scaleKeyPoints"], &chart.cameraMove.scales);
+
+        if (!jsonRoot.hasKey("lines")) err("missing lines");
+        if (!jsonRoot["lines"].isArray()) err("lines is not array");
+        auto& linesNode = jsonRoot["lines"];
+
+        for (auto& lineNode : linesNode.getArray()) {
+            if (!lineNode.isObject()) err("lines item is not an object");
+
+            auto& line = chart.lines.emplace_back();
+
+            if (!lineNode.hasKey("linePoints")) err("missing linePoints");
+            if (!lineNode["linePoints"].isArray()) err("linePoints is not array");
+            auto& linePointsNode = lineNode["linePoints"];
+
+            for (auto& linePointNode : linePointsNode.getArray()) {
+                if (!linePointNode.isObject()) err("linePoints item is not an object");
+
+                auto& linePoint = line.points.create();
+
+                if (!linePointNode.hasKey("time")) err("missing time");
+                if (!linePointNode["time"].isNumber()) err("time is not a number");
+                linePoint.time = tick2sec(linePointNode["time"].getNumber());
+
+                if (!linePointNode.hasKey("xPosition")) err("missing xPosition");
+                if (!linePointNode["xPosition"].isNumber()) err("xPosition is not a number");
+                linePoint.xPosition = linePointNode["xPosition"].getNumber();
+
+                if (!linePointNode.hasKey("color")) err("missing color");
+                loadColor(linePointNode["color"], &linePoint.color);
+
+                if (!linePointNode.hasKey("easeType")) err("missing easeType");
+                if (!linePointNode["easeType"].isNumber()) err("easeType is not a number");
+                linePoint.ease.loadFromType(linePointNode["easeType"].getNumber());
+
+                if (!linePointNode.hasKey("canvasIndex")) err("missing canvasIndex");
+                if (!linePointNode["canvasIndex"].isNumber()) err("canvasIndex is not a number");
+                linePoint.canvasIndex = canvasIndexMap[linePointNode["canvasIndex"].getNumber()];
+            }
+
+            if (!lineNode.hasKey("notes")) err("missing notes");
+            if (!lineNode["notes"].isArray()) err("notes is not array");
+            auto& notesNode = lineNode["notes"];
+
+            for (auto& noteNode : notesNode.getArray()) {
+                if (!noteNode.isObject()) err("notes item is not an object");
+
+                auto& note = line.notes.emplace_back();
+
+                if (!noteNode.hasKey("type")) err("missing type");
+                if (!noteNode["type"].isNumber()) err("type is not a number");
+                note.type = RizNoteTypeHelper::FromInt(noteNode["type"].getNumber());
+
+                if (!noteNode.hasKey("time")) err("missing time");
+                if (!noteNode["time"].isNumber()) err("time is not a number");
+                note.timeZone = Vec2(tick2sec(noteNode["time"].getNumber()));
+
+                if (note.type == EnumRizNoteType::Hold) {
+                    if (!noteNode.hasKey("otherInformations")) err("missing otherInformations");
+                    if (!noteNode["otherInformations"].isArray()) err("otherInformations is not array");
+                    auto& otherInfosNode = noteNode["otherInformations"];
+                    auto& otherInfos = otherInfosNode.getArray();
+
+                    if (otherInfos.size() < 2) err("otherInformations is too short");
+
+                    if (!otherInfos[0].isNumber()) err("otherInformations[0] is not a number");
+                    note.timeZone.y = tick2sec(otherInfos[0].getNumber());
+
+                    if (!otherInfos[1].isNumber()) err("otherInformations[1] is not a number");
+                    note.tailCanvasIndex = canvasIndexMap[otherInfos[1].getNumber()];
+                }
+            }
+
+            if (!lineNode.hasKey("judgeRingColor")) err("missing judgeRingColor");
+            loadColorPoints(lineNode["judgeRingColor"], &line.ringColors);
+
+            if (!lineNode.hasKey("lineColor")) err("missing lineColor");
+            loadColorPoints(lineNode["lineColor"], &line.lineColors);
+        }
 
         return chart;
     }
@@ -6220,9 +7025,22 @@ void main() {
 
         std::string msg = "failures: \n";
         for (auto& m : msgs) msg += m + "\n";
+        throw std::runtime_error(msg);
         return {};
         
         #undef try_
+    }
+
+    uint64 getRizLineSegCount(float64 dist) {
+        uint64 n = 0;
+        if (dist < 8.0) n = 3.0 + (dist / 8.0) * 2.0;
+        else if (dist < 24.0) n = 5.0 + ((dist - 8.0) / 16.0) * 10.0;
+        else if (dist < 400.0) n = 15.0 + ((dist - 24.0) / 376.0) * 17.0;
+        else if (dist < 5000.0) n = 32.0 + ((dist - 400.0) / 4600.0) * 13.0;
+        else if (dist < 20000.0) n = 45.0 - ((dist - 5000.0) / 15000.0) * 10.0;
+        else if (dist < 100000.0) n = 35.0 - ((dist - 20000.0) / 80000.0) * 20.0;
+        else n = 15.0 - ((dist - 100000.0) / 900000.0) * 10.0;
+        return std::clamp<uint64>(n, 3, 50);
     }
 
     struct RizCalculateFrameConfig {
@@ -6232,11 +7050,90 @@ void main() {
     struct RizCalculatedFrame {
         UsingSharedCalculatedObjects;
 
+        struct CalculatedLineRing {
+            Vec2 position;
+            float64 radius, width;
+            Color color;
+        };
+
+        struct CalculatedNote {
+            struct Style {
+                struct Circle {
+                    float64 radius;
+                    Color color;
+                };
+
+                std::vector<Circle> circles;
+                float64 bodyFillWidth, bodyStrokeWidth;
+                Color bodyFillColor, bodyStrokeColor;
+                float64 bodyGradientPoint;
+                uint64 bodyIndex; // draw body before circles[i]
+            };
+
+            Vec2 position;
+            float64 tailDeltaY;
+            float64 scale;
+            Style* styleRef;
+        };
+
         using CalculatedObject = std::variant<
-            ListSharedCalculatedObjects
+            ListSharedCalculatedObjects,
+            CalculatedLineRing,
+            CalculatedNote
         >;
 
         std::vector<CalculatedObject> objects;
+        std::unordered_map<EnumRizNoteType, uint64> hitsounds;
+        
+        void culling(std::vector<CalculatedObject>& objects, const Rect& screenRect) noexcept {
+            if (SharedCalculatedObjects::sharedCulling(objects, screenRect)) return;
+
+            auto& obj = objects.back();
+            
+            if (std::holds_alternative<CalculatedNote>(obj)) {
+                auto& note = std::get<CalculatedNote>(obj);
+                // ...
+            }
+        }
+
+        void addObject(std::vector<CalculatedObject>& objects, const CalculatedObject& obj, const Rect& screenRect) noexcept {
+            objects.push_back(obj);
+            culling(objects, screenRect);
+        }
+
+        struct Cache {
+            struct CalculatedTheme {
+                RizTheme theme;
+                float64 transProgress;
+                Vec2 transCircleCenter;
+                std::vector<CalculatedNote::Style> noteStyles;
+            };
+
+            struct LinePoint {
+                Vec2 position;
+                Color color;
+                RizEase* easeRef;
+                bool connectToNext;
+            };
+
+            std::vector<CalculatedTheme> themes;
+            std::vector<CalculatedLineRing> lineRings;
+            std::vector<LinePoint> linePoints;
+            std::vector<CalculatedCapRoundedLineSet::Item> calculatedlines;
+            uint64 calculatedlinesSegCount;
+            std::vector<CalculatedNote> notes;
+
+            void clear() {
+                themes.clear();
+                lineRings.clear();
+                linePoints.clear();
+                calculatedlines.clear();
+                calculatedlinesSegCount = 0;
+                notes.clear();
+            }
+        };
+
+        Cache cache;
     };
 
     void calculateRizFrame(
@@ -6245,6 +7142,254 @@ void main() {
         RizCalculatedFrame& frame
     ) {
         frame.objects.clear();
+        frame.hitsounds.clear();
+        frame.cache.clear();
+
+        Rect screenArea = { 0.0, 0.0, config.screenSize.x, config.screenSize.y };
+
+        auto lineRingY = config.screenSize.y * chart.options.lineRingY;
+        auto lineRingSize = config.screenSize.sum() * chart.options.lineRingSize;
+        auto standardLineWidth = lineRingSize * 0.078125;
+        auto halfStandardLineWidth = standardLineWidth / 2.0;
+
+        auto cameraXPosition = chart.cameraMove.xPositions.get(time);
+        auto cameraScale = chart.cameraMove.scales.get(time);
+        auto cameraScaledRingSize = lineRingSize * cameraScale;
+
+        auto makeNoteStyles = [&](const RizTheme& theme) {
+            return std::vector<RizCalculatedFrame::CalculatedNote::Style> {
+                {
+                    .circles = {
+                        { .radius = cameraScaledRingSize * 0.436974, .color = Color::Black().applyAlpha(0.7) },
+                        { .radius = cameraScaledRingSize * 0.390756, .color = Color::Black() },
+                        { .radius = cameraScaledRingSize * 0.243697, .color = theme.noteColor }
+                    }
+                },
+                {
+                    .circles = {
+                        { .radius = cameraScaledRingSize * 0.292016, .color = Color::Black() },
+                        { .radius = cameraScaledRingSize * 0.201680, .color = Color::White() }
+                    }
+                },
+                {
+                    .circles = {
+                        { .radius = cameraScaledRingSize * 0.436974, .color = Color::Black().applyAlpha(0.7) },
+                        { .radius = cameraScaledRingSize * 0.390756, .color = Color::Black() },
+                        { .radius = cameraScaledRingSize * 0.310924, .color = Color::Black() },
+                        { .radius = cameraScaledRingSize * 0.222689, .color = Color::White() }
+                    },
+                    .bodyFillWidth = cameraScaledRingSize * 0.327731,
+                    .bodyStrokeWidth = cameraScaledRingSize * 0.1008403,
+                    .bodyFillColor = theme.noteColor,
+                    .bodyStrokeColor = Color::Black(),
+                    .bodyGradientPoint = 0.6894977,
+                    .bodyIndex = 2
+                }
+            };
+        };
+
+        frame.cache.themes.push_back({
+            .theme = chart.themes[0],
+            .transProgress = 1.0,
+            .transCircleCenter = { config.screenSize.x / 2.0, config.screenSize.y }
+        });
+
+        for (auto& chTime : chart.challengeTimes) {
+            if (!chTime.timeZone.include(time)) continue;
+
+            float64 k = 3.0;
+            auto pIn = 1.0 - std::pow(std::clamp(1.0 - (time - chTime.timeZone.x) / chTime.transTime, 0.0, 1.0), k);
+            auto pOut = std::pow(std::clamp((chTime.timeZone.y - time) / chTime.transTime, 0.0, 1.0), k);
+
+            auto& theme = chart.themes[&chTime - &chart.challengeTimes.front() + 1];
+            auto transProgress = std::min(pIn, pOut);
+
+            frame.cache.themes.push_back({
+                .theme = theme,
+                .transProgress = transProgress,
+                .transCircleCenter = { config.screenSize.x / 2.0, transProgress == pIn ? config.screenSize.y : 0.0 }
+            });
+        }
+
+        auto xApplyCamera = [&](float64 x) {
+            return (x - cameraXPosition) * cameraScale;
+        };
+
+        for (auto& line : chart.lines) {
+            if (line.points.getRingVisible(time)) {
+                auto lineRingX = line.points.getXPosition(time, chart.canvasMoves).sum();
+                auto lineRingColor = line.ringColors.get(time);
+
+                lineRingX = xApplyCamera(lineRingX);
+                lineRingX = (lineRingX + 0.5) * config.screenSize.x;
+
+                if (lineRingColor.a > 0.0) {
+                    auto& ring = frame.cache.lineRings.emplace_back();
+                    ring.position = { lineRingX, lineRingY };
+                    ring.radius = lineRingSize * cameraScale / 2.0;
+                    ring.width = standardLineWidth * cameraScale;
+                    ring.color = lineRingColor;
+
+                    if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                        .position = ring.position,
+                        .size = ring.radius * 2.0
+                    }).data(), screenArea)) frame.cache.lineRings.pop_back();
+                }
+            }
+
+            auto lineColor = line.lineColors.get(time);
+
+            for (auto& p : line.points.points) {
+                auto pointX = xApplyCamera(chart.getPointPositionX(p, time)) + 0.5;
+                auto pointFloorPosition = (p.floorPosition - chart.getPointFloorPosition(p, time)) * cameraScale;
+
+                Vec2 position = {
+                    pointX * config.screenSize.x,
+                    lineRingY - pointFloorPosition * config.screenSize.y
+                };
+
+                auto color = (p.color + (lineColor - p.color) * lineColor.a).setAlpha(p.color.a);
+
+                frame.cache.linePoints.push_back({
+                    .position = position,
+                    .color = color,
+                    .easeRef = &p.ease,
+                    .connectToNext = &p != &line.points.points.back()
+                });
+            }
+
+            for (auto& note : line.notes) {
+                note.state.timeUpdated(note, time);
+
+                if (note.timeZone.x <= time && note.state.onPlayHitsound()) {
+                    frame.hitsounds[note.type]++;
+                }
+
+                if (note.type != EnumRizNoteType::Hold && note.timeZone.y <= time) continue;
+                else if (note.type == EnumRizNoteType::Hold && note.timeZone.y + chart.options.holdDisappearTime <= time) continue;
+
+                auto noteX = note.timeZone.x > time ? chart.getNoteXPosition(note, line, time) : line.points.getXPosition(time, chart.canvasMoves).sum();
+                auto noteFloorPosition = (note.floorPosition - chart.getNoteFloorPosition(note, line, Vec2(time))) * cameraScale;
+                float64 noteScale = 1.0;
+
+                if (note.timeZone.x <= time) noteFloorPosition.x = 0.0;
+
+                if (note.timeZone.y <= time) {
+                    noteFloorPosition.y = 0.0;
+                    noteScale *= 1.0 - std::pow((time - note.timeZone.y) / chart.options.holdDisappearTime, 3.0);
+                }
+
+                Vec2 headPosition = {
+                    (xApplyCamera(noteX) + 0.5) * config.screenSize.x,
+                    lineRingY - noteFloorPosition.x * config.screenSize.y
+                };
+
+                auto tailDeltaY = (noteFloorPosition.x - noteFloorPosition.y) * config.screenSize.y;
+
+                auto minX = headPosition.x - cameraScaledRingSize / 2.0;
+                auto maxX = headPosition.x + cameraScaledRingSize / 2.0;
+                auto minY = headPosition.y + std::min(0.0, tailDeltaY);
+                auto maxY = headPosition.y + std::max(0.0, tailDeltaY);
+
+                if (minX >= config.screenSize.x || maxX <= 0.0 || minY >= config.screenSize.y || maxY <= 0.0) continue;
+
+                frame.cache.notes.push_back({
+                    .position = headPosition,
+                    .tailDeltaY = tailDeltaY,
+                    .scale = noteScale,
+                    .styleRef = (RizCalculatedFrame::CalculatedNote::Style*)(uint64)note.type
+                });
+            }
+        }
+
+        if (!frame.cache.linePoints.empty()) {
+            for (uint64 i = 0; i < frame.cache.linePoints.size() - 1; i++) {
+                auto& p = frame.cache.linePoints[i];
+                auto& np = frame.cache.linePoints[i + 1];
+                if (!p.connectToNext) continue;
+
+                if (p.color.a == 0.0 && np.color.a == 0.0) continue;
+
+                auto minX = std::min(p.position.x, np.position.x) - halfStandardLineWidth;
+                auto maxX = std::max(p.position.x, np.position.x) + halfStandardLineWidth;
+                auto minY = std::min(p.position.y, np.position.y) - halfStandardLineWidth;
+                auto maxY = std::max(p.position.y, np.position.y) + halfStandardLineWidth;
+
+                if (minX >= config.screenSize.x || maxX <= 0.0 || minY >= config.screenSize.y || maxY <= 0.0) continue;
+
+                auto dist = (p.position - np.position).length();
+                auto isLinear = p.easeRef->isLinear || p.position.x == np.position.x || p.position.y == np.position.y;
+                uint64 segCount = isLinear ? 1 : getRizLineSegCount(dist);
+
+                frame.cache.calculatedlinesSegCount += segCount;
+
+                frame.cache.calculatedlines.push_back({
+                    .position = p.position,
+                    .color = p.color,
+                    .connectToNext = true
+                });
+
+                if (segCount > 1) {
+                    auto dp = np.position - p.position;
+                    auto dc = np.color - p.color;
+
+                    for (uint64 j = 1; j < segCount; j++) {
+                        auto pg = j / (float64)segCount;
+
+                        Vec2 position = p.position + dp * Vec2 { p.easeRef->applyValue(pg), pg };
+                        auto color = p.color + dc * pg;
+
+                        frame.cache.calculatedlines.push_back({
+                            .position = position,
+                            .color = color,
+                            .connectToNext = true
+                        });
+                    }
+                }
+
+                frame.cache.calculatedlines.push_back({
+                    .position = np.position,
+                    .color = np.color,
+                    .connectToNext = false
+                });
+            }
+        }
+
+        std::cout << frame.cache.calculatedlines.size() << '\n';
+
+        for (auto& theme : frame.cache.themes) {
+            theme.noteStyles = makeNoteStyles(theme.theme);
+
+            // frame.objects.push_back(RizCalculatedFrame::CalculatedCircleClipStart {
+            //     .position = theme.transCircleCenter,
+            //     .radius = (Vec2 { config.screenSize.x / 2.0, config.screenSize.y }.length() + 1.0) * theme.transProgress
+            // });
+
+            frame.objects.push_back(RizCalculatedFrame::CalculatedPoly::Make(
+                Vec2(0.0), config.screenSize,
+                theme.theme.bgColor
+            ));
+            
+            frame.objects.push_back(RizCalculatedFrame::CalculatedCapRoundedLineSet {
+                .items = frame.cache.calculatedlines.data(),
+                .count = frame.cache.calculatedlines.size(),
+                .width = standardLineWidth,
+                .segCount = frame.cache.calculatedlinesSegCount
+            });
+
+            for (auto& ring : frame.cache.lineRings) {
+                frame.objects.push_back(ring);
+            }
+
+            for (auto& note : frame.cache.notes) {
+                frame.objects.push_back(note);
+
+                auto& copied = std::get<RizCalculatedFrame::CalculatedNote>(frame.objects.back());
+                copied.styleRef = &theme.noteStyles[(uint64)copied.styleRef];
+            }
+
+            // frame.objects.push_back(RizCalculatedFrame::CalculatedClipEnd {});
+        }
     }
 
     struct RizTakeOverer {
@@ -6259,6 +7404,9 @@ void main() {
             return gsp<RizTakeOverer>(tor);
         }
 
+        using HitsoundDataLoader = std::function<Data(EnumRizNoteType)>;
+        HitsoundDataLoader hitsoundDataLoader;
+
         gsp<GL::GL33Context> glCtx;
         TakeOvererComponents::SharedComp sharedComp;
         GL::TextManager textManager;
@@ -6269,7 +7417,8 @@ void main() {
         RizCalculatedFrame calculatedFrame;
 
         void init() {
-            gassert::assert(!!glCtx, "MilTakeOverer: glCtx is not set");
+            gassert::assert(!!hitsoundDataLoader, "RizTakeOverer: hitsoundDataLoader is not set");
+            gassert::assert(!!glCtx, "RizTakeOverer: glCtx is not set");
 
             textManager.glCtx = glCtx;
 
@@ -6362,6 +7511,134 @@ void main() {
 
             auto cvs = GL33Canvas::Make(glCtx.get());
 
+            for (auto& obj : calculatedFrame.objects) {
+                if (TakeOvererComponents::renderSharedObject(obj, glCtx, cvs, textManager)) {
+                    continue;
+                }
+
+                if (std::holds_alternative<RizCalculatedFrame::CalculatedLineRing>(obj)) {
+                    auto& ring = std::get<RizCalculatedFrame::CalculatedLineRing>(obj);
+
+                    auto mesh = glCtx->requestMesh(6);
+                    mesh.program = glCtx->preloadedPrograms.circle.get();
+                    mesh.color = ring.color;
+                    mesh.addRectCentered(ring.position, ring.radius + ring.width / 2, { 0.5, 0.5 }, { 0.5, 0.5 });
+                    
+                    {
+                        auto guard = mesh.program->use();
+                        mesh.program->getUniformLocation("uRingRadius").setf((ring.radius - ring.width / 2) / (ring.radius + ring.width / 2) / 2.0);
+                    }
+
+                    cvs.drawMesh(mesh);
+                } else if (std::holds_alternative<RizCalculatedFrame::CalculatedNote>(obj)) {
+                    auto& note = std::get<RizCalculatedFrame::CalculatedNote>(obj);
+                    auto& style = *note.styleRef;
+
+                    cvs.save();
+                    cvs.translate(note.position);
+                    cvs.scale(note.scale);
+
+                    {
+                        auto mesh = glCtx->requestMesh(6 * style.bodyIndex);
+                        mesh.program = glCtx->preloadedPrograms.circle.get();
+                        mesh.color = GLvec4::White();
+
+                        {
+                            auto guard = mesh.program->use();
+                            mesh.program->getUniformLocation("uRingRadius").setf(0.0);
+                        }
+
+                        for (uint64 i = 0; i < style.bodyIndex; i++) {
+                            auto& circle = style.circles[i];
+                            mesh.addRectCentered({}, circle.radius, { 0.5, 0.5 }, { 0.5, 0.5 }, circle.color);
+                        }
+
+                        cvs.drawMesh(mesh);
+                    }
+
+                    {
+                        auto mesh = glCtx->requestMesh(6 * 6);
+                        mesh.color = GLvec4::White();
+                        
+                        auto noGradientLength = note.tailDeltaY * style.bodyGradientPoint;
+                        auto gradientLength = note.tailDeltaY *  (1.0 - style.bodyGradientPoint);
+                        
+                        mesh.addRectCentered(
+                            Vec2 { 0.0, noGradientLength / 2.0 },
+                            Vec2 { style.bodyFillWidth, noGradientLength }.abs() / 2.0,
+                            { 0.5, 0.5 }, { 0.5, 0.5 },
+                            style.bodyFillColor
+                        );
+
+                        mesh.addGradientRectCentered(
+                            Vec2 { 0.0, noGradientLength + gradientLength / 2.0 },
+                            Vec2 { style.bodyFillWidth, gradientLength }.abs() / 2.0,
+                            { 0.5, 0.5 }, { 0.5, 0.5 },
+                            {
+                                style.bodyFillColor.applyAlpha(0.0), style.bodyFillColor.applyAlpha(0.0),
+                                style.bodyFillColor, style.bodyFillColor
+                            }
+                        );
+
+                        mesh.addRectCentered(
+                            Vec2 { style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0, noGradientLength / 2.0 },
+                            Vec2 { style.bodyStrokeWidth, noGradientLength }.abs() / 2.0,
+                            { 0.5, 0.5 }, { 0.5, 0.5 },
+                            style.bodyStrokeColor
+                        );
+
+                        mesh.addGradientRectCentered(
+                            Vec2 { style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0, noGradientLength + gradientLength / 2.0 },
+                            Vec2 { style.bodyStrokeWidth, gradientLength }.abs() / 2.0,
+                            { 0.5, 0.5 }, { 0.5, 0.5 },
+                            {
+                                style.bodyStrokeColor.applyAlpha(0.0), style.bodyStrokeColor.applyAlpha(0.0),
+                                style.bodyStrokeColor, style.bodyStrokeColor
+                            }
+                        );
+
+                        mesh.addRectCentered(
+                            Vec2 { (style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0) * -1, noGradientLength / 2.0 },
+                            Vec2 { style.bodyStrokeWidth, noGradientLength }.abs() / 2.0,
+                            { 0.5, 0.5 }, { 0.5, 0.5 },
+                            style.bodyStrokeColor
+                        );
+
+                        mesh.addGradientRectCentered(
+                            Vec2 { (style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0) * -1, noGradientLength + gradientLength / 2.0 },
+                            Vec2 { style.bodyStrokeWidth, gradientLength }.abs() / 2.0,
+                            { 0.5, 0.5 }, { 0.5, 0.5 },
+                            {
+                                style.bodyStrokeColor.applyAlpha(0.0), style.bodyStrokeColor.applyAlpha(0.0),
+                                style.bodyStrokeColor, style.bodyStrokeColor
+                            }
+                        );
+
+                        cvs.drawMesh(mesh);
+                    }
+
+                    {
+                        auto mesh = glCtx->requestMesh(6 * (style.circles.size() - style.bodyIndex));
+                        mesh.program = glCtx->preloadedPrograms.circle.get();
+                        mesh.color = GLvec4::White();
+
+                        {
+                            auto guard = mesh.program->use();
+                            mesh.program->getUniformLocation("uRingRadius").setf(0.0);
+                        }
+
+                        for (uint64 i = style.bodyIndex; i < style.circles.size(); i++) {
+                            auto& circle = style.circles[i];
+                            mesh.addRectCentered({}, circle.radius, { 0.5, 0.5 }, { 0.5, 0.5 }, circle.color);
+                        }
+
+                        cvs.drawMesh(mesh);
+                    }
+
+                    cvs.restore();
+                }
+            }
+
             if (renderConfig.base.flushGl) {
                 glCtx->gl.glFlush();
             }
@@ -6369,9 +7646,9 @@ void main() {
             renderResultInfoCache.base.glOperationsTook = glOpsTimer.elapsed();
 
             if (!renderConfig.base.disableHitsound) {
-                // for (auto& [type, count] : calculatedFrame.hitsounds) {
-                //     audioManager.playSfx(hitsoundAudios.at(type), count);
-                // }
+                for (auto& [type, count] : calculatedFrame.hitsounds) {
+                    audioManager.playSfx(hitsoundAudios.at(type), count);
+                }
             }
 
             return renderResultInfoCache;
@@ -6379,9 +7656,19 @@ void main() {
 
         private:
         RenderResultInfo renderResultInfoCache;
+        std::unordered_map<EnumRizNoteType, gsp<DecodedAudio>> hitsoundAudios;
 
         void loadResources() {
             using namespace GL;
+
+            for (const auto type : {
+                EnumRizNoteType::Tap,
+                EnumRizNoteType::Drag,
+                EnumRizNoteType::Hold
+            }) {
+                auto data = hitsoundDataLoader(type);
+                hitsoundAudios[type] = audioManager.decodeAndCheck(data);
+            }
         }
     };
 
@@ -6536,6 +7823,20 @@ void main() {
 
         static Data pauseButtonTextureDataLoader() {
             return Data::MakeFromGrain("geasy_phi/milthm/pause.png");
+        }
+    };
+
+    struct RizStaticResourceHelpers {
+        static Data hitsoundDataLoader(EnumRizNoteType type) {
+            std::unordered_map<EnumRizNoteType, std::string> nameMap = {
+                { EnumRizNoteType::Tap, "hit" },
+                { EnumRizNoteType::Drag, "drag" },
+                { EnumRizNoteType::Hold, "hit" }
+            };
+
+            auto name = nameMap.at(type);
+            auto key = std::string("/hitsounds/") + name + ".wav";
+            return Data::MakeFromGrain("geasy_phi/rizline" + key);
         }
     };
 }
