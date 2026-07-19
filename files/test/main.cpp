@@ -270,10 +270,29 @@ namespace test_main {
         return path.substr(0, pos);
     }
 
-    #if defined(APP_TYPE_OPEN_RPE_RECORDER)
+    struct WinHiddenGuard {
+        Win32Window* win;
+        WinHiddenGuard(Win32Window* win) : win(win) { win->setHidden(true); }
+        ~WinHiddenGuard() { win->setHidden(false); }
+    };
+
+    struct ArgsReader {
+        std::vector<std::string> args;
+
+        ArgsReader() {
+            int argc; char** argv;
+            grain::get_args(&argc, &argv);
+            args = std::vector<std::string>(argv, argv + argc);
+        }
+
+        bool has(const std::string& name) {
+            return std::find(args.begin(), args.end(), name) != args.end();
+        }
+    };
+
     struct Settings {
-        static constexpr const wchar_t* appKey = L"Open-RPE-Recorder";
-        static constexpr DWORD currentVersion = 0;
+        const wchar_t* appKey;
+        DWORD currentVersion;
 
         float64 musicVol = 1.0, sfxVol = 1.0;
         float64 noteScaling = 1.0;
@@ -281,8 +300,6 @@ namespace test_main {
         int32 recordWidth = 1920, recordHeight = 1080;
         float64 recordFPS = 60.0;
         bool recordSfxRandshake = false;
-
-        bool disableH264QSV = false;
 
         void fromRegistry() {
             RegAPI api(appKey);
@@ -333,134 +350,172 @@ namespace test_main {
             clampValues();
             saveToRegistry();
         }
-
-        bool getIsFirstRun() {
-            RegAPI api(appKey);
-
-            bool isFirstRun = true;
-            api.readBool(L"isFirstRunFlag", isFirstRun);
-            api.writeBool(L"isFirstRunFlag", false);
-            return isFirstRun;
-        }
     };
 
-    void entrypoint() {
-        int argc; char** argv;
-        grain::get_args(&argc, &argv);
-        
-        std::vector<std::string> args(argv, argv + argc);
-        auto hasArg = [&](const std::string& arg) {
-            return std::find(args.begin(), args.end(), arg) != args.end();
-        };
+    struct WinHelper {
+        Win32Window* win;
+        Settings* settings;
 
-        PhiWindow backendWin {};
-        backendWin.init();
-        backendWin.base.window->setHidden(true);
+        std::function<void()> gameLoader;
+        std::function<void()> onPreview;
+        std::function<void(const std::string&)> onRenderVideo;
 
-        std::string chartRoot = "", chartPath = "", imagePath = "", audioPath = "";
-        std::optional<ParsedRPEChartInfo> chartInfo;
+        bool isSyncingSettings = true;
 
-        int32 chartFileInput, chartRootInput, bgFileInput, audioFileInput;
+        int32 chartRootInput, chartFileInput, bgFileInput, audioFileInput;
         int32 musicVolInput, sfxVolInput;
         int32 noteScalingInput;
         int32 recordWidthInput, recordHeightInput, recordFPSInput;
         int32 recordSfxRandshakeCheckBox;
 
-        Settings settings {};
-        settings.fromRegistry();
+        std::string chartRoot = "", chartPath = "", imagePath = "", audioPath = "";
 
-        auto win = Win32Window::Make({
-            .title = L"Open RPE Recorder"
-        });
+        void addGithubLink() {
+            win->registerWidget(Widgets::Button({ .text = L"↗Github", .onClick = []() {
+                ShellExecute(nullptr, "open", "https://github.com/qaqFei/easy-phi", nullptr, nullptr, SW_SHOWNORMAL);
+            } }));
 
-        win->registerWidget(Widgets::Button({ .text = L"↗Github", .onClick = [&]() {
-            ShellExecute(nullptr, "open", "https://github.com/qaqFei/easy-phi", nullptr, nullptr, SW_SHOWNORMAL);
-        } }));
-        win->nextRow();
+            win->nextRow();
+        }
 
-        win->registerWidget(Widgets::Label({ .text = L"谱面选择" }));
-        win->nextRow();
+        void addChartChooseLabel() {
+            win->registerWidget(Widgets::Label({ .text = L"谱面选择" }));
+            win->nextRow();
+        }
 
-        win->registerWidget(Widgets::Button({ .text = L"从 info.txt ...", .onClick = [&]() {
-            auto infoPathW = selectOpenFile(win.get(),  L"Info File (info.txt)\0info.txt\0All Files (*.*)\0*.*\0", L"打开 info.txt");
-            auto infoPath = Win32Utils::wstringToString(infoPathW);
-            if (infoPath.empty()) return;
+        void addChartChooseInputs() {
+            win->registerWidget(Widgets::Label({ .text = L"谱面根目录: " }));
+            chartRootInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                chartRoot = Win32Utils::wstringToString(ws);
+            } }));
+            win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [this]() {
+                auto folderW = selectFolder(win, L"打开谱面根目录");
+                auto folder = Win32Utils::wstringToString(folderW);
+                if (folder.empty()) return;
+                WidgetStatics::TextInput::setText(win->refWidget(chartRootInput), Win32Utils::stringToWstring(folder));
+            } }));
+            win->nextRow();
 
-            auto chartRoot = getDirectory(infoPath) + "/";
-            WidgetStatics::TextInput::setText(win->refWidget(chartRootInput), Win32Utils::stringToWstring(chartRoot));
+            win->registerWidget(Widgets::Label({ .text = L"谱面文件: " }));
+            chartFileInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                chartPath = Win32Utils::wstringToString(ws);
+            } }));
+            win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [this]() {
+                auto pathW = selectOpenFile(win,  L"Chart File (*.json)\0*.json\0All Files (*.*)\0*.*\0", L"打开谱面文件");
+                auto path = Win32Utils::wstringToString(pathW);
+                if (path.empty()) return;
+                WidgetStatics::TextInput::setText(win->refWidget(chartFileInput), Win32Utils::stringToWstring(path));
+            } }));
+            win->nextRow();
 
-            Data infoData;
-            if (!Data::MakeFromFile(infoData, infoPath)) {
-                showErrorMsg(win.get(), L"无法打开 info.txt");
-                return;
-            }
+            win->registerWidget(Widgets::Label({ .text = L"曲绘文件: " }));
+            bgFileInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                imagePath = Win32Utils::wstringToString(ws);
+            } }));
+            win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [this]() {
+                auto pathW = selectOpenFile(win,  L"Image File (*.png, *.jpg, *.jpeg)\0*.png;*.jpg;*.jpeg\0All Files (*.*)\0*.*\0", L"打开曲绘文件");
+                auto path = Win32Utils::wstringToString(pathW);
+                if (path.empty()) return;
+                WidgetStatics::TextInput::setText(win->refWidget(bgFileInput), Win32Utils::stringToWstring(path));
+            } }));
+            win->nextRow();
 
-            auto infos = ParsedRPEChartInfo::parse(infoData);
-            if (infos.empty()) {
-                showErrorMsg(win.get(), L"info.txt 中找不到谱面信息");
-            }
+            win->registerWidget(Widgets::Label({ .text = L"音频文件: " }));
+            audioFileInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                audioPath = Win32Utils::wstringToString(ws);
+            } }));
+            win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [this]() {
+                auto pathW = selectOpenFile(win,  L"Audio File (*.mp3, *.wav, *.ogg, *.flac, *.m4a, *.aac)\0*.mp3;*.wav;*.ogg;*.flac;*.m4a;*.aac\0All Files (*.*)\0*.*\0", L"打开音频文件");
+                auto path = Win32Utils::wstringToString(pathW);
+                if (path.empty()) return;
+                WidgetStatics::TextInput::setText(win->refWidget(audioFileInput), Win32Utils::stringToWstring(path));
+            } }));
+            win->nextRow();
 
-            auto& info = infos[0];
-            WidgetStatics::TextInput::setText(win->refWidget(chartFileInput), Win32Utils::stringToWstring(chartRoot + info.chart));
-            WidgetStatics::TextInput::setText(win->refWidget(bgFileInput), Win32Utils::stringToWstring(chartRoot + info.picture));
-            WidgetStatics::TextInput::setText(win->refWidget(audioFileInput), Win32Utils::stringToWstring(chartRoot + info.song));
-            chartInfo = info;
-        } }));
-        win->nextRow();
+            win->nextRow();
+        }
 
-        win->registerWidget(Widgets::Label({ .text = L"谱面根目录: " }));
-        chartRootInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            chartRoot = Win32Utils::wstringToString(ws);
-        } }));
-        win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [&]() {
-            auto folderW = selectFolder(win.get(), L"打开谱面根目录");
-            auto folder = Win32Utils::wstringToString(folderW);
-            if (folder.empty()) return;
-            WidgetStatics::TextInput::setText(win->refWidget(chartRootInput), Win32Utils::stringToWstring(folder));
-        } }));
-        win->nextRow();
+        void addGeneralSettingsLabel() {
+            win->registerWidget(Widgets::Label({ .text = L"设置 (通用)" }));
+            win->nextRow();
+        }
 
-        win->registerWidget(Widgets::Label({ .text = L"谱面文件: " }));
-        chartFileInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            chartPath = Win32Utils::wstringToString(ws);
-        } }));
-        win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [&]() {
-            auto pathW = selectOpenFile(win.get(),  L"Chart File (*.json)\0*.json\0All Files (*.*)\0*.*\0", L"打开谱面文件");
-            auto path = Win32Utils::wstringToString(pathW);
-            if (path.empty()) return;
-            WidgetStatics::TextInput::setText(win->refWidget(chartFileInput), Win32Utils::stringToWstring(path));
-        } }));
-        win->nextRow();
+        void addGeneralSettingsInputs() {
+            win->registerWidget(Widgets::Label({ .text = L"音乐音量: " }));
+            musicVolInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                if (isSyncingSettings) return;
+                try { settings->musicVol = std::stold(ws); }
+                catch (...) { }
+                settingsChanged();
+            }, .onUnfocus = [this]() { syncSettingsToUI(); } }));
+            win->nextRow();
 
-        win->registerWidget(Widgets::Label({ .text = L"曲绘文件: " }));
-        bgFileInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            imagePath = Win32Utils::wstringToString(ws);
-        } }));
-        win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [&]() {
-            auto pathW = selectOpenFile(win.get(),  L"Image File (*.png, *.jpg, *.jpeg)\0*.png;*.jpg;*.jpeg\0All Files (*.*)\0*.*\0", L"打开曲绘文件");
-            auto path = Win32Utils::wstringToString(pathW);
-            if (path.empty()) return;
-            WidgetStatics::TextInput::setText(win->refWidget(bgFileInput), Win32Utils::stringToWstring(path));
-        } }));
-        win->nextRow();
+            win->registerWidget(Widgets::Label({ .text = L"音效音量: " }));
+            sfxVolInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                if (isSyncingSettings) return;
+                try { settings->sfxVol = std::stold(ws); }
+                catch (...) { }
+                settingsChanged();
+            }, .onUnfocus = [this]() { syncSettingsToUI(); } }));
+            win->nextRow();
 
-        win->registerWidget(Widgets::Label({ .text = L"音频文件: " }));
-        audioFileInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            audioPath = Win32Utils::wstringToString(ws);
-        } }));
-        win->registerWidget(Widgets::Button({ .text = L"浏览", .onClick = [&]() {
-            auto pathW = selectOpenFile(win.get(),  L"Audio File (*.mp3, *.wav, *.ogg, *.flac, *.m4a, *.aac)\0*.mp3;*.wav;*.ogg;*.flac;*.m4a;*.aac\0All Files (*.*)\0*.*\0", L"打开音频文件");
-            auto path = Win32Utils::wstringToString(pathW);
-            if (path.empty()) return;
-            WidgetStatics::TextInput::setText(win->refWidget(audioFileInput), Win32Utils::stringToWstring(path));
-        } }));
-        win->nextRow();
+            win->registerWidget(Widgets::Label({ .text = L"音符缩放: " }));
+            noteScalingInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                if (isSyncingSettings) return;
+                try { settings->noteScaling = std::stold(ws); }
+                catch (...) { }
+                settingsChanged();
+            }, .onUnfocus = [this]() { syncSettingsToUI(); } }));
+            win->nextRow();
 
-        win->nextRow();
+            win->nextRow();
+        }
 
-        bool isSyncingSettings = true;
+        void addVideoSettingsLabel() {
+            win->registerWidget(Widgets::Label({ .text = L"设置 (视频参数)" }));
+            win->nextRow();
+        }
 
-        auto syncSettingsToUI = [&](bool allowEmpty = false) {
+        void addVideoSettingsInputs() {
+            win->registerWidget(Widgets::Label({ .text = L"分辨率: " }));
+            recordWidthInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                if (isSyncingSettings) return;
+                try { settings->recordWidth = std::stoi(ws); }
+                catch (...) { }
+                settingsChanged();
+            }, .onUnfocus = [this]() { syncSettingsToUI(); } }));
+            win->registerWidget(Widgets::Label({ .text = L"x" }));
+            recordHeightInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                if (isSyncingSettings) return;
+                try { settings->recordHeight = std::stoi(ws); }
+                catch (...) { }
+                settingsChanged();
+            }, .onUnfocus = [this]() { syncSettingsToUI(); } }));
+            win->nextRow();
+
+            win->registerWidget(Widgets::Label({ .text = L"帧率: " }));
+            recordFPSInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [this](const std::wstring& ws) {
+                if (isSyncingSettings) return;
+                try { settings->recordFPS = std::stold(ws); }
+                catch (...) { }
+                settingsChanged();
+            }, .onUnfocus = [this]() { syncSettingsToUI(); } }));
+            win->nextRow();
+
+            recordSfxRandshakeCheckBox = win->registerWidget(Widgets::CheckBox({ .text = L"打击音随机抖动", .onChange = [this](bool checked) {
+                if (isSyncingSettings) return;
+                settings->recordSfxRandshake = checked;
+                settingsChanged();
+            } }));
+            win->registerWidget(Widgets::Button({ .text = L"?", .onClick = [this]() {
+                showInfoMsg(win, L"由于本家即使同时打击音符, 打击音效也并不是在同一时刻播放, 启用该选项后, 打击音效会在一定范围内随机延迟播放, 以模拟本家多押的神秘听感。");
+            } }));
+            win->nextRow();
+
+            win->nextRow();
+        }
+
+        void syncSettingsToUI(bool allowEmpty = false) {
             isSyncingSettings = true;
 
             auto checkbox = [&](int id, bool checked) {
@@ -491,132 +546,97 @@ namespace test_main {
                 WidgetStatics::TextInput::setText(win->refWidget(id), std::to_wstring(value));
             };
 
-            float64Input(musicVolInput, settings.musicVol);
-            float64Input(sfxVolInput, settings.sfxVol);
-            float64Input(noteScalingInput, settings.noteScaling);
+            float64Input(musicVolInput, settings->musicVol);
+            float64Input(sfxVolInput, settings->sfxVol);
+            float64Input(noteScalingInput, settings->noteScaling);
 
-            intInput(recordWidthInput, settings.recordWidth);
-            intInput(recordHeightInput, settings.recordHeight);
-            float64Input(recordFPSInput, settings.recordFPS);
-            checkbox(recordSfxRandshakeCheckBox, settings.recordSfxRandshake);
+            intInput(recordWidthInput, settings->recordWidth);
+            intInput(recordHeightInput, settings->recordHeight);
+            float64Input(recordFPSInput, settings->recordFPS);
+            checkbox(recordSfxRandshakeCheckBox, settings->recordSfxRandshake);
 
             isSyncingSettings = false;
-        };
+        }
 
-        auto settingsChanged = [&]() {
-            settings.onChanged();
+        void settingsChanged() {
+            settings->onChanged();
             syncSettingsToUI(true);
-        };
+        }
 
-        win->registerWidget(Widgets::Label({ .text = L"设置 (通用)" }));
-        win->nextRow();
-
-        win->registerWidget(Widgets::Label({ .text = L"音乐音量: " }));
-        musicVolInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            if (isSyncingSettings) return;
-            try { settings.musicVol = std::stold(ws); }
-            catch (...) { }
-            settingsChanged();
-        }, .onUnfocus = syncSettingsToUI }));
-        win->nextRow();
-
-        win->registerWidget(Widgets::Label({ .text = L"音效音量: " }));
-        sfxVolInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            if (isSyncingSettings) return;
-            try { settings.sfxVol = std::stold(ws); }
-            catch (...) { }
-            settingsChanged();
-        }, .onUnfocus = syncSettingsToUI }));
-        win->nextRow();
-
-        win->registerWidget(Widgets::Label({ .text = L"音符缩放: " }));
-        noteScalingInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            if (isSyncingSettings) return;
-            try { settings.noteScaling = std::stold(ws); }
-            catch (...) { }
-            settingsChanged();
-        }, .onUnfocus = syncSettingsToUI }));
-        win->nextRow();
-
-        win->nextRow();
-
-        win->registerWidget(Widgets::Label({ .text = L"设置 (视频参数)" }));
-        win->nextRow();
-
-        win->registerWidget(Widgets::Label({ .text = L"分辨率: " }));
-        recordWidthInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            if (isSyncingSettings) return;
-            try { settings.recordWidth = std::stoi(ws); }
-            catch (...) { }
-            settingsChanged();
-        }, .onUnfocus = syncSettingsToUI }));
-        win->registerWidget(Widgets::Label({ .text = L"x" }));
-        recordHeightInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            if (isSyncingSettings) return;
-            try { settings.recordHeight = std::stoi(ws); }
-            catch (...) { }
-            settingsChanged();
-        }, .onUnfocus = syncSettingsToUI }));
-        win->nextRow();
-
-        win->registerWidget(Widgets::Label({ .text = L"帧率: " }));
-        recordFPSInput = win->registerWidget(Widgets::TextInput({ .text = L"", .onChange = [&](const std::wstring& ws) {
-            if (isSyncingSettings) return;
-            try { settings.recordFPS = std::stold(ws); }
-            catch (...) { }
-            settingsChanged();
-        }, .onUnfocus = syncSettingsToUI }));
-        win->nextRow();
-
-        recordSfxRandshakeCheckBox = win->registerWidget(Widgets::CheckBox({ .text = L"打击音随机抖动", .onChange = [&](bool checked) {
-            if (isSyncingSettings) return;
-            settings.recordSfxRandshake = checked;
-            settingsChanged();
-        } }));
-        win->registerWidget(Widgets::Button({ .text = L"?", .onClick = [&]() {
-            showInfoMsg(win.get(), L"由于本家即使同时打击音符, 打击音效也并不是在同一时刻播放, 启用该选项后, 打击音效会在一定范围内随机延迟播放, 以模拟本家多押的神秘听感。");
-        } }));
-        win->nextRow();
-
-        win->nextRow();
-
-        float64 loadingChartTook;
-
-        auto load = [&]() {
+        bool loadGame() {
             try {
-                auto loadResult = backendWin.loadChart(chartPath, chartRoot);
-                loadingChartTook = loadResult.totalTook();
-
-                if (chartInfo.has_value()) {
-                    auto& info = chartInfo.value();
-                    backendWin.renderer->chart.meta.title = info.name;
-                    backendWin.renderer->chart.meta.difficulty = info.level;
-                }
-
-                backendWin.renderer->chart.options.noteScaling *= settings.noteScaling;
-                backendWin.renderer->loadIllustion(imagePath);
-                backendWin.renderer->audioManager.load(audioPath);
+                gameLoader();
             } catch (const std::exception& e) {
                 auto msg = Win32Utils::stringToWstring(e.what());
-                showErrorMsg(win.get(), msg.c_str());
+                showErrorMsg(win, msg.c_str());
                 return false;
             }
 
             return true;
+        }
+
+        void addPreviewButton() {
+            win->registerWidget(Widgets::Button({ .text = L"预览", .onClick = [this]() {
+                if (!loadGame()) return;
+                WinHiddenGuard whguard(win);
+
+                onPreview();
+            } }));
+        }
+
+        void addRenderVideoButton() {
+            win->registerWidget(Widgets::Button({ .text = L"渲染视频", .onClick = [this]() {
+                auto videoPathW = selectSaveFile(win,  L"视频文件 (*.mp4)\0*.mp4\0All Files (*.*)\0*.*\0", L"保存视频文件");
+                auto videoPath = Win32Utils::wstringToString(videoPathW);
+                if (videoPath.empty()) return;
+
+                onRenderVideo(videoPath);
+            } }));
+        }
+    };
+
+    #if defined(APP_TYPE_OPEN_RPE_RECORDER)
+    void entrypoint() {
+        ArgsReader args;
+
+        PhiWindow backendWin {};
+        backendWin.init();
+        backendWin.base.window->setHidden(true);
+
+        std::optional<ParsedRPEChartInfo> chartInfo;
+
+        Settings settings {
+            .appKey = L"Open-RPE-Recorder",
+            .currentVersion = 0
+        };
+        settings.fromRegistry();
+
+        auto win = Win32Window::Make({
+            .title = L"Open RPE Recorder"
+        });
+
+        WinHelper whelper {
+            .win = win.get(),
+            .settings = &settings
         };
 
-        struct WinHiddenGuard {
-            Win32Window* win;
-            WinHiddenGuard(Win32Window* win) : win(win) { win->setHidden(true); }
-            ~WinHiddenGuard() { win->setHidden(false); }
+        whelper.gameLoader = [&]() {
+            backendWin.loadChart(whelper.chartPath, whelper.chartRoot);
+            backendWin.renderer->chart.options.noteScaling *= settings.noteScaling;
+
+            if (chartInfo.has_value()) {
+                auto& info = chartInfo.value();
+                backendWin.renderer->chart.meta.title = info.name;
+                backendWin.renderer->chart.meta.difficulty = info.level;
+            }
+
+            backendWin.renderer->loadIllustion(whelper.imagePath);
+            backendWin.renderer->audioManager.load(whelper.audioPath);
         };
 
-        win->registerWidget(Widgets::Button({ .text = L"预览", .onClick = [&]() {
-            if (!load()) return;
-            WinHiddenGuard whguard(win.get());
-
+        whelper.onPreview = [&]() {
             backendWin.base.window->setHidden(false);
-            backendWin.base.window->setSwapInterval(hasArg("--disable-vsync") ? 0 : 1);
+            backendWin.base.window->setSwapInterval(args.has("--disable-vsync") ? 0 : 1);
             backendWin.renderer->audioManager.startBgm();
 
             backendWin.renderer->audioManager.setBgmVolume(settings.musicVol);
@@ -630,14 +650,11 @@ namespace test_main {
             }
 
             backendWin.base.window->setHidden(true);
-        } }));
-        win->registerWidget(Widgets::Button({ .text = L"渲染视频", .onClick = [&]() {
-            auto videoPathW = selectSaveFile(win.get(),  L"视频文件 (*.mp4)\0*.mp4\0All Files (*.*)\0*.*\0", L"保存视频文件");
-            auto videoPath = Win32Utils::wstringToString(videoPathW);
-            if (videoPath.empty()) return;
+        };
 
+        whelper.onRenderVideo = [&](const std::string& videoPath) {
             gwin_progress_dialog::ProgressDialog pd {};
-            pd.setTitle(L"Open RPE Record -- 渲染视频");
+            pd.setTitle(L"渲染视频");
             pd.start();
 
             pd.setLine(1, L"初始化...");
@@ -653,9 +670,7 @@ namespace test_main {
                 backendWin.base.glCtx,
                 settings.recordWidth, settings.recordHeight,
                 [&](uint64 slotIndex) { frameQueue.enqueue(slotIndex); },
-                {
-                    .callbackIsThreadSafe = true
-                }
+                { .callbackIsThreadSafe = true }
             );
 
             auto frameWriter = [&]() {
@@ -675,7 +690,7 @@ namespace test_main {
             backendWin.base.window->setSwapInterval(0);
 
             pd.setLine(1, L"加载...");
-            if (!load()) return;
+            if (!whelper.loadGame()) return;
             
             pd.setLine(1, L"渲染音频...");
             auto mixedAudio = backendWin.renderer->mixFinalBgm(backendWin.renderer->chart, {
@@ -689,6 +704,7 @@ namespace test_main {
 
             pd.setLine(1, L"渲染视频...");
             uint64 frameCut = 0;
+            uint64 totalFrames = backendWin.renderer->calcConfig.songLength * settings.recordFPS;
             std::thread frameWriterThread(frameWriter);
             FramerateMeter fpsMeter {};
             
@@ -707,7 +723,6 @@ namespace test_main {
                 frameCut++;
                 fpsMeter.frame();
 
-                uint64 totalFrames = backendWin.renderer->calcConfig.songLength * settings.recordFPS;
                 pd.setProgress(frameCut, totalFrames);
 
                 {
@@ -718,32 +733,225 @@ namespace test_main {
             }
 
             videoRecorder->finish();
-
             frameQueue.enqueue(std::nullopt);
             frameWriterThread.join();
 
             pd.setLine(1, L"释放资源...");
             std::wstring msg = L"渲染完成, 已保存到 " + Win32Utils::stringToWstring(videoPath);
             showInfoMsg(win.get(), msg.c_str());
+        };
+
+        whelper.addGithubLink();
+        
+        whelper.addChartChooseLabel();
+
+        win->registerWidget(Widgets::Button({ .text = L"从 info.txt ...", .onClick = [&]() {
+            auto infoPathW = selectOpenFile(win.get(),  L"Info File (info.txt)\0info.txt\0All Files (*.*)\0*.*\0", L"打开 info.txt");
+            auto infoPath = Win32Utils::wstringToString(infoPathW);
+            if (infoPath.empty()) return;
+
+            auto chartRoot = getDirectory(infoPath) + "/";
+            WidgetStatics::TextInput::setText(win->refWidget(whelper.chartRootInput), Win32Utils::stringToWstring(chartRoot));
+
+            Data infoData;
+            if (!Data::MakeFromFile(infoData, infoPath)) {
+                showErrorMsg(win.get(), L"无法打开 info.txt");
+                return;
+            }
+
+            auto infos = ParsedRPEChartInfo::parse(infoData);
+            if (infos.empty()) {
+                showErrorMsg(win.get(), L"info.txt 中找不到谱面信息");
+                return;
+            }
+
+            auto& info = infos[0];
+            WidgetStatics::TextInput::setText(win->refWidget(whelper.chartFileInput), Win32Utils::stringToWstring(chartRoot + info.chart));
+            WidgetStatics::TextInput::setText(win->refWidget(whelper.bgFileInput), Win32Utils::stringToWstring(chartRoot + info.picture));
+            WidgetStatics::TextInput::setText(win->refWidget(whelper.audioFileInput), Win32Utils::stringToWstring(chartRoot + info.song));
+            chartInfo = info;
         } }));
+        win->nextRow();
+
+        whelper.addChartChooseInputs();
+
+        whelper.addGeneralSettingsLabel();
+        whelper.addGeneralSettingsInputs();
+        whelper.addVideoSettingsLabel();
+        whelper.addVideoSettingsInputs();
+
+        whelper.addPreviewButton();
+        whelper.addRenderVideoButton();
 
         win->createWidgets();
         win->doGrid();
         win->resizeToGridBounds();
-        syncSettingsToUI();
+        whelper.syncSettingsToUI();
+
+        win->mainloop();
+    }
+    #elif defined(APP_TYPE_OPEN_MIL_RECORDER)
+    void entrypoint() {
+        ArgsReader args;
+
+        MilWindow backendWin {};
+        backendWin.init();
+        backendWin.base.window->setHidden(true);
+
+        Settings settings {
+            .appKey = L"Open-Mil-Recorder",
+            .currentVersion = 0
+        };
+        settings.fromRegistry();
+
+        auto win = Win32Window::Make({
+            .title = L"Open Mil Recorder"
+        });
+
+        WinHelper whelper {
+            .win = win.get(),
+            .settings = &settings
+        };
+
+        whelper.gameLoader = [&]() {
+            backendWin.loadChart(whelper.chartPath, whelper.chartRoot);
+            backendWin.renderer->chart.options.noteScaling *= settings.noteScaling;
+
+            backendWin.renderer->loadIllustion(whelper.imagePath);
+            backendWin.renderer->audioManager.load(whelper.audioPath);
+        };
+
+        whelper.onPreview = [&]() {
+            backendWin.base.window->setHidden(false);
+            backendWin.base.window->setSwapInterval(args.has("--disable-vsync") ? 0 : 1);
+            backendWin.renderer->audioManager.startBgm();
+
+            backendWin.renderer->audioManager.setBgmVolume(settings.musicVol);
+            backendWin.renderer->audioManager.setSfxVolume(settings.sfxVol);
+
+            while (!backendWin.renderer->audioManager.getBpmIsEnded()) {
+                if (!backendWin.mainloopFrame({})) {
+                    backendWin.renderer->audioManager.stopBgm();
+                    break;
+                }
+            }
+
+            backendWin.base.window->setHidden(true);
+        };
+
+        whelper.onRenderVideo = [&](const std::string& videoPath) {
+            gwin_progress_dialog::ProgressDialog pd {};
+            pd.setTitle(L"渲染视频");
+            pd.start();
+
+            pd.setLine(1, L"初始化...");
+            WinHiddenGuard whguard(win.get());
+
+            gvideoenc::VideoCap cap {};
+            cap.init(videoPath, settings.recordWidth, settings.recordHeight, settings.recordFPS);
+            
+            using FrameType = std::optional<uint64>;
+            gthread_safe_queue::ThreadSafeQueue<FrameType> frameQueue;
+
+            auto videoRecorder = VideoRecorder::Make(
+                backendWin.base.glCtx,
+                settings.recordWidth, settings.recordHeight,
+                [&](uint64 slotIndex) { frameQueue.enqueue(slotIndex); },
+                { .callbackIsThreadSafe = true }
+            );
+
+            auto frameWriter = [&]() {
+                FrameType frame;
+
+                while (true) {
+                    frameQueue.wait_dequeue(frame);
+                    if (!frame.has_value()) break;
+
+                    auto* yuv = videoRecorder->referYUVFrame(frame.value());
+                    cap.writeVideoFrame(yuv->dataPtrs().data(), yuv->rowBytes().data());
+                    videoRecorder->returnYUVFrame(frame.value());
+                }
+            };
+
+            backendWin.base.surfaceSize = { settings.recordWidth, settings.recordHeight };
+            backendWin.base.window->setSwapInterval(0);
+
+            pd.setLine(1, L"加载...");
+            if (!whelper.loadGame()) return;
+            
+            pd.setLine(1, L"渲染音频...");
+            auto mixedAudio = backendWin.renderer->mixFinalBgm(backendWin.renderer->chart, {
+                .musicVol = settings.musicVol,
+                .sfxVol = settings.sfxVol,
+                .sfxRandshake = settings.recordSfxRandshake
+            });
+
+            pd.setLine(1, L"写入音频...");
+            cap.writeAudio(mixedAudio);
+
+            pd.setLine(1, L"渲染视频...");
+            uint64 frameCut = 0;
+            uint64 totalFrames = backendWin.renderer->calcConfig.songLength * settings.recordFPS;
+            std::thread frameWriterThread(frameWriter);
+            FramerateMeter fpsMeter {};
+            
+            while (true) {
+                float64 t = frameCut / settings.recordFPS;
+                if (t > backendWin.renderer->calcConfig.songLength) break;
+
+                auto reGuard = videoRecorder->useFrame();
+                backendWin.mainloopFrame({
+                    .base = {
+                        .time = t,
+                        .isRenderingVideo = true
+                    }
+                });
+
+                frameCut++;
+                fpsMeter.frame();
+
+                pd.setProgress(frameCut, totalFrames);
+
+                {
+                    std::wstring msg = L"渲染视频... ";
+                    msg += std::to_wstring(frameCut) + L"/" + std::to_wstring(totalFrames) + L" (" + std::to_wstring((uint64)fpsMeter.get()) + L" fps)";
+                    pd.setLine(1, msg.c_str());
+                }
+            }
+
+            videoRecorder->finish();
+            frameQueue.enqueue(std::nullopt);
+            frameWriterThread.join();
+
+            pd.setLine(1, L"释放资源...");
+            std::wstring msg = L"渲染完成, 已保存到 " + Win32Utils::stringToWstring(videoPath);
+            showInfoMsg(win.get(), msg.c_str());
+        };
+
+        whelper.addGithubLink();
+
+        whelper.addChartChooseLabel();
+        whelper.addChartChooseInputs();
+
+        whelper.addGeneralSettingsLabel();
+        whelper.addGeneralSettingsInputs();
+        whelper.addVideoSettingsLabel();
+        whelper.addVideoSettingsInputs();
+
+        whelper.addPreviewButton();
+        whelper.addRenderVideoButton();
+
+        win->createWidgets();
+        win->doGrid();
+        win->resizeToGridBounds();
+        whelper.syncSettingsToUI();
 
         win->mainloop();
     }
     #elif defined(APP_TYPE_TEST_MIL)
     void entrypoint() {
-        int argc; char** argv;
-        grain::get_args(&argc, &argv);
+        ArgsReader args;
         
-        std::vector<std::string> args(argv, argv + argc);
-        auto hasArg = [&](const std::string& arg) {
-            return std::find(args.begin(), args.end(), arg) != args.end();
-        };
-
         std::vector<std::string> chartNames = {
             "Dum! Dum!! Dum!!! - Tatsunoshin",
             "Fly To Meteor (Milthm Edit) - ShooTinGStaR + xzadudu179 + Cyberspace",
@@ -786,9 +994,9 @@ namespace test_main {
                   , storyboardAssetsPath = prefix + chartNames[choice] + "/";
 
         MilWindow window {};
-        window.base.fullscreen = hasArg("--fullscreen");
+        window.base.fullscreen = args.has("--fullscreen");
         window.init();
-        window.base.window->setSwapInterval(hasArg("--disable-vsync") ? 0 : 1);
+        window.base.window->setSwapInterval(args.has("--disable-vsync") ? 0 : 1);
 
         window.loadChart(chartPath, storyboardAssetsPath);
         window.renderer->loadIllustion(imagePath);
@@ -804,13 +1012,7 @@ namespace test_main {
     }
     #elif defined(APP_TYPE_TEST_RIZ)
     void entrypoint() {
-        int argc; char** argv;
-        grain::get_args(&argc, &argv);
-        
-        std::vector<std::string> args(argv, argv + argc);
-        auto hasArg = [&](const std::string& arg) {
-            return std::find(args.begin(), args.end(), arg) != args.end();
-        };
+        ArgsReader args;
 
         std::vector<std::string> chartNames = {
             "PastelLines",
@@ -845,9 +1047,9 @@ namespace test_main {
         RizWindow window {};
 
         window.base.isPortrait = true;
-        window.base.fullscreen = hasArg("--fullscreen");
+        window.base.fullscreen = args.has("--fullscreen");
         window.init();
-        window.base.window->setSwapInterval(hasArg("--disable-vsync") ? 0 : 1);
+        window.base.window->setSwapInterval(args.has("--disable-vsync") ? 0 : 1);
 
         window.loadChart(chartPath, chartDir);
         window.renderer->loadIllustion(imagePath);

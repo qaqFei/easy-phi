@@ -4202,11 +4202,12 @@ void main() {
         Vec2 timeZone;
         Vec2 valueZone;
         EnumMilEventType type;
+        uint64 index;
 
         float64 (* easingFunc)(void*, float64);
         float64 (* easingIntFunc)(void*, float64);
         void* easingFuncContext;
-        uint64 index;
+        std::optional<std::vector<float64>> customEaseArr;
 
         float64 cumulativeValueAtStart;
 
@@ -4217,7 +4218,7 @@ void main() {
                     { EnumMilEventType::Transparency, 1 },
                     { EnumMilEventType::Size, 1 },
                     { EnumMilEventType::Rotation, 90 },
-                    { EnumMilEventType::FlowSpeed, 1 },
+                    { EnumMilEventType::FlowSpeed, 9 },
                     { EnumMilEventType::LineBodyTransparency, 1 },
                     { EnumMilEventType::LineHeadTransparency, 1 },
                     { EnumMilEventType::Speed, 1 },
@@ -4259,7 +4260,16 @@ void main() {
                 p = easingFunc(easingFuncContext, p);
             }
 
-            return valueZone.x + p * (valueZone.y - valueZone.x);
+            if (customEaseArr.has_value()) {
+                auto& values = customEaseArr.value();
+                p = std::clamp(p, 0.0, 1.0);
+                auto s = values[(uint64)(p * (values.size() - 1))];
+                auto e = values[(uint64)(p * (values.size() - 1)) + 1];
+                p = std::fmod(p, 1.0 / (values.size() - 1)) * (values.size() - 1);
+                return s + (e - s) * p;
+            }
+
+            return valueZone.x + (valueZone.y - valueZone.x) * p;
         }
 
         float64 getIntegralValue(float64 t) const noexcept {
@@ -5258,6 +5268,23 @@ void main() {
                 };
             }
 
+            if (animNode.hasKey("isCustomEase")) {
+                if (!animNode["isCustomEase"].isBool()) err("isCustomEase is not a bool");
+                
+                if (animNode["isCustomEase"].getBool()) {
+                    e.customEaseArr = std::vector<float64>();
+                    auto& customEaseArr = e.customEaseArr.value();
+                    
+                    if (!animNode.hasKey("customEaseArr")) err("missing customEaseArr");
+                    if (!animNode["customEaseArr"].isArray()) err("customEaseArr is not an array");
+
+                    for (auto& itNode : animNode["customEaseArr"].getArray()) {
+                        if (!itNode.isNumber()) err("customEaseArr item is not a number");
+                        customEaseArr.push_back(itNode.getNumber());
+                    }
+                }
+            }
+
             chart.animator.addEvent({ objType, objIndex }, e);
         }
 
@@ -5431,7 +5458,7 @@ void main() {
             }
         };
 
-        float64 lineHeadBase = config.screenSize.sum() * 0.0223;
+        float64 lineHeadBase = config.screenSize.sum() * 0.0223 * chart.options.noteScaling;
 
         auto fallbackNoteTextureDesc = [&](MilNoteTextureDesc& desc) {
             while (!config.noteTextureInfos.contains(desc)) {
@@ -5651,7 +5678,7 @@ void main() {
                     .size = Vec2(lineHeadBase * 4.632 * (1.0 - std::pow(1.0 - progress, 3.0))) * info.scale.max(),
                     .progress = progress,
                     .rotation = hitEffect.texRotation,
-                    .color = Color { 150, 144, 253, 255 } / 255
+                    .color = chart.options.particleRGBColor.get(0.065 + progress * 0.4).setAlpha(1.0)
                 }, screenArea);
             }
 
@@ -5661,20 +5688,21 @@ void main() {
                 if (particleTime + chart.options.hitEffectDuration < time) continue;
 
                 auto progress = std::clamp((time - particleTime) / chart.options.hitEffectDuration, 0.0, 1.0);
+                auto noteScaling = info.scale.max() * chart.options.noteScaling;
                 auto size = particle.initialSize * config.screenSize.sum();
                 auto r = particle.getRadius(progress) * config.screenSize.sum();
                 auto rotate = particle.rotate;
                 auto color = chart.options.particleRGBColor.get(progress);
                 color.a = chart.options.particleAlphaColor.get(progress).a;
 
-                auto particlePos = info.headPosition.rotateDegrees(rotate, r * info.scale.max());
-                particlePos.y += particle.getDeltaY(progress) * config.screenSize.sum() * info.scale.max();
+                auto particlePos = info.headPosition.rotateDegrees(rotate, r * noteScaling);
+                particlePos.y += particle.getDeltaY(progress) * config.screenSize.sum() * noteScaling;
 
                 rotate += (rotate - (particlePos - info.headPosition).atanDegrees()) * 2;
 
                 auto& item = frame.cache.hitEffectParticles.emplace_back();
                 item.position = particlePos;
-                item.radius = particle.getScale(progress) * size * info.scale.max();
+                item.radius = particle.getScale(progress) * size * noteScaling;
                 item.rotation = rotate;
                 item.color = color;
 
@@ -5873,6 +5901,7 @@ void main() {
 
         struct MixBgmConfig {
             float64 musicVol = 1.0, sfxVol = 1.0;
+            bool sfxRandshake = false;
         };
 
         gsp<DecodedAudio> mixFinalBgm(const MilChart& chart, const MixBgmConfig& config) {
@@ -5881,12 +5910,18 @@ void main() {
             auto result = audioManager.bgmAudio->copy();
             result->applyVolume(config.musicVol);
             
+            std::mt19937 rng { std::random_device {} () };
+            std::uniform_real_distribution<float64> sfxRandshakeDist { 0.0, 0.02 };
+            
             for (const auto& line : chart.lines) {
                 for (const auto& note : line.notes) {
                     if (note.isFake) continue;
 
+                    auto t = note.timeZone.x;
+                    if (config.sfxRandshake) t += sfxRandshakeDist(rng);
+
                     auto sfx = hitsoundAudios.at(note.type);
-                    result->overlapSecond(sfx, note.timeZone.x, config.sfxVol);
+                    result->overlapSecond(sfx, t, config.sfxVol);
                 }
             }
 
