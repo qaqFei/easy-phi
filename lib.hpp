@@ -6215,7 +6215,7 @@ void main() {
         bool isLinear = true;
 
         void loadFromType(uint64 type) {
-            if (type <= 0 || type > 14) return;
+            if (type <= 0 || type > 18) return;
             
             context = (void*)type;
             func = [](void* ctx, float64 p) { return EaseSet::Rizline::Official::easing((uint64)ctx, p); };
