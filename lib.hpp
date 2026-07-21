@@ -7190,6 +7190,7 @@ void main() {
         auto cameraXPosition = chart.cameraMove.xPositions.get(time);
         auto cameraScale = chart.cameraMove.scales.get(time);
         auto cameraScaledRingSize = lineRingSize * cameraScale;
+        auto halfCameraScaledRingSize = cameraScaledRingSize / 2.0;
 
         auto makeNoteStyles = [&](const RizTheme& theme) {
             return std::vector<RizCalculatedFrame::CalculatedNote::Style> {
@@ -7321,10 +7322,10 @@ void main() {
 
                 auto tailDeltaY = (noteFloorPosition.x - noteFloorPosition.y) * config.screenSize.y;
 
-                auto minX = headPosition.x - cameraScaledRingSize / 2.0;
-                auto maxX = headPosition.x + cameraScaledRingSize / 2.0;
-                auto minY = headPosition.y + std::min(0.0, tailDeltaY);
-                auto maxY = headPosition.y + std::max(0.0, tailDeltaY);
+                auto minX = headPosition.x - halfCameraScaledRingSize;
+                auto maxX = headPosition.x + halfCameraScaledRingSize;
+                auto minY = headPosition.y + std::min(0.0, tailDeltaY) - halfCameraScaledRingSize;
+                auto maxY = headPosition.y + std::max(0.0, tailDeltaY) + halfCameraScaledRingSize;
 
                 if (minX >= config.screenSize.x || maxX <= 0.0 || minY >= config.screenSize.y || maxY <= 0.0) continue;
 
