@@ -336,8 +336,8 @@ namespace geasy_phi {
 
                     auto dir = it2.position - it1.position;
                     auto len = dir.length() / halfWidth;
-                    if (len != 0.0) dir /= len;
-                    dir = { -dir.y, dir.x };
+                    if (len != 0.0) dir = Vec2 { -dir.y, dir.x } / len;
+                    else dir = { 0.0, halfWidth };
 
                     GLvec2 p1 = it1.position + dir;
                     GLvec2 p2 = it1.position - dir;
@@ -355,8 +355,8 @@ namespace geasy_phi {
                     if (i == 0 || !lineSet.items[i - 1].connectToNext) { // start
                         GLvec2 v = p1;
 
-                        for (uint64 j = 1; j < capSeg; j++) {
-                            auto s = sinCosTable[j - 1][0], c = sinCosTable[j - 1][1];
+                        for (uint64 j = 0; j < capSeg - 1; j++) {
+                            auto s = sinCosTable[j][0], c = sinCosTable[j][1];
 
                             GLvec2 nv = it1.position + Vec2 {
                                 dir.x * c - dir.y * s,
@@ -378,8 +378,8 @@ namespace geasy_phi {
                     if (!it2.connectToNext) { // end
                         GLvec2 v = p4;
 
-                        for (uint64 j = 1; j < capSeg; j++) {
-                            auto s = sinCosTable[j - 1][0], c = sinCosTable[j - 1][1];
+                        for (uint64 j = 0; j < capSeg - 1; j++) {
+                            auto s = sinCosTable[j][0], c = sinCosTable[j][1];
 
                             GLvec2 nv = it2.position + Vec2 {
                                 dir.x * c + dir.y * s,
