@@ -50,55 +50,24 @@ namespace geasy_phi {
             }
         };
 
-        struct CalculatedCapRoundedLineSet {
-            struct Item {
-                Vec2 position;
-                Color color;
-                bool connectToNext;
-            };
-
-            Item* items;
-            uint64 count;
-            float64 width;
-
-            uint64 segCount;
-
-            void check() const {
-                #ifdef GRAIN_IS_RELEASE
-                return;
-                #endif
-
-                uint64 segCount = 0;
-
-                if (count) {
-                    for (uint64 i = 0; i < count - 1; i++) {
-                        auto& p = items[i];
-                        auto& np = items[i + 1];
-                        if (p.connectToNext) segCount++;
-
-                        gassert::assert(p.connectToNext || np.connectToNext, "connectToNext is false for both points");
-                    }
-
-                    gassert::assert(items[0].connectToNext, "connectToNext is false for first point");
-                    gassert::assert(!items[count - 1].connectToNext, "connectToNext is true for last point");
-                }
-
-                gassert::assert(segCount == this->segCount, "segCount is not correct");
-            }
+        struct CalculatedCirc {
+            Vec2 center, radius;
+            float64 ringRadius;
+            Color color;
         };
 
         #define UsingSharedCalculatedObjects \
             using CalculatedText = SharedCalculatedObjects::CalculatedText; \
             using CalculatedRect = SharedCalculatedObjects::CalculatedRect; \
             using CalculatedPoly = SharedCalculatedObjects::CalculatedPoly; \
-            using CalculatedCapRoundedLineSet = SharedCalculatedObjects::CalculatedCapRoundedLineSet; \
+            using CalculatedCirc = SharedCalculatedObjects::CalculatedCirc; \
             static_assert(true, "")
         
         #define ListSharedCalculatedObjects \
             CalculatedText, \
             CalculatedRect, \
             CalculatedPoly, \
-            CalculatedCapRoundedLineSet
+            CalculatedCirc
 
         template <typename T>
         bool sharedCulling(std::vector<T>& objects, const Rect& screenRect) noexcept {
@@ -117,8 +86,13 @@ namespace geasy_phi {
                 if (!quadStrictlyIntersectRect((Vec2[4]) {
                     poly.p1, poly.p2, poly.p3, poly.p4
                 }, screenRect)) objects.pop_back();
-            } else if (std::holds_alternative<CalculatedCapRoundedLineSet>(obj)) { }
-            else return false;
+            } else if (std::holds_alternative<CalculatedCirc>(obj)) {
+                auto& circ = std::get<CalculatedCirc>(obj);
+                if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                    .position = circ.center,
+                    .size = circ.radius
+                }).data(), screenRect)) objects.pop_back();
+            } else return false;
 
             return true;
         }
@@ -300,103 +274,17 @@ namespace geasy_phi {
                 *mesh.vnext() = { poly.p4 }; *mesh.vnext() = { poly.p3 }; *mesh.vnext() = { poly.p2 };
                 mesh.color = poly.color;
                 cvs.drawMesh(mesh);
-            } else if (std::holds_alternative<CalculatedCapRoundedLineSet>(obj)) {
-                auto& lineSet = std::get<CalculatedCapRoundedLineSet>(obj);
-                lineSet.check();
+            } else if (std::holds_alternative<CalculatedCirc>(obj)) {
+                auto& circ = std::get<CalculatedCirc>(obj);
 
-                if (!lineSet.segCount || lineSet.width < 0.0) return true;
+                auto mesh = glCtx->requestMesh(6);
+                mesh.program = glCtx->preloadedPrograms.circle.get();
+                mesh.color = circ.color;
+                mesh.addRectCentered(circ.center, circ.radius, { 0.5, 0.5 }, { 0.5, 0.5 });
 
-                auto halfWidth = lineSet.width / 2.0;
-                const uint64 capSeg = 6;
-                const uint64 capVertexCount = 3 * capSeg;
-
-                static_assert(capSeg > 1, "capSeg must be greater than 1");
-
-                thread_local float64 sinCosTable[capSeg - 1][2];
-                thread_local bool sinCosTableInitialized = false;
-
-                if (!sinCosTableInitialized) {
-                    for (uint64 i = 1; i < capSeg; i++) {
-                        auto a = std::numbers::pi * i / capSeg;
-                        sinCosTable[i - 1][0] = std::sin(a);
-                        sinCosTable[i - 1][1] = std::cos(a);
-                    }
-
-                    sinCosTableInitialized = true;
-                }
-
-                auto mesh = glCtx->requestMesh((6 + 2 * capVertexCount) * lineSet.segCount);
-                mesh.color = GLvec4::White();
-
-                for (uint64 i = 0; i < lineSet.count - 1; i++) {
-                    auto& it1 = lineSet.items[i];
-                    if (!it1.connectToNext) continue;
-
-                    auto& it2 = lineSet.items[i + 1];
-
-                    auto dir = it2.position - it1.position;
-                    auto len = dir.length() / halfWidth;
-                    if (len != 0.0) dir = Vec2 { -dir.y, dir.x } / len;
-                    else dir = { 0.0, halfWidth };
-
-                    GLvec2 p1 = it1.position + dir;
-                    GLvec2 p2 = it1.position - dir;
-                    GLvec2 p3 = it2.position - dir;
-                    GLvec2 p4 = it2.position + dir;
-
-                    *mesh.vnext() = { p1, { 0.5, 0.5 }, it1.color };
-                    *mesh.vnext() = { p2, { 0.5, 0.5 }, it1.color };
-                    *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
-
-                    *mesh.vnext() = { p1, { 0.5, 0.5 }, it1.color };
-                    *mesh.vnext() = { p4, { 0.5, 0.5 }, it2.color };
-                    *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
-
-                    if (i == 0 || !lineSet.items[i - 1].connectToNext) { // start
-                        GLvec2 v = p1;
-
-                        for (uint64 j = 0; j < capSeg - 1; j++) {
-                            auto s = sinCosTable[j][0], c = sinCosTable[j][1];
-
-                            GLvec2 nv = it1.position + Vec2 {
-                                dir.x * c - dir.y * s,
-                                dir.x * s + dir.y * c
-                            };
-
-                            *mesh.vnext() = { it1.position, { 0.5, 0.5 }, it1.color };
-                            *mesh.vnext() = { v, { 0.5, 0.5 }, it1.color };
-                            *mesh.vnext() = { nv, { 0.5, 0.5 }, it1.color };
-
-                            v = nv;
-                        }
-
-                        *mesh.vnext() = { it1.position, { 0.5, 0.5 }, it1.color };
-                        *mesh.vnext() = { v, { 0.5, 0.5 }, it1.color };
-                        *mesh.vnext() = { p2, { 0.5, 0.5 }, it1.color };
-                    }
-
-                    if (!it2.connectToNext) { // end
-                        GLvec2 v = p4;
-
-                        for (uint64 j = 0; j < capSeg - 1; j++) {
-                            auto s = sinCosTable[j][0], c = sinCosTable[j][1];
-
-                            GLvec2 nv = it2.position + Vec2 {
-                                dir.x * c + dir.y * s,
-                                -dir.x * s + dir.y * c
-                            };
-
-                            *mesh.vnext() = { it2.position, { 0.5, 0.5 }, it2.color };
-                            *mesh.vnext() = { v, { 0.5, 0.5 }, it2.color };
-                            *mesh.vnext() = { nv, { 0.5, 0.5 }, it2.color };
-
-                            v = nv;
-                        }
-
-                        *mesh.vnext() = { it2.position, { 0.5, 0.5 }, it2.color };
-                        *mesh.vnext() = { v, { 0.5, 0.5 }, it2.color };
-                        *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
-                    }
+                {
+                    auto guard = mesh.program->use();
+                    mesh.program->getUniformLocation("uRingRadius").setf(circ.ringRadius);
                 }
 
                 cvs.drawMesh(mesh);
@@ -7085,14 +6973,87 @@ void main() {
     struct RizCalculatedFrame {
         UsingSharedCalculatedObjects;
 
+        struct CalculatedLineSet {
+            struct Item {
+                Vec2 position;
+                Color color;
+                bool connectToNext;
+            };
+
+            Item* items;
+            uint64 count;
+            float64 width;
+
+            uint64 segCount;
+
+            Vec2 clipCenter;
+            float64 clipRadius;
+
+            void check() const {
+                #ifdef GRAIN_IS_RELEASE
+                return;
+                #endif
+
+                uint64 segCount = 0;
+
+                if (count) {
+                    for (uint64 i = 0; i < count - 1; i++) {
+                        auto& p = items[i];
+                        auto& np = items[i + 1];
+                        if (p.connectToNext) segCount++;
+
+                        gassert::assert(p.connectToNext || np.connectToNext, "connectToNext is false for both points");
+                    }
+
+                    gassert::assert(items[0].connectToNext, "connectToNext is false for first point");
+                    gassert::assert(!items[count - 1].connectToNext, "connectToNext is true for last point");
+                }
+
+                gassert::assert(segCount == this->segCount, "segCount is not correct");
+            }
+        };
+
         struct CalculatedLineRing {
             Vec2 position;
             float64 radius, width;
             Color color;
         };
 
-        struct CalculatedNote {
-            struct Style {
+        struct CalculatedNotePartSet {
+            struct Item {
+                Vec2 position, size; // LTWH
+                Color topColor, bottomColor;
+                bool isCircle;
+            };
+
+            Item* items;
+            uint64 count;
+
+            Vec2 clipCenter;
+            float64 clipRadius;
+        };
+
+        using CalculatedObject = std::variant<
+            ListSharedCalculatedObjects,
+            CalculatedLineSet,
+            CalculatedLineRing,
+            CalculatedNotePartSet
+        >;
+
+        std::vector<CalculatedObject> objects;
+        std::unordered_map<EnumRizNoteType, uint64> hitsounds;
+        
+        void culling(std::vector<CalculatedObject>& objects, const Rect& screenRect) noexcept {
+            if (SharedCalculatedObjects::sharedCulling(objects, screenRect)) return;
+        }
+
+        void addObject(std::vector<CalculatedObject>& objects, const CalculatedObject& obj, const Rect& screenRect) noexcept {
+            objects.push_back(obj);
+            culling(objects, screenRect);
+        }
+
+        struct Cache {
+            struct NoteStyle {
                 struct Circle {
                     float64 radius;
                     Color color;
@@ -7105,43 +7066,18 @@ void main() {
                 uint64 bodyIndex; // draw body before circles[i]
             };
 
-            Vec2 position;
-            float64 tailDeltaY;
-            float64 scale;
-            Style* styleRef;
-        };
+            struct CalculatedNote {
+                Vec2 position;
+                float64 tailDeltaY;
+                float64 scale;
+                uint64 styleIndex;
+            };
 
-        using CalculatedObject = std::variant<
-            ListSharedCalculatedObjects,
-            CalculatedLineRing,
-            CalculatedNote
-        >;
-
-        std::vector<CalculatedObject> objects;
-        std::unordered_map<EnumRizNoteType, uint64> hitsounds;
-        
-        void culling(std::vector<CalculatedObject>& objects, const Rect& screenRect) noexcept {
-            if (SharedCalculatedObjects::sharedCulling(objects, screenRect)) return;
-
-            auto& obj = objects.back();
-            
-            if (std::holds_alternative<CalculatedNote>(obj)) {
-                auto& note = std::get<CalculatedNote>(obj);
-                // ...
-            }
-        }
-
-        void addObject(std::vector<CalculatedObject>& objects, const CalculatedObject& obj, const Rect& screenRect) noexcept {
-            objects.push_back(obj);
-            culling(objects, screenRect);
-        }
-
-        struct Cache {
             struct CalculatedTheme {
                 RizTheme theme;
                 float64 transProgress;
                 Vec2 transCircleCenter;
-                std::vector<CalculatedNote::Style> noteStyles;
+                std::vector<NoteStyle> noteStyles;
             };
 
             struct LinePoint {
@@ -7154,17 +7090,21 @@ void main() {
             std::vector<CalculatedTheme> themes;
             std::vector<CalculatedLineRing> lineRings;
             std::vector<LinePoint> linePoints;
-            std::vector<CalculatedCapRoundedLineSet::Item> calculatedlines;
+            std::vector<CalculatedLineSet::Item> calculatedLines;
             uint64 calculatedlinesSegCount;
             std::vector<CalculatedNote> notes;
+            std::vector<CalculatedNotePartSet::Item> noteParts;
+            std::vector<uint64> notePartSetIndexs;
 
             void clear() {
                 themes.clear();
                 lineRings.clear();
                 linePoints.clear();
-                calculatedlines.clear();
+                calculatedLines.clear();
                 calculatedlinesSegCount = 0;
                 notes.clear();
+                noteParts.clear();
+                notePartSetIndexs.clear();
             }
         };
 
@@ -7193,7 +7133,7 @@ void main() {
         auto halfCameraScaledRingSize = cameraScaledRingSize / 2.0;
 
         auto makeNoteStyles = [&](const RizTheme& theme) {
-            return std::vector<RizCalculatedFrame::CalculatedNote::Style> {
+            return std::vector<RizCalculatedFrame::Cache::NoteStyle> {
                 {
                     .circles = {
                         { .radius = cameraScaledRingSize * 0.436974, .color = Color::Black().applyAlpha(0.7) },
@@ -7333,7 +7273,7 @@ void main() {
                     .position = headPosition,
                     .tailDeltaY = tailDeltaY,
                     .scale = noteScale,
-                    .styleRef = (RizCalculatedFrame::CalculatedNote::Style*)(uint64)note.type
+                    .styleIndex = (uint64)note.type
                 });
             }
         }
@@ -7359,7 +7299,7 @@ void main() {
 
                 frame.cache.calculatedlinesSegCount += segCount;
 
-                frame.cache.calculatedlines.push_back({
+                frame.cache.calculatedLines.push_back({
                     .position = p.position,
                     .color = p.color,
                     .connectToNext = true
@@ -7375,7 +7315,7 @@ void main() {
                         Vec2 position = p.position + dp * Vec2 { p.easeRef->applyValue(pg), pg };
                         auto color = p.color + dc * pg;
 
-                        frame.cache.calculatedlines.push_back({
+                        frame.cache.calculatedLines.push_back({
                             .position = position,
                             .color = color,
                             .connectToNext = true
@@ -7383,7 +7323,7 @@ void main() {
                     }
                 }
 
-                frame.cache.calculatedlines.push_back({
+                frame.cache.calculatedLines.push_back({
                     .position = np.position,
                     .color = np.color,
                     .connectToNext = false
@@ -7391,40 +7331,129 @@ void main() {
             }
         }
 
-        std::cout << frame.cache.calculatedlines.size() << '\n';
+        std::cout << frame.cache.calculatedLines.size() << '\n';
 
         for (auto& theme : frame.cache.themes) {
             theme.noteStyles = makeNoteStyles(theme.theme);
 
-            // frame.objects.push_back(RizCalculatedFrame::CalculatedCircleClipStart {
-            //     .position = theme.transCircleCenter,
-            //     .radius = (Vec2 { config.screenSize.x / 2.0, config.screenSize.y }.length() + 1.0) * theme.transProgress
-            // });
+            auto maskCenter = theme.transCircleCenter;
+            auto maskRadius = (Vec2 { config.screenSize.x / 2.0, config.screenSize.y }.length() + 1.0) * theme.transProgress;
 
-            frame.objects.push_back(RizCalculatedFrame::CalculatedPoly::Make(
-                Vec2(0.0), config.screenSize,
-                theme.theme.bgColor
-            ));
+            frame.objects.push_back(RizCalculatedFrame::CalculatedCirc {
+                .center = maskCenter,
+                .radius = maskRadius,
+                .color = theme.theme.bgColor
+            });
             
-            frame.objects.push_back(RizCalculatedFrame::CalculatedCapRoundedLineSet {
-                .items = frame.cache.calculatedlines.data(),
-                .count = frame.cache.calculatedlines.size(),
+            frame.objects.push_back(RizCalculatedFrame::CalculatedLineSet {
+                .items = frame.cache.calculatedLines.data(),
+                .count = frame.cache.calculatedLines.size(),
                 .width = standardLineWidth,
-                .segCount = frame.cache.calculatedlinesSegCount
+                .segCount = frame.cache.calculatedlinesSegCount,
+                .clipCenter = maskCenter,
+                .clipRadius = maskRadius
             });
 
             for (auto& ring : frame.cache.lineRings) {
                 frame.objects.push_back(ring);
             }
 
-            for (auto& note : frame.cache.notes) {
-                frame.objects.push_back(note);
+            uint64 notePartStartIndex = frame.cache.noteParts.size();
 
-                auto& copied = std::get<RizCalculatedFrame::CalculatedNote>(frame.objects.back());
-                copied.styleRef = &theme.noteStyles[(uint64)copied.styleRef];
+            for (auto& note : frame.cache.notes) {
+                auto& style = theme.noteStyles[note.styleIndex];
+
+                for (uint64 i = 0; i < style.bodyIndex; i++) {
+                    auto& circle = style.circles[i];
+                    auto radius = circle.radius * note.scale;
+
+                    frame.cache.noteParts.push_back({
+                        .position = note.position - radius,
+                        .size = radius * 2.0,
+                        .topColor = circle.color, .bottomColor = circle.color,
+                        .isCircle = true
+                    });
+                }
+
+                if (note.tailDeltaY != 0.0) {
+                    auto noGradLength = note.tailDeltaY * style.bodyGradientPoint * note.scale;
+                    auto gradLength = note.tailDeltaY *  (1.0 - style.bodyGradientPoint) * note.scale;
+                    auto fillWidth = style.bodyFillWidth * note.scale;
+                    auto strokeWidth = style.bodyStrokeWidth * note.scale;
+
+                    auto noGradFillSize = Vec2 { fillWidth, noGradLength }.abs();
+                    frame.cache.noteParts.push_back({
+                        .position = note.position + Vec2 { 0.0, noGradLength / 2.0 } - noGradFillSize / 2.0,
+                        .size = noGradFillSize,
+                        .topColor = style.bodyFillColor, .bottomColor = style.bodyFillColor,
+                        .isCircle = false
+                    });
+
+                    auto gradFillSize = Vec2 { fillWidth, gradLength }.abs();
+                    frame.cache.noteParts.push_back({
+                        .position = note.position + Vec2 { 0.0, noGradLength + gradLength / 2.0 } - gradFillSize / 2.0,
+                        .size = gradFillSize,
+                        .topColor = style.bodyFillColor.applyAlpha(0.0), .bottomColor = style.bodyFillColor,
+                        .isCircle = false
+                    });
+
+                    auto noGradStrokeSize = Vec2 { strokeWidth, noGradLength }.abs();
+                    frame.cache.noteParts.push_back({
+                        .position = note.position + Vec2 { fillWidth / 2.0 + strokeWidth / 2.0, noGradLength / 2.0 } - noGradStrokeSize / 2.0,
+                        .size = noGradStrokeSize,
+                        .topColor = style.bodyStrokeColor, .bottomColor = style.bodyStrokeColor,
+                        .isCircle = false
+                    });
+
+                    auto gradStrokeSize = Vec2 { strokeWidth, gradLength }.abs();
+                    frame.cache.noteParts.push_back({
+                        .position = note.position + Vec2 { fillWidth / 2.0 + strokeWidth / 2.0, noGradLength + gradLength / 2.0 } - gradStrokeSize / 2.0,
+                        .size = gradStrokeSize,
+                        .topColor = style.bodyStrokeColor.applyAlpha(0.0), .bottomColor = style.bodyStrokeColor,
+                        .isCircle = false
+                    });
+
+                    frame.cache.noteParts.push_back({
+                        .position = note.position + Vec2 { (fillWidth / 2.0 + strokeWidth / 2.0) * -1, noGradLength / 2.0 } - noGradStrokeSize / 2.0,
+                        .size = noGradStrokeSize,
+                        .topColor = style.bodyStrokeColor, .bottomColor = style.bodyStrokeColor,
+                        .isCircle = false
+                    });
+
+                    frame.cache.noteParts.push_back({
+                        .position = note.position + Vec2 { (fillWidth / 2.0 + strokeWidth / 2.0) * -1, noGradLength + gradLength / 2.0 } - gradStrokeSize / 2.0,
+                        .size = gradStrokeSize,
+                        .topColor = style.bodyStrokeColor.applyAlpha(0.0), .bottomColor = style.bodyStrokeColor,
+                        .isCircle = false
+                    });
+                }
+
+                for (uint64 i = style.bodyIndex; i < style.circles.size(); i++) {
+                    auto& circle = style.circles[i];
+                    auto radius = circle.radius * note.scale;
+
+                    frame.cache.noteParts.push_back({
+                        .position = note.position - radius,
+                        .size = radius * 2.0,
+                        .topColor = circle.color, .bottomColor = circle.color,
+                        .isCircle = true
+                    });
+                }
             }
 
-            // frame.objects.push_back(RizCalculatedFrame::CalculatedClipEnd {});
+            frame.objects.push_back(RizCalculatedFrame::CalculatedNotePartSet {
+                .items = (RizCalculatedFrame::CalculatedNotePartSet::Item*)notePartStartIndex,
+                .count = frame.cache.noteParts.size() - notePartStartIndex,
+                .clipCenter = maskCenter,
+                .clipRadius = maskRadius
+            });
+
+            frame.cache.notePartSetIndexs.push_back(frame.objects.size() - 1);
+        }
+
+        for (auto index : frame.cache.notePartSetIndexs) {
+            auto& partSet = std::get<RizCalculatedFrame::CalculatedNotePartSet>(frame.objects[index]);
+            partSet.items = frame.cache.noteParts.data() + (uint64)partSet.items; // 这里不能取下标, 无 note 的情况下可能会触发越界检查
         }
     }
 
@@ -7552,7 +7581,115 @@ void main() {
                     continue;
                 }
 
-                if (std::holds_alternative<RizCalculatedFrame::CalculatedLineRing>(obj)) {
+                if (std::holds_alternative<RizCalculatedFrame::CalculatedLineSet>(obj)) {
+                    auto& lineSet = std::get<RizCalculatedFrame::CalculatedLineSet>(obj);
+                    lineSet.check();
+
+                    if (!lineSet.segCount || lineSet.width < 0.0) continue;
+
+                    auto halfWidth = lineSet.width / 2.0;
+                    const uint64 capSeg = 6;
+                    const uint64 capVertexCount = 3 * capSeg;
+
+                    static_assert(capSeg > 1, "capSeg must be greater than 1");
+
+                    thread_local float64 sinCosTable[capSeg - 1][2];
+                    thread_local bool sinCosTableInitialized = false;
+
+                    if (!sinCosTableInitialized) {
+                        for (uint64 i = 1; i < capSeg; i++) {
+                            auto a = std::numbers::pi * i / capSeg;
+                            sinCosTable[i - 1][0] = std::sin(a);
+                            sinCosTable[i - 1][1] = std::cos(a);
+                        }
+
+                        sinCosTableInitialized = true;
+                    }
+
+                    auto mesh = glCtx->requestMesh((6 + 2 * capVertexCount) * lineSet.segCount);
+                    mesh.program = circClipDefaultProg.get();
+                    mesh.color = GLvec4::White();
+
+                    {
+                        auto guard = mesh.program->use();
+                        mesh.program->getUniformLocation("uScreenSize").setf(calcConfig.screenSize.x, calcConfig.screenSize.y);
+                        mesh.program->getUniformLocation("uClipCenter").setv2(lineSet.clipCenter);
+                        mesh.program->getUniformLocation("uClipRadius").setf(lineSet.clipRadius);
+                    }
+
+                    for (uint64 i = 0; i < lineSet.count - 1; i++) {
+                        auto& it1 = lineSet.items[i];
+                        if (!it1.connectToNext) continue;
+
+                        auto& it2 = lineSet.items[i + 1];
+
+                        auto dir = it2.position - it1.position;
+                        auto len = dir.length() / halfWidth;
+                        if (len != 0.0) dir = Vec2 { -dir.y, dir.x } / len;
+                        else dir = { 0.0, halfWidth };
+
+                        GLvec2 p1 = it1.position + dir;
+                        GLvec2 p2 = it1.position - dir;
+                        GLvec2 p3 = it2.position - dir;
+                        GLvec2 p4 = it2.position + dir;
+
+                        *mesh.vnext() = { p1, { 0.5, 0.5 }, it1.color };
+                        *mesh.vnext() = { p2, { 0.5, 0.5 }, it1.color };
+                        *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
+
+                        *mesh.vnext() = { p1, { 0.5, 0.5 }, it1.color };
+                        *mesh.vnext() = { p4, { 0.5, 0.5 }, it2.color };
+                        *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
+
+                        if (i == 0 || !lineSet.items[i - 1].connectToNext) { // start
+                            GLvec2 v = p1;
+
+                            for (uint64 j = 0; j < capSeg - 1; j++) {
+                                auto s = sinCosTable[j][0], c = sinCosTable[j][1];
+
+                                GLvec2 nv = it1.position + Vec2 {
+                                    dir.x * c - dir.y * s,
+                                    dir.x * s + dir.y * c
+                                };
+
+                                *mesh.vnext() = { it1.position, { 0.5, 0.5 }, it1.color };
+                                *mesh.vnext() = { v, { 0.5, 0.5 }, it1.color };
+                                *mesh.vnext() = { nv, { 0.5, 0.5 }, it1.color };
+
+                                v = nv;
+                            }
+
+                            *mesh.vnext() = { it1.position, { 0.5, 0.5 }, it1.color };
+                            *mesh.vnext() = { v, { 0.5, 0.5 }, it1.color };
+                            *mesh.vnext() = { p2, { 0.5, 0.5 }, it1.color };
+                        }
+
+                        if (!it2.connectToNext) { // end
+                            GLvec2 v = p4;
+
+                            for (uint64 j = 0; j < capSeg - 1; j++) {
+                                auto s = sinCosTable[j][0], c = sinCosTable[j][1];
+
+                                GLvec2 nv = it2.position + Vec2 {
+                                    dir.x * c + dir.y * s,
+                                    -dir.x * s + dir.y * c
+                                };
+
+                                *mesh.vnext() = { it2.position, { 0.5, 0.5 }, it2.color };
+                                *mesh.vnext() = { v, { 0.5, 0.5 }, it2.color };
+                                *mesh.vnext() = { nv, { 0.5, 0.5 }, it2.color };
+
+                                v = nv;
+                            }
+
+                            *mesh.vnext() = { it2.position, { 0.5, 0.5 }, it2.color };
+                            *mesh.vnext() = { v, { 0.5, 0.5 }, it2.color };
+                            *mesh.vnext() = { p3, { 0.5, 0.5 }, it2.color };
+                        }
+                    }
+
+                    cvs.drawMesh(mesh);
+                } else if (std::holds_alternative<RizCalculatedFrame::CalculatedLineRing>(obj)) {
                     auto& ring = std::get<RizCalculatedFrame::CalculatedLineRing>(obj);
 
                     auto mesh = glCtx->requestMesh(6);
@@ -7566,112 +7703,46 @@ void main() {
                     }
 
                     cvs.drawMesh(mesh);
-                } else if (std::holds_alternative<RizCalculatedFrame::CalculatedNote>(obj)) {
-                    auto& note = std::get<RizCalculatedFrame::CalculatedNote>(obj);
-                    auto& style = *note.styleRef;
+                } else if (std::holds_alternative<RizCalculatedFrame::CalculatedNotePartSet>(obj)) {
+                    auto& partSet = std::get<RizCalculatedFrame::CalculatedNotePartSet>(obj);
+                    if (!partSet.count) continue;
 
-                    cvs.save();
-                    cvs.translate(note.position);
-                    cvs.scale(note.scale);
-
-                    {
-                        auto mesh = glCtx->requestMesh(6 * style.bodyIndex);
-                        mesh.program = glCtx->preloadedPrograms.circle.get();
-                        mesh.color = GLvec4::White();
-
-                        {
-                            auto guard = mesh.program->use();
-                            mesh.program->getUniformLocation("uRingRadius").setf(0.0);
-                        }
-
-                        for (uint64 i = 0; i < style.bodyIndex; i++) {
-                            auto& circle = style.circles[i];
-                            mesh.addRectCentered({}, circle.radius, { 0.5, 0.5 }, { 0.5, 0.5 }, circle.color);
-                        }
-
-                        cvs.drawMesh(mesh);
-                    }
+                    auto mesh = glCtx->requestMesh(6 * partSet.count);
+                    mesh.program = circClipCircleProg.get();
+                    mesh.color = GLvec4::White();
 
                     {
-                        auto mesh = glCtx->requestMesh(6 * 6);
-                        mesh.color = GLvec4::White();
-                        
-                        auto noGradientLength = note.tailDeltaY * style.bodyGradientPoint;
-                        auto gradientLength = note.tailDeltaY *  (1.0 - style.bodyGradientPoint);
-                        
-                        mesh.addRectCentered(
-                            Vec2 { 0.0, noGradientLength / 2.0 },
-                            Vec2 { style.bodyFillWidth, noGradientLength }.abs() / 2.0,
-                            { 0.5, 0.5 }, { 0.5, 0.5 },
-                            style.bodyFillColor
-                        );
-
-                        mesh.addGradientRectCentered(
-                            Vec2 { 0.0, noGradientLength + gradientLength / 2.0 },
-                            Vec2 { style.bodyFillWidth, gradientLength }.abs() / 2.0,
-                            { 0.5, 0.5 }, { 0.5, 0.5 },
-                            {
-                                style.bodyFillColor.applyAlpha(0.0), style.bodyFillColor.applyAlpha(0.0),
-                                style.bodyFillColor, style.bodyFillColor
-                            }
-                        );
-
-                        mesh.addRectCentered(
-                            Vec2 { style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0, noGradientLength / 2.0 },
-                            Vec2 { style.bodyStrokeWidth, noGradientLength }.abs() / 2.0,
-                            { 0.5, 0.5 }, { 0.5, 0.5 },
-                            style.bodyStrokeColor
-                        );
-
-                        mesh.addGradientRectCentered(
-                            Vec2 { style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0, noGradientLength + gradientLength / 2.0 },
-                            Vec2 { style.bodyStrokeWidth, gradientLength }.abs() / 2.0,
-                            { 0.5, 0.5 }, { 0.5, 0.5 },
-                            {
-                                style.bodyStrokeColor.applyAlpha(0.0), style.bodyStrokeColor.applyAlpha(0.0),
-                                style.bodyStrokeColor, style.bodyStrokeColor
-                            }
-                        );
-
-                        mesh.addRectCentered(
-                            Vec2 { (style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0) * -1, noGradientLength / 2.0 },
-                            Vec2 { style.bodyStrokeWidth, noGradientLength }.abs() / 2.0,
-                            { 0.5, 0.5 }, { 0.5, 0.5 },
-                            style.bodyStrokeColor
-                        );
-
-                        mesh.addGradientRectCentered(
-                            Vec2 { (style.bodyFillWidth / 2.0 + style.bodyStrokeWidth / 2.0) * -1, noGradientLength + gradientLength / 2.0 },
-                            Vec2 { style.bodyStrokeWidth, gradientLength }.abs() / 2.0,
-                            { 0.5, 0.5 }, { 0.5, 0.5 },
-                            {
-                                style.bodyStrokeColor.applyAlpha(0.0), style.bodyStrokeColor.applyAlpha(0.0),
-                                style.bodyStrokeColor, style.bodyStrokeColor
-                            }
-                        );
-
-                        cvs.drawMesh(mesh);
+                        auto guard = mesh.program->use();
+                        mesh.program->getUniformLocation("uRingRadius").setf(0.0);
+                        mesh.program->getUniformLocation("uScreenSize").setf(calcConfig.screenSize.x, calcConfig.screenSize.y);
+                        mesh.program->getUniformLocation("uClipCenter").setv2(partSet.clipCenter);
+                        mesh.program->getUniformLocation("uClipRadius").setf(partSet.clipRadius);
                     }
 
-                    {
-                        auto mesh = glCtx->requestMesh(6 * (style.circles.size() - style.bodyIndex));
-                        mesh.program = glCtx->preloadedPrograms.circle.get();
-                        mesh.color = GLvec4::White();
+                    for (uint64 i = 0; i < partSet.count; i++) {
+                        auto& it = partSet.items[i];
+                        GLvec2 position = it.position, size = it.size;
 
-                        {
-                            auto guard = mesh.program->use();
-                            mesh.program->getUniformLocation("uRingRadius").setf(0.0);
+                        if (it.isCircle) {
+                            *mesh.vnext() = { position, { 0.0, 0.0 }, it.topColor };
+                            *mesh.vnext() = { position + GLvec2 { size.x, 0.0 }, { 1.0, 0.0 }, it.topColor };
+                            *mesh.vnext() = { position + size, { 1.0, 1.0 }, it.bottomColor };
+
+                            *mesh.vnext() = { position, { 0.0, 0.0 }, it.topColor };
+                            *mesh.vnext() = { position + GLvec2 { 0.0, size.y }, { 0.0, 1.0 }, it.bottomColor };
+                            *mesh.vnext() = { position + size, { 1.0, 1.0 }, it.bottomColor };
+                        } else {
+                            *mesh.vnext() = { position, { 0.5, 0.5 }, it.topColor };
+                            *mesh.vnext() = { position + GLvec2 { size.x, 0.0 }, { 0.5, 0.5 }, it.topColor };
+                            *mesh.vnext() = { position + size, { 0.5, 0.5 }, it.bottomColor };
+
+                            *mesh.vnext() = { position, { 0.5, 0.5 }, it.topColor };
+                            *mesh.vnext() = { position + GLvec2 { 0.0, size.y }, { 0.5, 0.5 }, it.bottomColor };
+                            *mesh.vnext() = { position + size, { 0.5, 0.5 }, it.bottomColor };
                         }
-
-                        for (uint64 i = style.bodyIndex; i < style.circles.size(); i++) {
-                            auto& circle = style.circles[i];
-                            mesh.addRectCentered({}, circle.radius, { 0.5, 0.5 }, { 0.5, 0.5 }, circle.color);
-                        }
-
-                        cvs.drawMesh(mesh);
                     }
 
-                    cvs.restore();
+                    cvs.drawMesh(mesh);
                 }
             }
 
@@ -7693,6 +7764,8 @@ void main() {
         private:
         RenderResultInfo renderResultInfoCache;
         std::unordered_map<EnumRizNoteType, gsp<DecodedAudio>> hitsoundAudios;
+        gsp<GL::ProgramInfo> circClipDefaultProg;
+        gsp<GL::ProgramInfo> circClipCircleProg;
 
         void loadResources() {
             using namespace GL;
@@ -7705,6 +7778,67 @@ void main() {
                 auto data = hitsoundDataLoader(type);
                 hitsoundAudios[type] = audioManager.decodeAndCheck(data);
             }
+
+            circClipDefaultProg = glCtx->createConfiguredProgram(GL33Context::CreateProgramConfig { .fragCode = R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+in vec4 vColor;
+in vec2 vPosition;
+
+uniform vec4 uColor;
+uniform vec2 uScreenSize;
+uniform vec2 uClipCenter;
+uniform float uClipRadius;
+
+out vec4 outColor;
+
+void main() {
+    outColor = vColor * uColor;
+
+    float dist = length((vPosition * vec2(1.0, -1.0) + 1.0) / 2.0 * uScreenSize - uClipCenter) / uClipRadius / 2.0;
+    float edgeWidth = fwidth(dist);
+    float mask = 1.0 - smoothstep(0.5 - edgeWidth, 0.5, dist);
+    outColor.a *= mask;
+}
+)" }.defaultColorVert());
+
+            circClipDefaultProg->fragConfig.textureUniformName = std::nullopt;
+
+            circClipCircleProg = glCtx->createConfiguredProgram(GL33Context::CreateProgramConfig { .fragCode = R"(
+#version 330 core
+
+in vec2 fragTexCoord;
+in vec4 vColor;
+in vec2 vPosition;
+
+uniform vec4 uColor;
+uniform float uRingRadius;
+uniform vec2 uScreenSize;
+uniform vec2 uClipCenter;
+uniform float uClipRadius;
+
+out vec4 outColor;
+
+void main() {
+    outColor = vColor * uColor;
+
+    float dist = length(fragTexCoord - vec2(0.5));
+    float edgeWidth = fwidth(dist);
+
+    float outerMask = 1.0 - smoothstep(0.5 - edgeWidth, 0.5, dist);
+    float innerMask = uRingRadius > 0.0 ?  smoothstep(uRingRadius - edgeWidth, uRingRadius + edgeWidth, dist) : 1.0;
+    float finalAlpha = outerMask * innerMask;
+    outColor.a *= finalAlpha;
+
+    float clipDist = length((vPosition * vec2(1.0, -1.0) + 1.0) / 2.0 * uScreenSize - uClipCenter) / uClipRadius / 2.0;
+    float clipEdgeWidth = fwidth(clipDist);
+    float clipMask = 1.0 - smoothstep(0.5 - clipEdgeWidth, 0.5, clipDist);
+    outColor.a *= clipMask;
+}
+)" }.defaultColorVert());
+
+            circClipCircleProg->fragConfig.textureUniformName = std::nullopt;
         }
     };
 
