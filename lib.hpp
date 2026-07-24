@@ -7180,6 +7180,10 @@ void main() {
             auto& theme = chart.themes[&chTime - &chart.challengeTimes.front() + 1];
             auto transProgress = std::min(pIn, pOut);
 
+            if (transProgress == 1.0) {
+                frame.cache.themes.clear();
+            }
+
             frame.cache.themes.push_back({
                 .theme = theme,
                 .transProgress = transProgress,
