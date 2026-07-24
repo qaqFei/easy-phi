@@ -106,7 +106,7 @@ namespace geasy_phi {
             gsp<GL::TextureInfo> illustionTexture;
 
             void check() {
-                gassert::assert(!!textureDecoder, "SharedComp: textureDecoder is not set");
+                gassert::asrt(!!textureDecoder, "SharedComp: textureDecoder is not set");
             }
         };
 
@@ -120,8 +120,8 @@ namespace geasy_phi {
             gsp<DecodedAudio> bgmAudio;
 
             void check() {
-                gassert::assert(!!decoder, "AudioManager: decoder is not set");
-                gassert::assert(!!engine, "AudioManager: engine is not set");
+                gassert::asrt(!!decoder, "AudioManager: decoder is not set");
+                gassert::asrt(!!engine, "AudioManager: engine is not set");
             }
 
             gsp<DecodedAudio> decodeAndCheck(const Data& data) {
@@ -3559,12 +3559,12 @@ namespace geasy_phi {
         PhiCalculatedFrame calculatedFrame;
 
         void init() {
-            gassert::assert(!!noteTextureDataLoader, "PhiTakeOverer: noteTextureDataLoader is not set");
-            gassert::assert(!!hitEffectDataLoader, "PhiTakeOverer: hitEffectDataLoader is not set");
-            gassert::assert(!!hitsoundDataLoader, "PhiTakeOverer: hitsoundDataLoader is not set");
-            gassert::assert(!!storyboardDataLoader, "PhiTakeOverer: storyboardDataLoader is not set");
-            gassert::assert(!!shaderDataLoader, "PhiTakeOverer: shaderDataLoader is not set");
-            gassert::assert(!!glCtx, "PhiTakeOverer: glCtx is not set");
+            gassert::asrt(!!noteTextureDataLoader, "PhiTakeOverer: noteTextureDataLoader is not set");
+            gassert::asrt(!!hitEffectDataLoader, "PhiTakeOverer: hitEffectDataLoader is not set");
+            gassert::asrt(!!hitsoundDataLoader, "PhiTakeOverer: hitsoundDataLoader is not set");
+            gassert::asrt(!!storyboardDataLoader, "PhiTakeOverer: storyboardDataLoader is not set");
+            gassert::asrt(!!shaderDataLoader, "PhiTakeOverer: shaderDataLoader is not set");
+            gassert::asrt(!!glCtx, "PhiTakeOverer: glCtx is not set");
 
             textManager.glCtx = glCtx;
 
@@ -5765,11 +5765,11 @@ void main() {
         uint64 circHitEffectTexsCount = 60;
 
         void init() {
-            gassert::assert(!!lineHeadTextureLoader, "MilTakeOverer: lineHeadTextureLoader is not set");
-            gassert::assert(!!noteTextureDataLoader, "MilTakeOverer: noteTextureDataLoader is not set");
-            gassert::assert(!!hitsoundDataLoader, "MilTakeOverer: hitsoundDataLoader is not set");
-            gassert::assert(!!pauseButtonTextureDataLoader, "MilTakeOverer: pauseButtonTextureDataLoader is not set");
-            gassert::assert(!!glCtx, "MilTakeOverer: glCtx is not set");
+            gassert::asrt(!!lineHeadTextureLoader, "MilTakeOverer: lineHeadTextureLoader is not set");
+            gassert::asrt(!!noteTextureDataLoader, "MilTakeOverer: noteTextureDataLoader is not set");
+            gassert::asrt(!!hitsoundDataLoader, "MilTakeOverer: hitsoundDataLoader is not set");
+            gassert::asrt(!!pauseButtonTextureDataLoader, "MilTakeOverer: pauseButtonTextureDataLoader is not set");
+            gassert::asrt(!!glCtx, "MilTakeOverer: glCtx is not set");
 
             textManager.glCtx = glCtx;
 
@@ -7002,14 +7002,14 @@ void main() {
                         auto& np = items[i + 1];
                         if (p.connectToNext) segCount++;
 
-                        gassert::assert(p.connectToNext || np.connectToNext, "connectToNext is false for both points");
+                        gassert::asrt(p.connectToNext || np.connectToNext, "connectToNext is false for both points");
                     }
 
-                    gassert::assert(items[0].connectToNext, "connectToNext is false for first point");
-                    gassert::assert(!items[count - 1].connectToNext, "connectToNext is true for last point");
+                    gassert::asrt(items[0].connectToNext, "connectToNext is false for first point");
+                    gassert::asrt(!items[count - 1].connectToNext, "connectToNext is true for last point");
                 }
 
-                gassert::assert(segCount == this->segCount, "segCount is not correct");
+                gassert::asrt(segCount == this->segCount, "segCount is not correct");
             }
         };
 
@@ -7486,8 +7486,8 @@ void main() {
         RizCalculatedFrame calculatedFrame;
 
         void init() {
-            gassert::assert(!!hitsoundDataLoader, "RizTakeOverer: hitsoundDataLoader is not set");
-            gassert::assert(!!glCtx, "RizTakeOverer: glCtx is not set");
+            gassert::asrt(!!hitsoundDataLoader, "RizTakeOverer: hitsoundDataLoader is not set");
+            gassert::asrt(!!glCtx, "RizTakeOverer: glCtx is not set");
 
             textManager.glCtx = glCtx;
 
