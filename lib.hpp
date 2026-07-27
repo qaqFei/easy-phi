@@ -4151,8 +4151,9 @@ void main() {
             if (customEaseArr.has_value()) {
                 auto& values = customEaseArr.value();
                 p = std::clamp(p, 0.0, 1.0);
-                auto s = values[(uint64)(p * (values.size() - 1))];
-                auto e = values[(uint64)(p * (values.size() - 1)) + 1];
+                uint64 idx = (uint64)(p * (values.size() - 1));
+                auto s = values[idx];
+                auto e = values[idx < values.size() - 1 ? idx + 1 : idx];
                 p = std::fmod(p, 1.0 / (values.size() - 1)) * (values.size() - 1);
                 return s + (e - s) * p;
             }
