@@ -427,7 +427,6 @@ namespace geasy_phi {
         float64 cumulativeValueAtStart;
 
         float64 getProgress(float64 t) noexcept {
-            // if (t < timeZone.x) return 0.0;
             return std::clamp((t - timeZone.x) / (timeZone.y - timeZone.x), 0.0, 1.0);
         }
 
@@ -7508,6 +7507,7 @@ void main() {
 
         struct MixBgmConfig {
             float64 musicVol = 1.0, sfxVol = 1.0;
+            bool sfxRandshake = false;
         };
 
         gsp<DecodedAudio> mixFinalBgm(const RizChart& chart, const MixBgmConfig& config) {
@@ -7516,7 +7516,18 @@ void main() {
             auto result = audioManager.bgmAudio->copy();
             result->applyVolume(config.musicVol);
             
-            // ...
+            std::mt19937 rng { std::random_device {} () };
+            std::uniform_real_distribution<float64> sfxRandshakeDist { 0.0, 0.02 };
+
+            for (const auto& line : chart.lines) {
+                for (const auto& note : line.notes) {
+                    float64 t = note.timeZone.x;
+                    if (config.sfxRandshake) t += sfxRandshakeDist(rng);
+
+                    auto sfx = hitsoundAudios.at(note.type);
+                    result->overlapSecond(sfx, t, config.sfxVol);
+                }
+            }
 
             return result;
         }
