@@ -5430,6 +5430,74 @@ void main() {
             .color = Color::Black().applyAlpha(chart.options.backgroundDim)
         });
 
+
+        for (uint64 i = chart.state.firstHitEffectIndex; i < chart.hitEffects.size(); i++) {
+            auto& hitEffect = chart.hitEffects[i];
+            if (hitEffect.time > time) break;
+            
+            auto& line = chart.lines[hitEffect.lineIndex];
+            auto& note = line.notes[hitEffect.noteIndex];
+
+            auto info = chart.getNoteFrameInfo(line, note, time, config.screenSize);
+
+            if (hitEffect.getEndTime(chart.options.hitEffectDuration) < time) {
+                chart.state.passedHitEffectIndex(i);
+                continue;
+            }
+
+            auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
+
+            if (progress <= 1.0) {
+                frame.addObject(frame.cache.hitEffectCircs, MilCalculatedFrame::CalculatedHitEffectTexture {
+                    .position = info.headPosition,
+                    .size = Vec2(lineHeadBase * 4.632 * (1.0 - std::pow(1.0 - progress, 3.0))) * info.scale.max(),
+                    .progress = progress,
+                    .rotation = hitEffect.texRotation,
+                    .color = chart.options.particleRGBColor.get(0.065 + progress * 0.4).setAlpha(1.0)
+                }, screenArea);
+            }
+
+            for (auto& particle : hitEffect.particles) {
+                auto particleTime = hitEffect.time + particle.dt;
+                if (particleTime > time) break;
+                if (particleTime + chart.options.hitEffectDuration < time) continue;
+
+                auto progress = std::clamp((time - particleTime) / chart.options.hitEffectDuration, 0.0, 1.0);
+                auto noteScaling = info.scale.max() * chart.options.noteScaling;
+                auto size = particle.initialSize * config.screenSize.sum();
+                auto r = particle.getRadius(progress) * config.screenSize.sum();
+                auto rotate = particle.rotate;
+                auto color = chart.options.particleRGBColor.get(progress);
+                color.a = chart.options.particleAlphaColor.get(progress).a;
+
+                auto particlePos = info.headPosition.rotateDegrees(rotate, r * noteScaling);
+                particlePos.y += particle.getDeltaY(progress) * config.screenSize.sum() * noteScaling;
+
+                rotate += (rotate - (particlePos - info.headPosition).atanDegrees()) * 2;
+
+                auto& item = frame.cache.hitEffectParticles.emplace_back();
+                item.position = particlePos;
+                item.radius = particle.getScale(progress) * size * noteScaling;
+                item.rotation = rotate;
+                item.color = color;
+
+                if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
+                    .position = item.position,
+                    .size = item.radius * 2.0,
+                    .rotation = item.rotation
+                }).data(), screenArea)) frame.cache.hitEffectParticles.pop_back();
+            }
+        }
+        
+        frame.objects.insert(frame.objects.end(), frame.cache.hitEffectCircs.begin(), frame.cache.hitEffectCircs.end());
+
+        frame.objects.push_back(MilCalculatedFrame::CalculatedParticles {
+            .items = frame.cache.hitEffectParticles.data(),
+            .count = frame.cache.hitEffectParticles.size()
+        });
+
+        calculateStoryboards(EnumMilStoryboardLayer::Normal);
+
         for (auto& line : chart.lines) {
             auto linePosition = chart.getObjectPosition(time, line, config.screenSize);
             auto lineRotation = chart.animator.get(line, time, EnumMilEventType::Rotation);
@@ -5544,67 +5612,7 @@ void main() {
             }
         }
 
-        for (uint64 i = chart.state.firstHitEffectIndex; i < chart.hitEffects.size(); i++) {
-            auto& hitEffect = chart.hitEffects[i];
-            if (hitEffect.time > time) break;
-            
-            auto& line = chart.lines[hitEffect.lineIndex];
-            auto& note = line.notes[hitEffect.noteIndex];
-
-            auto info = chart.getNoteFrameInfo(line, note, time, config.screenSize);
-
-            if (hitEffect.getEndTime(chart.options.hitEffectDuration) < time) {
-                chart.state.passedHitEffectIndex(i);
-                continue;
-            }
-
-            auto progress = (time - hitEffect.time) / chart.options.hitEffectDuration;
-
-            if (progress <= 1.0) {
-                frame.addObject(frame.cache.hitEffectCircs, MilCalculatedFrame::CalculatedHitEffectTexture {
-                    .position = info.headPosition,
-                    .size = Vec2(lineHeadBase * 4.632 * (1.0 - std::pow(1.0 - progress, 3.0))) * info.scale.max(),
-                    .progress = progress,
-                    .rotation = hitEffect.texRotation,
-                    .color = chart.options.particleRGBColor.get(0.065 + progress * 0.4).setAlpha(1.0)
-                }, screenArea);
-            }
-
-            for (auto& particle : hitEffect.particles) {
-                auto particleTime = hitEffect.time + particle.dt;
-                if (particleTime > time) break;
-                if (particleTime + chart.options.hitEffectDuration < time) continue;
-
-                auto progress = std::clamp((time - particleTime) / chart.options.hitEffectDuration, 0.0, 1.0);
-                auto noteScaling = info.scale.max() * chart.options.noteScaling;
-                auto size = particle.initialSize * config.screenSize.sum();
-                auto r = particle.getRadius(progress) * config.screenSize.sum();
-                auto rotate = particle.rotate;
-                auto color = chart.options.particleRGBColor.get(progress);
-                color.a = chart.options.particleAlphaColor.get(progress).a;
-
-                auto particlePos = info.headPosition.rotateDegrees(rotate, r * noteScaling);
-                particlePos.y += particle.getDeltaY(progress) * config.screenSize.sum() * noteScaling;
-
-                rotate += (rotate - (particlePos - info.headPosition).atanDegrees()) * 2;
-
-                auto& item = frame.cache.hitEffectParticles.emplace_back();
-                item.position = particlePos;
-                item.radius = particle.getScale(progress) * size * noteScaling;
-                item.rotation = rotate;
-                item.color = color;
-
-                if (!quadStrictlyIntersectRect(makeQuadFromRectInfo({
-                    .position = item.position,
-                    .size = item.radius * 2.0,
-                    .rotation = item.rotation
-                }).data(), screenArea)) frame.cache.hitEffectParticles.pop_back();
-            }
-        }
-
-        calculateStoryboards(EnumMilStoryboardLayer::Normal);
         frame.objects.insert(frame.objects.end(), frame.cache.trackObjects.begin(), frame.cache.trackObjects.end());
-        frame.objects.insert(frame.objects.end(), frame.cache.hitEffectCircs.begin(), frame.cache.hitEffectCircs.end());
 
         for (const auto type : {
             EnumMilFinalNoteType::Hold,
@@ -5614,11 +5622,6 @@ void main() {
             auto& objs = frame.cache.noteObjects[type];
             frame.objects.insert(frame.objects.end(), objs.begin(), objs.end());
         }
-
-        frame.objects.push_back(MilCalculatedFrame::CalculatedParticles {
-            .items = frame.cache.hitEffectParticles.data(),
-            .count = frame.cache.hitEffectParticles.size()
-        });
 
         calculateStoryboards(EnumMilStoryboardLayer::Foreground);
 
