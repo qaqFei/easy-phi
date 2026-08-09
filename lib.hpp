@@ -8028,4 +8028,15 @@ void main() {
             return Data::MakeFromGrain("geasy_phi/rizline" + key);
         }
     };
+
+    #define EasyPhiStaticResourcesUsePhi 0
+    #define EasyPhiStaticResourcesUseMil 0
+    #define EasyPhiStaticResourcesUseRiz 0
+
+    #define EasyPhiDropUnusedStaticResources() \
+        do { \
+            GRAIN_MACRO_HELPER_DROP_RESOURCES_01IFN(EasyPhiStaticResourcesUsePhi, "!geasy_phi/phigros/.*!"); \
+            GRAIN_MACRO_HELPER_DROP_RESOURCES_01IFN(EasyPhiStaticResourcesUseMil, "!geasy_phi/milthm/.*!"); \
+            GRAIN_MACRO_HELPER_DROP_RESOURCES_01IFN(EasyPhiStaticResourcesUseRiz, "!geasy_phi/rizline/.*!"); \
+        } while (0)
 }

@@ -596,6 +596,10 @@ namespace test_main {
     };
 
     #if defined(APP_TYPE_OPEN_RPE_RECORDER)
+
+    #undef EasyPhiStaticResourcesUsePhi
+    #define EasyPhiStaticResourcesUsePhi 1
+
     void entrypoint() {
         ArgsReader args;
 
@@ -791,6 +795,10 @@ namespace test_main {
         win->mainloop();
     }
     #elif defined(APP_TYPE_OPEN_MIL_RECORDER)
+
+    #undef EasyPhiStaticResourcesUseMil
+    #define EasyPhiStaticResourcesUseMil 1
+
     void entrypoint() {
         ArgsReader args;
 
@@ -949,6 +957,10 @@ namespace test_main {
         win->mainloop();
     }
     #elif defined(APP_TYPE_TEST_MIL)
+
+    #undef EasyPhiStaticResourcesUseMil
+    #define EasyPhiStaticResourcesUseMil 1
+
     void entrypoint() {
         ArgsReader args;
         
@@ -1011,6 +1023,10 @@ namespace test_main {
         }
     }
     #elif defined(APP_TYPE_TEST_RIZ)
+
+    #undef EasyPhiStaticResourcesUseRiz
+    #define EasyPhiStaticResourcesUseRiz 1
+
     void entrypoint() {
         ArgsReader args;
 
@@ -1070,5 +1086,7 @@ namespace test_main {
 }
 
 void entrypoint() {
+    EasyPhiDropUnusedStaticResources();
+    
     test_main::entrypoint();
 }
