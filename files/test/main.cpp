@@ -20,7 +20,7 @@ namespace test_main {
     struct WindowBase {
         gsp<gglfw3::Window> window;
         float64 frameBusyWaitPercentage = 0.8;
-        bool fullscreen, isPortrait;
+        bool fullscreen, isPortrait, hiddenWhenCreate;
         std::pair<uint64, uint64> surfaceSize;
         std::string chartDir;
 
@@ -101,11 +101,24 @@ namespace test_main {
 
             return true;
         }
+
+        friend void createGLfwWindow(WindowBase&);
+
+        private:
+        void onAudioSeekByMouse() {
+            float64 mouseX = window->getMousePos().first;
+            float64 progress = mouseX / window->getSize().first;
+            audioManagerRef->seekBgm(audioManagerRef->getBgmLength() * progress);
+        }
+
+        bool rightButtonIsDown;
     };
 
     void createGLfwWindow(WindowBase& wbase) {
         wbase.window = gglfw3::Window::Make();
         wbase.window->hint330Core()->hintMsaa(4);
+        wbase.window->setHidden(wbase.hiddenWhenCreate);
+
         if (wbase.fullscreen) wbase.window->setFullscreen();
         else {
             wbase.window->setSizeOfMonitor(0.6);
@@ -122,11 +135,19 @@ namespace test_main {
         wbase.window->mouseButtonCallback = [wbase = &wbase](int button, int action, int mods) {
             if (action == GLFW_PRESS) {
                 if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                    auto& audioManager = *wbase->audioManagerRef;
-                    float64 mouseX = wbase->window->getMousePos().first;
-                    auto progress = mouseX / wbase->window->getSize().first;
-                    audioManager.seekBgm(audioManager.getBgmLength() * progress);
+                    wbase->onAudioSeekByMouse();
+                    wbase->rightButtonIsDown = true;
                 }
+            } else if (action == GLFW_RELEASE) {
+                if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                    wbase->rightButtonIsDown = false;
+                }
+            }
+        };
+
+        wbase.window->cursorPosCallback = [wbase = &wbase](float64, float64) {
+            if (wbase->rightButtonIsDown) {
+                wbase->onAudioSeekByMouse();
             }
         };
 
@@ -604,8 +625,9 @@ namespace test_main {
         ArgsReader args;
 
         PhiWindow backendWin {};
+        backendWin.base.hiddenWhenCreate = true;
         backendWin.init();
-        backendWin.base.window->setHidden(true);
+        backendWin.base.window->setTitle("Open RPE Recorder - Preview");
 
         std::optional<ParsedRPEChartInfo> chartInfo;
 
@@ -803,8 +825,9 @@ namespace test_main {
         ArgsReader args;
 
         MilWindow backendWin {};
+        backendWin.base.hiddenWhenCreate = true;
         backendWin.init();
-        backendWin.base.window->setHidden(true);
+        backendWin.base.window->setTitle("Open Mil Recorder - Preview");
 
         Settings settings {
             .appKey = L"Open-Mil-Recorder",
