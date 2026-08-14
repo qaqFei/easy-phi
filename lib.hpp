@@ -310,7 +310,7 @@ namespace geasy_phi {
         MAX = PhiShaderUniform + 1
     };
 
-    enum class EnumPhiNoteType {
+    enum class EnumPhiNoteType : uint64 {
         Tap, Drag, Flick, Hold
     };
 

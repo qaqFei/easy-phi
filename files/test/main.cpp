@@ -3,6 +3,7 @@ namespace test_main {
     using gregapi::RegAPI;
     using gdata::Data;
     using gsp::gsp;
+    using gjson::JsonNode;
     using namespace gnumeric::types;
     using namespace gopengl::GL;
     using namespace geasy_phi;
@@ -308,6 +309,10 @@ namespace test_main {
 
         bool has(const std::string& name) {
             return std::find(args.begin(), args.end(), name) != args.end();
+        }
+
+        std::string get(const std::string& name) {
+            return args[std::find(args.begin(), args.end(), name) - args.begin() + 1];
         }
     };
 
@@ -1101,6 +1106,49 @@ namespace test_main {
                 break;
             }
         }
+    }
+    #elif defined(APP_TYPE_TOOL_PHI_HIT_POINT_EXPORT)
+
+    void entrypoint() {
+        ArgsReader args;
+
+        if (!args.has("--chart")) {
+            throw std::runtime_error("Missing --chart argument");
+        }
+
+        if (!args.has("--output")) {
+            throw std::runtime_error("Missing --output argument");
+        }
+
+        std::string chartPath = args.get("--chart");
+        auto chartData = Data::MakeFromFile(chartPath);
+        auto chart = loadPhiChartFromData(chartData);
+        chart.init();
+
+        auto result = JsonNode::MakeArray();
+
+        for (auto& line : chart.lines) {
+            for (auto& note : line.notes) {
+                if (note.isFake) continue;
+
+                auto jnote = JsonNode::MakeObject();
+                jnote["time"] = JsonNode::MakeNumber(note.time);
+                jnote["holdTime"] = JsonNode::MakeNumber(note.holdTime);
+                jnote["type"] = JsonNode::MakeNumber((uint64)note.type);
+
+                auto info = chart.getNoteFrameInfo(line, note, note.time, { 1.0, 1.0 });
+
+                auto jobj = JsonNode::MakeObject();
+                jobj["note"] = jnote;
+                jobj["x"] = JsonNode::MakeNumber(info.headPosition.x);
+                jobj["y"] = JsonNode::MakeNumber(info.headPosition.y);
+
+                result.getArray().push_back(jobj);
+            }
+        }
+
+        std::ofstream out(args.get("--output"));
+        out << result.toString() << std::endl;
     }
     #else
         #error "APP_TYPE is not defined"
