@@ -8027,6 +8027,10 @@ void main() {
             auto key = std::string("/hitsounds/") + name + ".wav";
             return Data::MakeFromGrain("geasy_phi/rizline" + key);
         }
+
+        static Data getFontData() {
+            return Data::MakeFromGrain("geasy_phi/rizline/font.ttf");
+        }
     };
 
     #define EasyPhiStaticResourcesUsePhi 0

@@ -258,7 +258,7 @@ namespace test_main {
             
             renderer->glCtx = base.glCtx;
             renderer->sharedComp.textureDecoder = gimage::decode;
-            renderer->textManager.renderer = createTextRendererFromData(MilStaticResourceHelpers::getFontData());
+            renderer->textManager.renderer = createTextRendererFromData(RizStaticResourceHelpers::getFontData());
             renderer->audioManager.decoder = gminiaudio::decode;
             renderer->audioManager.engine = gminiaudio::makeAudioEngine();
             renderer->init();

@@ -140,7 +140,8 @@
             "phigros/shaders/shockwave.glsl": "/resources/phigros/shaders/shockwave.glsl",
             "phigros/shaders/vignette.glsl": "/resources/phigros/shaders/vignette.glsl",
             "rizline/hitsounds/hit.wav": "/resources/rizline/hitsounds/hit.wav",
-            "rizline/hitsounds/drag.wav": "/resources/rizline/hitsounds/drag.wav"
+            "rizline/hitsounds/drag.wav": "/resources/rizline/hitsounds/drag.wav",
+            "rizline/font.ttf": "/resources/rizline/font.ttf"
         }
     },
     "type": "library",
