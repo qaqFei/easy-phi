@@ -6835,6 +6835,7 @@ void main() {
         struct UserOptions {
             float64 lineRingY = 0.7407;
             float64 lineRingSize = 0.032;
+            float64 lineRingSizeScaling = 1.0;
 
             float64 holdDisappearTime = 0.25;
         };
@@ -7410,7 +7411,7 @@ void main() {
         Rect screenArea = { 0.0, 0.0, config.screenSize.x, config.screenSize.y };
 
         auto lineRingY = config.screenSize.y * chart.options.lineRingY;
-        auto lineRingSize = config.screenSize.sum() * chart.options.lineRingSize;
+        auto lineRingSize = config.screenSize.sum() * chart.options.lineRingSize * chart.options.lineRingSizeScaling;
         auto standardLineWidth = lineRingSize * 0.078125;
         auto halfStandardLineWidth = standardLineWidth / 2.0;
 

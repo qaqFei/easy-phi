@@ -735,13 +735,13 @@ namespace test_main {
 
             pd.setLine(1, L"渲染视频...");
             uint64 frameCut = 0;
-            uint64 totalFrames = backendWin.renderer->calcConfig.songLength * settings.recordFPS;
+            uint64 totalFrames = backendWin.renderer->audioManager.getBgmLength() * settings.recordFPS;
             std::thread frameWriterThread(frameWriter);
             FramerateMeter fpsMeter {};
             
             while (true) {
                 float64 t = frameCut / settings.recordFPS;
-                if (t > backendWin.renderer->calcConfig.songLength) break;
+                if (t > backendWin.renderer->audioManager.getBgmLength()) break;
 
                 auto reGuard = videoRecorder->useFrame();
                 backendWin.mainloopFrame({
@@ -927,13 +927,13 @@ namespace test_main {
 
             pd.setLine(1, L"渲染视频...");
             uint64 frameCut = 0;
-            uint64 totalFrames = backendWin.renderer->calcConfig.songLength * settings.recordFPS;
+            uint64 totalFrames = backendWin.renderer->audioManager.getBgmLength() * settings.recordFPS;
             std::thread frameWriterThread(frameWriter);
             FramerateMeter fpsMeter {};
             
             while (true) {
                 float64 t = frameCut / settings.recordFPS;
-                if (t > backendWin.renderer->calcConfig.songLength) break;
+                if (t > backendWin.renderer->audioManager.getBgmLength()) break;
 
                 auto reGuard = videoRecorder->useFrame();
                 backendWin.mainloopFrame({
@@ -984,73 +984,7 @@ namespace test_main {
 
         win->mainloop();
     }
-    #elif defined(APP_TYPE_TEST_MIL)
-
-    #undef EasyPhiStaticResourcesUseMil
-    #define EasyPhiStaticResourcesUseMil 1
-
-    void entrypoint() {
-        ArgsReader args;
-        
-        std::vector<std::string> chartNames = {
-            "Dum! Dum!! Dum!!! - Tatsunoshin",
-            "Fly To Meteor (Milthm Edit) - ShooTinGStaR + xzadudu179 + Cyberspace",
-            "FULi AUTO SHOOTER - MYUKKE",
-            "INFP.mp3 - TsukiP",
-            "Moonflutter - Reku Mochizuki",
-            "oiiaioooooiai - 黑瘦的鱼头",
-            "Regnaissance - AiSS vs. Abit",
-            "WATER - A-39 & 沙包P",
-            "Welcome to Milthm - TsuKiP",
-            "☹ - Gray Planet",
-            "サイクルの欠片 - TsukiP",
-            "粗线条的雨 - 有棵里里",
-            "雨之城 - CsLrisEto",
-            "靈 - MYTK",
-            "驟雨の狭間 - Silentroom"
-        };
-        
-        SetConsoleOutputCP(CP_UTF8);
-        SetConsoleCP(CP_UTF8);
-
-        for (uint64 i = 0; i < (uint64)chartNames.size(); ++i) {
-            std::cout << (i + 1) << ". " << chartNames[i] << std::endl;
-        }
-
-        uint64 choice;
-        std::cout << ">> ";
-        std::cin >> choice;
-        choice -= 1;
-
-        if (choice < 0 || choice >= (uint64)chartNames.size()) {
-            std::cout << "Invalid choice" << std::endl;
-            return;
-        }
-
-        std::string prefix = "./milcharts/";
-        std::string chartPath = prefix + chartNames[choice] + "/.json"
-                  , imagePath = prefix + chartNames[choice] + "/.png"
-                  , audioPath = prefix + chartNames[choice] + "/.wav"
-                  , storyboardAssetsPath = prefix + chartNames[choice] + "/";
-
-        MilWindow window {};
-        window.base.fullscreen = args.has("--fullscreen");
-        window.init();
-        window.base.window->setSwapInterval(args.has("--disable-vsync") ? 0 : 1);
-
-        window.loadChart(chartPath, storyboardAssetsPath);
-        window.renderer->loadIllustion(imagePath);
-        window.renderer->audioManager.load(audioPath);
-
-        window.renderer->audioManager.startBgm();
-
-        while (!window.renderer->audioManager.getBpmIsEnded()) {
-            if (!window.mainloopFrame({})) {
-                break;
-            }
-        }
-    }
-    #elif defined(APP_TYPE_TEST_RIZ)
+    #elif defined(APP_TYPE_OPEN_RIZ_RECORDER)
 
     #undef EasyPhiStaticResourcesUseRiz
     #define EasyPhiStaticResourcesUseRiz 1
@@ -1058,54 +992,160 @@ namespace test_main {
     void entrypoint() {
         ArgsReader args;
 
-        std::vector<std::string> chartNames = {
-            "PastelLines",
-            "LAIGN",
-            "HeadBONKache",
-            "DotLinefeatななひら"
+        RizWindow backendWin {};
+        backendWin.base.hiddenWhenCreate = true;
+        backendWin.init();
+        backendWin.base.window->setTitle("Open Riz Recorder - Preview");
+
+        Settings settings {
+            .appKey = L"Open-Riz-Recorder",
+            .currentVersion = 0
         };
-        
-        SetConsoleOutputCP(CP_UTF8);
-        SetConsoleCP(CP_UTF8);
+        settings.fromRegistry();
 
-        for (uint64 i = 0; i < (uint64)chartNames.size(); ++i) {
-            std::cout << (i + 1) << ". " << chartNames[i] << std::endl;
-        }
+        auto win = Win32Window::Make({
+            .title = L"Open Riz Recorder"
+        });
 
-        uint64 choice;
-        std::cout << ">> ";
-        std::cin >> choice;
-        choice -= 1;
+        WinHelper whelper {
+            .win = win.get(),
+            .settings = &settings
+        };
 
-        if (choice < 0 || choice >= (uint64)chartNames.size()) {
-            std::cout << "Invalid choice" << std::endl;
-            return;
-        }
+        whelper.gameLoader = [&]() {
+            backendWin.loadChart(whelper.chartPath, whelper.chartRoot);
+            backendWin.renderer->chart.options.lineRingSizeScaling *= settings.noteScaling;
 
-        std::string prefix = "./rizcharts/";
-        std::string chartPath = prefix + chartNames[choice] + "/.json"
-                  , imagePath = prefix + chartNames[choice] + "/.png"
-                  , audioPath = prefix + chartNames[choice] + "/.wav"
-                  , chartDir = prefix + chartNames[choice] + "/";
+            backendWin.renderer->loadIllustion(whelper.imagePath);
+            backendWin.renderer->audioManager.load(whelper.audioPath);
+        };
 
-        RizWindow window {};
+        whelper.onPreview = [&]() {
+            backendWin.base.window->setHidden(false);
+            backendWin.base.window->setSwapInterval(args.has("--disable-vsync") ? 0 : 1);
+            backendWin.renderer->audioManager.startBgm();
 
-        window.base.isPortrait = true;
-        window.base.fullscreen = args.has("--fullscreen");
-        window.init();
-        window.base.window->setSwapInterval(args.has("--disable-vsync") ? 0 : 1);
+            backendWin.renderer->audioManager.setBgmVolume(settings.musicVol);
+            backendWin.renderer->audioManager.setSfxVolume(settings.sfxVol);
 
-        window.loadChart(chartPath, chartDir);
-        window.renderer->loadIllustion(imagePath);
-        window.renderer->audioManager.load(audioPath);
-
-        window.renderer->audioManager.startBgm();
-
-        while (!window.renderer->audioManager.getBpmIsEnded()) {
-            if (!window.mainloopFrame({})) {
-                break;
+            while (!backendWin.renderer->audioManager.getBpmIsEnded()) {
+                if (!backendWin.mainloopFrame({})) {
+                    backendWin.renderer->audioManager.stopBgm();
+                    break;
+                }
             }
-        }
+
+            backendWin.base.window->setHidden(true);
+        };
+
+        whelper.onRenderVideo = [&](const std::string& videoPath) {
+            gwin_progress_dialog::ProgressDialog pd {};
+            pd.setTitle(L"渲染视频");
+            pd.start();
+
+            pd.setLine(1, L"初始化...");
+            WinHiddenGuard whguard(win.get());
+
+            gvideoenc::VideoCap cap {};
+            cap.init(videoPath, settings.recordWidth, settings.recordHeight, settings.recordFPS);
+            
+            using FrameType = std::optional<uint64>;
+            gthread_safe_queue::ThreadSafeQueue<FrameType> frameQueue;
+
+            auto videoRecorder = VideoRecorder::Make(
+                backendWin.base.glCtx,
+                settings.recordWidth, settings.recordHeight,
+                [&](uint64 slotIndex) { frameQueue.enqueue(slotIndex); },
+                { .callbackIsThreadSafe = true }
+            );
+
+            auto frameWriter = [&]() {
+                FrameType frame;
+
+                while (true) {
+                    frameQueue.wait_dequeue(frame);
+                    if (!frame.has_value()) break;
+
+                    auto* yuv = videoRecorder->referYUVFrame(frame.value());
+                    cap.writeVideoFrame(yuv->dataPtrs().data(), yuv->rowBytes().data());
+                    videoRecorder->returnYUVFrame(frame.value());
+                }
+            };
+
+            backendWin.base.surfaceSize = { settings.recordWidth, settings.recordHeight };
+            backendWin.base.window->setSwapInterval(0);
+
+            pd.setLine(1, L"加载...");
+            if (!whelper.loadGame()) return;
+            
+            pd.setLine(1, L"渲染音频...");
+            auto mixedAudio = backendWin.renderer->mixFinalBgm(backendWin.renderer->chart, {
+                .musicVol = settings.musicVol,
+                .sfxVol = settings.sfxVol,
+                .sfxRandshake = settings.recordSfxRandshake
+            });
+
+            pd.setLine(1, L"写入音频...");
+            cap.writeAudio(mixedAudio);
+
+            pd.setLine(1, L"渲染视频...");
+            uint64 frameCut = 0;
+            uint64 totalFrames = backendWin.renderer->audioManager.getBgmLength() * settings.recordFPS;
+            std::thread frameWriterThread(frameWriter);
+            FramerateMeter fpsMeter {};
+            
+            while (true) {
+                float64 t = frameCut / settings.recordFPS;
+                if (t > backendWin.renderer->audioManager.getBgmLength()) break;
+
+                auto reGuard = videoRecorder->useFrame();
+                backendWin.mainloopFrame({
+                    .base = {
+                        .time = t,
+                        .isRenderingVideo = true
+                    }
+                });
+
+                frameCut++;
+                fpsMeter.frame();
+
+                pd.setProgress(frameCut, totalFrames);
+
+                {
+                    std::wstring msg = L"渲染视频... ";
+                    msg += std::to_wstring(frameCut) + L"/" + std::to_wstring(totalFrames) + L" (" + std::to_wstring((uint64)fpsMeter.get()) + L" fps)";
+                    pd.setLine(1, msg.c_str());
+                }
+            }
+
+            videoRecorder->finish();
+            frameQueue.enqueue(std::nullopt);
+            frameWriterThread.join();
+
+            pd.setLine(1, L"释放资源...");
+            std::wstring msg = L"渲染完成, 已保存到 " + Win32Utils::stringToWstring(videoPath);
+            showInfoMsg(win.get(), msg.c_str());
+        };
+
+        whelper.addGithubLink();
+
+        whelper.addChartChooseLabel();
+        whelper.addChartChooseInputs();
+
+        whelper.addGeneralSettingsLabel();
+        whelper.addGeneralSettingsInputs();
+        whelper.addVideoSettingsLabel();
+        whelper.addVideoSettingsInputs();
+
+        whelper.addPreviewButton();
+        whelper.addRenderVideoButton();
+
+        win->createWidgets();
+        win->doGrid();
+        win->resizeToGridBounds();
+        whelper.syncSettingsToUI();
+
+        win->mainloop();
     }
     #elif defined(APP_TYPE_TOOL_PHI_HIT_POINT_EXPORT)
 
