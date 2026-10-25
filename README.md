@@ -16,18 +16,13 @@ It is based on [grain](https://github.com/qaqFei/grain), a C++ package manager.
 
 - Phigros
 - Milthm
+- Rizline **(Not fully supported)**
 
 ## Features
 
 - **High Performance**: Optimized for performance, suitable for real-time rendering.
 - **Simple API**: Easy to use and understand.
 - **Game Utilities**: Support for handling game-related data or resources.
-
-## Working On
-
-- **Making it Easier**: We're making it easier to use easy-phi by clear and convient API design.
-
-- **Supporting More Games**: We're working on supporting more rhythm games, such as [Rizline](https://store.steampowered.com/app/2272590/Rizline/).
 
 ## Usage
 
