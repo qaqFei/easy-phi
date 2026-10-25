@@ -15,7 +15,7 @@ It is based on [grain](https://github.com/qaqFei/grain), a C++ package manager.
 ## Games Supported
 
 - Phigros
-- Milthm
+- Milthm **(No picture storyboards, no custom expressions, no clipped easings)**
 - Rizline **(Not fully supported)**
 
 ## Features

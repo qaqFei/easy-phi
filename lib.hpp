@@ -4061,6 +4061,7 @@ void main() {
         };
 
         NoteFlowSpeedBehavior noteFlowSpeedBehavior;
+        bool reverseLineRotation;
 
         Vec2 worldOrigin, worldViewport;
         float64 speedUnit;
@@ -4746,6 +4747,10 @@ void main() {
             auto noteColorIndexZone = animator.get_zone(note, time, EnumMilEventType::Color);
             auto noteColor = storyboardAssets.getColor(noteColorIndex, noteColorIndexZone);
             
+            if (meta.reverseLineRotation) {
+                lineRotation = 180.0 - lineRotation;
+            }
+            
             Transform2D lineTransform {};
             lineTransform.translate(linePosition);
             lineTransform.rotateDegrees(90 - lineRotation);
@@ -4898,20 +4903,25 @@ void main() {
         }
     };
 
-    MilChart loadMilChartFromDevJson(const Data& data) {
+    MilChart loadMilChartFromCommunityFmt1Json(const Data& data) {
         auto err = [](const std::string& msg) {
-            throw std::runtime_error(std::format("dev: {}", msg));
+            throw std::runtime_error(std::format("community fmt 1: {}", msg));
         };
 
         auto jsonRoot = JsonNode::Parse(data);
 
         MilChart chart {};
         chart.meta.noteFlowSpeedBehavior = MilMeta::NoteFlowSpeedBehavior::Override;
+        chart.meta.reverseLineRotation = true;
         chart.meta.worldOrigin = { (float64)-1920 / 2, (float64)1080 / 2 };
         chart.meta.worldViewport = { 1920, -1080 };
         chart.meta.speedUnit = 108.0;
 
         if (!jsonRoot.isObject()) err("root is not an object");
+
+        if (!jsonRoot.hasKey("fmt")) err("missing fmt");
+        if (!jsonRoot["fmt"].isNumber()) err("fmt is not a number");
+        if (jsonRoot["fmt"].getNumber() != 1) err("wrong fmt version");
 
         if (!jsonRoot.hasKey("meta")) err("missing meta");
         if (!jsonRoot["meta"].isObject()) err("meta is not an object");
@@ -5156,24 +5166,293 @@ void main() {
                 };
             }
 
-            if (animNode.hasKey("isCustomEase")) {
-                if (!animNode["isCustomEase"].isBool()) err("isCustomEase is not a bool");
-                
-                if (animNode["isCustomEase"].getBool()) {
-                    e.customEaseArr = std::vector<float64>();
-                    auto& customEaseArr = e.customEaseArr.value();
-                    
-                    if (!animNode.hasKey("customEaseArr")) err("missing customEaseArr");
-                    if (!animNode["customEaseArr"].isArray()) err("customEaseArr is not an array");
+            chart.animator.addEvent({ objType, objIndex }, e);
+        }
 
-                    for (auto& itNode : animNode["customEaseArr"].getArray()) {
-                        if (!itNode.isNumber()) err("customEaseArr item is not a number");
-                        customEaseArr.push_back(itNode.getNumber());
+        chart.rawHash = data.getHash();
+        return chart;
+    }
+    
+    MilChart loadMilChartFromCommunityFmt2Json(const Data& data) {
+        auto err = [](const std::string& msg) {
+            throw std::runtime_error(std::format("community fmt 2: {}", msg));
+        };
+
+        auto jsonRoot = JsonNode::Parse(data);
+
+        MilChart chart {};
+        chart.meta.noteFlowSpeedBehavior = MilMeta::NoteFlowSpeedBehavior::Multiply;
+        chart.meta.reverseLineRotation = true;
+        chart.meta.worldOrigin = { (float64)-1920 / 2, (float64)1080 / 2 };
+        chart.meta.worldViewport = { 1920, -1080 };
+        chart.meta.speedUnit = 108.0;
+
+        if (!jsonRoot.isObject()) err("root is not an object");
+
+        if (!jsonRoot.hasKey("fmt")) err("missing fmt");
+        if (!jsonRoot["fmt"].isNumber()) err("fmt is not a number");
+        if (jsonRoot["fmt"].getNumber() != 2) err("wrong fmt version");
+
+        if (!jsonRoot.hasKey("meta")) err("missing meta");
+        if (!jsonRoot["meta"].isObject()) err("meta is not an object");
+
+        auto& metaNode = jsonRoot["meta"];
+
+        if (!metaNode.hasKey("name")) err("missing name");
+        if (!metaNode["name"].isString()) err("name is not a string");
+        chart.meta.title = metaNode["name"].getString();
+
+        if (!metaNode.hasKey("music_artist")) err("missing music_artist");
+        if (!metaNode["music_artist"].isString()) err("music_artist is not a string");
+        chart.meta.composer = metaNode["music_artist"].getString();
+
+        if (!metaNode.hasKey("background_artist")) err("missing background_artist");
+        if (!metaNode["background_artist"].isString()) err("background_artist is not a string");
+        chart.meta.artist = metaNode["background_artist"].getString();
+
+        if (!metaNode.hasKey("charter")) err("missing charter");
+        if (!metaNode["charter"].isString()) err("charter is not a string");
+        chart.meta.charter = metaNode["charter"].getString();
+
+        if (!metaNode.hasKey("difficulty_name")) err("missing difficulty_name");
+        if (!metaNode["difficulty_name"].isString()) err("difficulty_name is not a string");
+        chart.meta.difficultyName = metaNode["difficulty_name"].getString();
+
+        if (!metaNode.hasKey("difficulty")) err("missing difficulty");
+        if (!metaNode["difficulty"].isNumber()) err("difficulty is not a number");
+        chart.meta.difficultyValue = metaNode["difficulty"].getNumber();
+
+        if (!metaNode.hasKey("offset")) err("missing offset");
+        if (!metaNode["offset"].isNumber()) err("offset is not a number");
+        auto offset = metaNode["offset"].getNumber();
+
+        std::vector<MilBPMEvent> bpms;
+
+        auto beatVal = [&](JsonNode& node, const std::string& key, float64* dst) {
+            if (!node.hasKey(key)) return false;
+            auto& beatNode = node[key];
+
+            if (!beatNode.isArray()) return false;
+            auto& beatArray = beatNode.getArray();
+
+            if (beatArray.size() < 3) return false;
+
+            auto& node1 = beatArray[0];
+            auto& node2 = beatArray[1];
+            auto& node3 = beatArray[2];
+
+            if (!node1.isNumber()) return false;
+            if (!node2.isNumber()) return false;
+            if (!node3.isNumber()) return false;
+
+            *dst = node1.getNumber() + node2.getNumber() / node3.getNumber();
+            return true;
+        };
+
+        auto secVal = [&](JsonNode& node, const std::string& key, float64* dst) {
+            float64 beat;
+            if (!beatVal(node, key, &beat)) return false;
+
+            float64 sec = 0.0;
+
+            for (uint64 i = 0; i < bpms.size(); i++) {
+                auto& e = bpms[i];
+
+                if (i != bpms.size() - 1) {
+                    float64 et_beat = bpms[i + 1].time - e.time;
+
+                    if (beat >= et_beat) {
+                        sec += et_beat * (60.0 / e.bpm);
+                        beat -= et_beat;
+                    } else {
+                        sec += beat * (60.0 / e.bpm);
+                        break;
                     }
+                } else {
+                    sec += beat * (60.0 / e.bpm);
                 }
             }
 
-            chart.animator.addEvent({ objType, objIndex }, e);
+            *dst = sec;
+            return true;
+        };
+
+        if (!jsonRoot.hasKey("bpms")) err("missing bpms");
+        if (!jsonRoot["bpms"].isArray()) err("bpms is not an array");
+
+        for (auto& bpmNode : jsonRoot["bpms"].getArray()) {
+            if (!bpmNode.isObject()) err("bpm is not an object");
+
+            float64 time;
+            if (!beatVal(bpmNode, "time", &time)) err("time is not a valid beat");
+
+            if (!bpmNode.hasKey("bpm")) err("missing bpm");
+            if (!bpmNode["bpm"].isNumber()) err("bpm is not a number");
+            float64 bpm = bpmNode["bpm"].getNumber();
+
+            bpms.push_back({ .time = time, .bpm = bpm });
+        }
+
+        auto cvtAnimVal = [](JsonNode& node, const std::string& key, float64* dst) {
+            if (!node.hasKey(key)) return false;
+
+            auto& valNode = node[key];
+
+            if (valNode.isNumber()) {
+                *dst = valNode.getNumber();
+                return true;
+            }
+
+            return false;
+        };
+
+        auto cvtColorAnimVal = [](JsonNode& node, const std::string& key, Color* dst) {
+            if (!node.hasKey(key)) return false;
+
+            auto& valNode = node[key];
+
+            if (valNode.isNumber()) {
+                try { *dst = Color::FromRGBA32Int(valNode.getNumber()); }
+                catch (...) { return false; }
+                return true;
+            }
+
+            return false;
+        };
+
+        uint64 eventIndex = 0;
+
+        auto loadAnims = [&](JsonNode& node) {
+            if (!node.hasKey("animations")) err("missing animations");
+            if (!node["animations"].isArray()) err("animations is not an array");
+
+            for (auto& animNode : node["animations"].getArray()) {
+                if (!animNode.isObject()) err("animation is not an object");
+
+                MilEvent e {};
+                e.index = eventIndex++;
+
+                if (!secVal(animNode, "startTime", &e.timeZone.x)) err("invalid startTime");
+                if (!secVal(animNode, "endTime", &e.timeZone.y)) err("invalid endTime");
+
+                if (!animNode.hasKey("type")) err("missing type");
+                if (!animNode["type"].isNumber()) err("type is not a string");
+                e.type = MilEventTypeHelper::FromInt(animNode["type"].getNumber());
+
+                if (e.type == EnumMilEventType::Color) {
+                    Color fv, tv;
+                    if (!cvtColorAnimVal(animNode, "start", &fv)) err("invalid start");
+                    if (!cvtColorAnimVal(animNode, "end", &tv)) err("invalid end");
+                    e.valueZone = chart.storyboardAssets.requestColorPair(fv, tv);
+                } else {
+                    if (!cvtAnimVal(animNode, "start", &e.valueZone.x)) err("invalid start");
+                    if (!cvtAnimVal(animNode, "end", &e.valueZone.y)) err("invalid end");
+                }
+
+                if (!animNode.hasKey("bearer_type")) err("missing bearer_type");
+                if (!animNode["bearer_type"].isNumber()) err("bearer_type is not a number");
+                auto objType = MilObjectTypeHelper::FromInt(animNode["bearer_type"].getNumber());
+
+                if (!animNode.hasKey("bearer")) err("missing bearer");
+                if (!animNode["bearer"].isNumber()) err("bearer is not a number");
+                uint64 objIndex = animNode["bearer"].getNumber();
+
+                if (!animNode.hasKey("ease")) err("missing ease");
+                if (!animNode["ease"].isObject()) err("ease is not an object");
+                auto& easeNode = animNode["ease"];
+
+                if (!easeNode.hasKey("type")) err("missing ease type");
+                if (!easeNode["type"].isNumber()) err("ease type is not a number");
+                uint64 ease = easeNode["type"].getNumber();
+
+                if (!easeNode.hasKey("press")) err("missing press");
+                if (!easeNode["press"].isNumber()) err("press is not a number");
+                uint64 press = easeNode["press"].getNumber();
+
+                if (press != 0) {
+                    e.easingFuncContext = (void*)EaseSet::Milthm::pack(ease, press);
+
+                    e.easingFunc = [](void* ctx, float64 p) {
+                        auto [ease, press] = EaseSet::Milthm::unpack((uint64)ctx);
+                        return EaseSet::Milthm::easing(ease, press, p);
+                    };
+
+                    e.easingIntFunc = [](void* ctx, float64 p) {
+                        auto [ease, press] = EaseSet::Milthm::unpack((uint64)ctx);
+                        return EaseSet::Milthm::easing_int(ease, press, p);
+                    };
+                }
+
+                chart.animator.addEvent({ objType, objIndex }, e);
+            }
+        };
+
+        if (!jsonRoot.hasKey("lines")) err("missing lines");
+        if (!jsonRoot["lines"].isArray()) err("lines is not an array");
+
+        uint64 lineIndex = 0;
+        for (auto& lineNode : jsonRoot["lines"].getArray()) {
+            if (!lineNode.isObject()) err("line is not an object");
+
+            auto& line = chart.lines.emplace_back();
+            line.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Line, lineIndex++ }));
+
+            if (!lineNode.hasKey("notes")) err("missing notes");
+            if (!lineNode["notes"].isArray()) err("notes is not an array");
+
+            for (auto& noteNode : lineNode["notes"].getArray()) {
+                if (!noteNode.isObject()) err("note is not an object");
+
+                auto& note = line.notes.emplace_back();
+
+                if (!secVal(noteNode, "time", &note.timeZone.x)) err("time is not a valid beat");
+                if (!secVal(noteNode, "endTime", &note.timeZone.y)) err("endTime is not a valid beat");
+
+                if (!noteNode.hasKey("type")) err("missing type");
+                if (!noteNode["type"].isNumber()) err("type is not a number");
+                note.type = MilNoteTypeHelper::FromInt(noteNode["type"].getNumber());
+
+                if (!noteNode.hasKey("isFake")) err("missing isFake");
+                if (!noteNode["isFake"].isBool()) err("isFake is not a bool");
+                note.isFake = noteNode["isFake"].getBool();
+
+                if (!noteNode.hasKey("isAlwaysPerfect")) err("missing isAlwaysPerfect");
+                if (!noteNode["isAlwaysPerfect"].isBool()) err("isAlwaysPerfect is not a bool");
+                note.isAlwaysPerfect = noteNode["isAlwaysPerfect"].getBool();
+
+                if (!noteNode.hasKey("index")) err("missing index");
+                if (!noteNode["index"].isNumber()) err("index is not a number");
+                uint64 noteIndex = noteNode["index"].getNumber();
+
+                note.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Note, noteIndex }));
+            }
+
+            loadAnims(lineNode);
+        }
+
+        if (!jsonRoot.hasKey("storyboards")) err("missing storyboards");
+        if (!jsonRoot["storyboards"].isArray()) err("storyboards is not an array");
+
+        uint64 sbIndex = 0;
+        for (auto& sbNode : jsonRoot["storyboards"].getArray()) {
+            if (!sbNode.isObject()) err("storyboardObject is not an object");
+
+            auto& sb = chart.storyboardObjects.emplace_back();
+            sb.indexer.set(chart.animator.indexGen.get({ EnumMilObjectType::Storyboard, sbIndex++ }));
+
+            if (!sbNode.hasKey("type")) err("missing type");
+            if (!sbNode["type"].isNumber()) err("type is not a number");
+            sb.type = MilStoryboardTypeHelper::FromInt(sbNode["type"].getNumber());
+
+            if (!sbNode.hasKey("data")) err("missing data");
+            if (!sbNode["data"].isString()) err("data is not an object");
+            sb.data = sbNode["data"].getString();
+
+            if (!sbNode.hasKey("layer")) err("missing layer");
+            if (!sbNode["layer"].isNumber()) err("layer is not a number");
+            sb.layer = MilStoryboardLayerHelper::FromInt(sbNode["layer"].getNumber());
+
+            loadAnims(sbNode);
         }
 
         chart.rawHash = data.getHash();
@@ -5187,7 +5466,8 @@ void main() {
             try { return func(data); } \
             catch (const std::exception& err) { msgs.push_back(err.what()); }
         
-        try_(loadMilChartFromDevJson);
+        try_(loadMilChartFromCommunityFmt1Json);
+        try_(loadMilChartFromCommunityFmt2Json);
 
         std::string msg = "failures: \n";
         for (auto& m : msgs) msg += m + "\n";
@@ -5511,6 +5791,10 @@ void main() {
 
             lineHeadAlpha *= lineAlpha;
             lineBodyAlpha *= lineAlpha;
+
+            if (chart.meta.reverseLineRotation) {
+                lineRotation = 180.0 - lineRotation;
+            }
 
             if (lineHeadAlpha > 0.0) {
                 frame.addObject(frame.cache.trackObjects, MilCalculatedFrame::CalculatedLineHead {
