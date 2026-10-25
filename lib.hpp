@@ -4796,6 +4796,7 @@ void main() {
             
             info.headPosition = lineTransform.transformPoint(noteRelPositionHead);
             info.tailPosition = lineTransform.transformPoint(noteRelPositionTail);
+            info.tailPosition = info.headPosition + (info.tailPosition - info.headPosition) / std::abs(lineSize); // 压回 size, 否则会导致双重 scale
             info.textureRotation = -lineRotation - noteRotation;
             info.speedVectorRotation = -lineRotation;
             if (finalFlowSpeed < 0) info.speedVectorRotation += 180.0;
